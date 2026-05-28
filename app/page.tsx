@@ -127,7 +127,7 @@ interface GState {
   upgrades: Record<string, number>; shieldRegenAt: number
   combo: number; lastKill: number; shake: number
   capyMsg: string; capyMsgEnd: number; nextCapyMsg: number
-  bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null; maxCombo: number
+  bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null; maxCombo: number; lastStorm: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -150,7 +150,7 @@ function initState(W: number): GState {
     upgrades: {}, shieldRegenAt: 0,
     combo: 1, lastKill: 0, shake: 0,
     capyMsg: "", capyMsgEnd: 0, nextCapyMsg: 0,
-    bossWarn: null, mouseX: -1, waveAnn: null, maxCombo: 1,
+    bossWarn: null, mouseX: -1, waveAnn: null, maxCombo: 1, lastStorm: 0,
   }
 }
 
@@ -174,6 +174,17 @@ export default function HomePage() {
   const [upgradeOptions, setUpgradeOptions] = useState<UpgradeDef[]>([])
   const upgradeOptionsRef                   = useRef<UpgradeDef[]>([])
   const upgradePickRef                      = useRef<((id: string) => void) | null>(null)
+  const [topEntry, setTopEntry]             = useState<{handle: string; score: number} | null>(null)
+  const [personalBest, setPersonalBest]     = useState(0)
+
+  // load leaderboard top + personal best on mount
+  useEffect(() => {
+    fetch("/api/leaderboard").then(r => r.json()).then(d => {
+      const s = d.scores?.[0]
+      if (s) setTopEntry({ handle: s.handle, score: s.score })
+    }).catch(() => {})
+    try { setPersonalBest(parseInt(localStorage.getItem("sb_pb") || "0")) } catch {}
+  }, [])
 
   function startGame() {
     const g = G.current
@@ -402,6 +413,26 @@ export default function HomePage() {
         }
       }
 
+      // endless buzzword storm every 2000 pts
+      if (g.endless && g.score > 0) {
+        const stormAt = Math.floor(g.score / 2000) * 2000
+        if (stormAt > g.lastStorm) {
+          g.lastStorm = stormAt; g.shake = 6
+          const slowFactor = Math.pow(0.85, g.upgrades.word_slow ?? 0)
+          const stormSpd = (1.5 + g.level * 0.3) * slowFactor
+          for (let si = 0; si < 9; si++) {
+            const stormText = Math.random() < 0.4
+              ? BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)]
+              : STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)]
+            const sox = 30 + Math.random() * (g.W - 60)
+            const beh: Behavior = ["fall","charge","zigzag","sine"][Math.floor(Math.random()*4)] as Behavior
+            g.words.push({ x: sox, y: -18 - si * 22, text: stormText, type: Math.random() < 0.35 ? "bug" : "story", spd: stormSpd, beh, ph: Math.random() * Math.PI * 2, ox: sox, hp: 1, hitFlash: 0, elite: false })
+          }
+          showCapyMsg(g, "Buzzword storm.", now)
+          sfx.warning()
+        }
+      }
+
       // boss warning animation
       if (g.bossWarn) {
         const bw = g.bossWarn
@@ -626,6 +657,10 @@ export default function HomePage() {
       if (g.lives <= 0) {
         g.running = false
         setScore(g.score); setLevel(g.level)
+        try {
+          const pb = parseInt(localStorage.getItem("sb_pb") || "0")
+          if (g.score > pb) { localStorage.setItem("sb_pb", String(g.score)); setPersonalBest(g.score) }
+        } catch {}
         phaseRef.current = "over"; setPhase("over")
       }
     }
@@ -664,9 +699,23 @@ export default function HomePage() {
                 <p style={{ color:"rgba(255,255,255,0.22)", fontSize:"0.7rem", marginBottom:"1.25rem", fontFamily:"monospace" }}>
                   arrows / WASD move · SPACE or click shoot
                 </p>
-                <div style={{ background:"#966bec", color:"#fff", borderRadius:"4px", padding:"0.5rem 1.25rem", fontSize:"0.85rem", fontWeight:500, display:"inline-block" }}>
+                <div style={{ background:"#966bec", color:"#fff", borderRadius:"4px", padding:"0.5rem 1.25rem", fontSize:"0.85rem", fontWeight:500, display:"inline-block", marginBottom: topEntry || personalBest > 0 ? "1rem" : 0 }}>
                   Start game
                 </div>
+                {(topEntry || personalBest > 0) && (
+                  <div style={{ display:"flex", gap:"1rem", justifyContent:"center", flexWrap:"wrap" }}>
+                    {topEntry && (
+                      <p style={{ color:"rgba(253,186,116,0.7)", fontSize:"0.67rem", fontFamily:"monospace", margin:0 }}>
+                        🏆 {topEntry.handle}: {topEntry.score.toLocaleString()}
+                      </p>
+                    )}
+                    {personalBest > 0 && (
+                      <p style={{ color:"rgba(150,107,236,0.6)", fontSize:"0.67rem", fontFamily:"monospace", margin:0 }}>
+                        PB: {personalBest.toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             </Overlay>
           )}
@@ -689,7 +738,7 @@ export default function HomePage() {
 
           {phase === "upgrade" && <UpgradeScreen options={upgradeOptions} onPick={onUpgradePick} />}
 
-          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} onRestart={startGame} />}
+          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} isNewPB={score > 0 && score >= personalBest} onRestart={startGame} />}
 
           <canvas ref={canvasRef} height={GH} style={{ display:"block", width:"100%", height:GH, cursor:"crosshair" }} />
         </div>
@@ -915,12 +964,17 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   if (!attractMode) {
     const flash = g.invuln && Math.floor(now/90) % 2 === 0
     if (!flash) {
+      const glowCol = g.shield ? "#4ade80" : "#966bec"
+      ctx.save()
+      ctx.shadowColor = glowCol
+      ctx.shadowBlur = 10 + 4 * Math.sin(now / 400)
       ctx.fillStyle = g.shield ? "#4ade80" : "#e2e8f0"
       ctx.beginPath()
       ctx.moveTo(g.px, PLAYER_Y - 18)
       ctx.lineTo(g.px - 13, PLAYER_Y + 7)
       ctx.lineTo(g.px + 13, PLAYER_Y + 7)
       ctx.closePath(); ctx.fill()
+      ctx.restore()
       if (g.shield) {
         ctx.strokeStyle = "rgba(74,222,128,0.55)"; ctx.lineWidth = 2
         ctx.beginPath(); ctx.arc(g.px, PLAYER_Y - 5, 24, 0, Math.PI*2); ctx.stroke()
@@ -1081,7 +1135,7 @@ function UpgradeScreen({ options, onPick }: { options: UpgradeDef[]; onPick: (id
   )
 }
 
-function GameOver({ score, level, kills, maxCombo, upgradeCount, onRestart }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; onRestart: () => void }) {
+function GameOver({ score, level, kills, maxCombo, upgradeCount, isNewPB, onRestart }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; isNewPB: boolean; onRestart: () => void }) {
   const [handle, setHandle]         = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted]   = useState(false)
@@ -1104,7 +1158,8 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, onRestart }: { 
       <div style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"2rem", maxWidth:"340px", width:"100%", textAlign:"center" }}>
         <div style={{ fontSize:"2.25rem", marginBottom:"0.6rem" }}>🦫</div>
         <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.5rem" }}>SPEC WINS</p>
-        <p style={{ color:"#966bec", fontSize:"1.75rem", fontWeight:700, margin:"0 0 1rem", fontFamily:"monospace" }}>{score.toLocaleString()}</p>
+        <p style={{ color:"#966bec", fontSize:"1.75rem", fontWeight:700, margin:"0 0 0.3rem", fontFamily:"monospace" }}>{score.toLocaleString()}</p>
+        {isNewPB && <p style={{ color:"#facc15", fontSize:"0.72rem", margin:"0 0 0.8rem", fontFamily:"monospace", letterSpacing:"0.08em" }}>★ NEW PERSONAL BEST</p>}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.5rem", marginBottom:"1.25rem" }}>
           {[["LVL", level],["KILLS", kills],["COMBO", `${maxCombo}×`]].map(([label, val]) => (
             <div key={label as string} style={{ background:"rgba(255,255,255,0.04)", borderRadius:"4px", padding:"0.4rem 0.3rem" }}>
