@@ -161,7 +161,7 @@ const sfx = {
 type Behavior = "fall" | "charge" | "zigzag" | "sine"
 interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean; age: number }
 interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean }
-interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number }
+interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
 interface Boss      { x: number; y: number; hp: number; maxHp: number; name: string; color: string; dir: number; t: number; phase: number; raged: boolean; halfTriggered: boolean }
 interface BossWarn  { name: string; color: string; t: number; letters: Array<{ ch: string; x: number; y: number; tx: number; ty: number }> }
@@ -747,6 +747,9 @@ export default function HomePage() {
             if (w.type === "powerup") applyPowerup(g, w, now)
             if (!g.firstKill) { g.firstKill = true; showCapyMsg(g, "First blood.\nGood.", now) }
             spawnLetterExplosion(g, w, pts, g.combo)
+            // impact ring
+            const ringCol = w.type === "bug" ? "#fdba74" : w.type === "powerup" ? "#4ade80" : "#7dd3fc"
+            g.particles.push({ x: w.x, y: w.y, vx: 0, vy: 0, life: 0.65, initLife: 0.65, glyph: "", col: ringCol, ring: true })
             // clutch kill: word within 50px of bottom
             if (w.y > GH - 50 && w.type !== "powerup") {
               g.score += 25; g.whiteFlash = 5; sfx.clutch()
@@ -1308,6 +1311,14 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
 
   // particles
   g.particles.forEach(p => {
+    if (p.ring) {
+      const il = p.initLife ?? 0.65
+      const progress = 1 - p.life / il
+      ctx.globalAlpha = Math.sin(progress * Math.PI) * 0.65
+      ctx.strokeStyle = p.col; ctx.lineWidth = 1.5
+      ctx.beginPath(); ctx.arc(p.x, p.y, progress * 26, 0, Math.PI * 2); ctx.stroke()
+      ctx.lineWidth = 1; ctx.globalAlpha = 1; return
+    }
     ctx.globalAlpha = Math.max(0, p.life)
     ctx.fillStyle = p.col
     if (p.rot !== undefined) {
@@ -1543,6 +1554,20 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted]   = useState(false)
   const [rank, setRank]             = useState<{ pct: number; total: number } | null>(null)
+  const [copied, setCopied]         = useState(false)
+
+  async function share() {
+    const text = `I scored ${score.toLocaleString()} on Spec Blaster — LVL ${level}, ${kills} kills`
+    const url = typeof window !== "undefined" ? window.location.origin : ""
+    try {
+      if (typeof navigator !== "undefined" && navigator.share) {
+        await navigator.share({ title: "Spec Blaster", text: text + ". Play at " + url })
+      } else {
+        await navigator.clipboard.writeText(text + " → " + url)
+        setCopied(true); setTimeout(() => setCopied(false), 2200)
+      }
+    } catch {}
+  }
 
   useEffect(() => {
     if (score <= 0) return
@@ -1608,9 +1633,10 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
         ) : (
           <p style={{ color:"#4ade80", fontSize:"0.85rem", margin:"0 0 1rem" }}>Score saved 🦫</p>
         )}
-        <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"1rem", display:"flex", gap:"0.75rem", justifyContent:"center" }}>
-          <button onClick={onRestart} style={{ background:"transparent", border:"1px solid #4c4c51", borderRadius:"4px", padding:"0.4rem 1rem", color:"#d8d7d8", cursor:"pointer", fontSize:"0.8rem" }}>Play again</button>
-          <a href="/leaderboard" style={{ border:"1px solid rgba(255,255,255,0.08)", borderRadius:"4px", padding:"0.4rem 1rem", color:"#a09fa2", textDecoration:"none", fontSize:"0.8rem" }}>Leaderboard</a>
+        <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"1rem", display:"flex", gap:"0.6rem", justifyContent:"center", flexWrap:"wrap" }}>
+          <button onClick={onRestart} style={{ background:"transparent", border:"1px solid #4c4c51", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"#d8d7d8", cursor:"pointer", fontSize:"0.8rem" }}>Play again</button>
+          <a href="/leaderboard" style={{ border:"1px solid rgba(255,255,255,0.08)", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"#a09fa2", textDecoration:"none", fontSize:"0.8rem" }}>Leaderboard</a>
+          {score > 0 && <button onClick={share} style={{ background:"transparent", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"#a09fa2", cursor:"pointer", fontSize:"0.8rem" }}>{copied ? "Copied ✓" : "Share"}</button>}
         </div>
       </div>
     </div>
