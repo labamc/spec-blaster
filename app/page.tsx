@@ -959,7 +959,14 @@ export default function HomePage() {
           const bd = BOSSES[g.level - 1]
           g.boss = { x: g.W/2, y: 70, hp: bd.hp, maxHp: bd.hp, name: bd.name, color: bd.color, dir: 1, t: 0, phase: g.level, raged: false, halfTriggered: false }
           g.bossWarn = null
-          g.shake = 10
+          g.shake = 16; g.whiteFlash = 12
+          // boss materialize burst — particles from spawn point
+          const bCol = bd.color
+          for (let bi = 0; bi < 22; bi++) {
+            const ba = (bi / 22) * Math.PI * 2
+            g.particles.push({ x: g.W/2, y: 70, vx: Math.cos(ba) * (5 + Math.random()*6), vy: Math.sin(ba) * (5 + Math.random()*6), life: 0.9 + Math.random()*0.4, glyph: bi % 3 === 0 ? "✦" : "·", col: bCol })
+          }
+          sfx.miniBoss()
         }
       }
 
@@ -1297,6 +1304,12 @@ export default function HomePage() {
             const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul * pmMul)
             g.score += pts
             g.kills++; g.wordsKilled++
+            // "one kill to boss" capy warning (non-endless only)
+            if (!g.endless && !g.boss && g.wordsKilled === WORDS_TO_BOSS - 1) {
+              const bossName = BOSSES[Math.min(g.level - 1, 3)].name
+              showCapyMsg(g, `One pattern left.\n${bossName} is incoming.\nBe ready.`, now)
+              sfx.warning()
+            }
             // story streak "definition of done" bonus
             if (w.type === "story") {
               g.storyStreak++
@@ -1538,8 +1551,18 @@ export default function HomePage() {
           if (!b.enemy) continue
           if (Math.abs(b.x - g.px) < (g.shield ? 22 : 14) && Math.abs(b.y - g.py) < (g.shield ? 22 : 14)) {
             g.bullets.splice(i, 1)
-            if (g.shield) { g.shield = false; sfx.shield() }
-            else loseLife(g, now)
+            if (g.shield) {
+              g.shield = false; sfx.shield()
+              g.shake = 5; g.whiteFlash = 4
+              // deflect burst — green ring + 8 sparks radiating from player
+              g.particles.push({ x: g.px, y: g.py, vx: 0, vy: 0, life: 0.5, initLife: 0.5, glyph: "", col: "#4ade80", ring: true })
+              for (let di = 0; di < 8; di++) {
+                const da = (di / 8) * Math.PI * 2
+                g.particles.push({ x: g.px, y: g.py, vx: Math.cos(da) * 7, vy: Math.sin(da) * 7, life: 0.7, glyph: "◇", col: "#4ade80" })
+              }
+              g.particles.push({ x: g.px, y: g.py - 22, vx: 0, vy: -1.0, life: 1.2, glyph: "DEFLECTED", col: "#4ade80", sz: 10 })
+              showCapyMsg(g, "Shield absorbed.\nSignal integrity: maintained.", now)
+            } else loseLife(g, now)
           }
         }
       }
@@ -1626,7 +1649,7 @@ export default function HomePage() {
     }
 
     function loseLife(g: GState, now: number) {
-      g.lives--; g.shake = 7; g.redFlash = 9; setLives(g.lives); sfx.hit()
+      g.lives--; g.shake = 14; g.redFlash = 16; setLives(g.lives); sfx.hit()
       g.invuln = true; g.invulnEnd = now + 1600
       const hitLines = [
         "Signal integrity\ndegraded.",
@@ -1634,10 +1657,16 @@ export default function HomePage() {
         "Hold coherence.",
         "Stay focused.\nThe noise is watching.",
         "Corruption event.\nRecover.",
+        g.lives === 1 ? "One signal remaining.\nDon't let it die." : "Pattern hit.\nRecover.",
       ]
       showCapyMsg(g, hitLines[Math.floor(Math.random() * hitLines.length)], now)
-      for (let i = 0; i < 12; i++)
-        g.particles.push({ x: g.px, y: g.py, vx: (Math.random()-0.5)*10, vy: -2-Math.random()*5, life: 0.9, glyph: "×", col: "#f87171" })
+      // burst ring + radial × scatter
+      g.particles.push({ x: g.px, y: g.py, vx: 0, vy: 0, life: 0.7, initLife: 0.7, glyph: "", col: "#f87171", ring: true })
+      g.particles.push({ x: g.px, y: g.py, vx: 0, vy: 0, life: 0.45, initLife: 0.45, glyph: "", col: "#fca5a5", ring: true })
+      for (let i = 0; i < 18; i++) {
+        const a = (i / 18) * Math.PI * 2
+        g.particles.push({ x: g.px, y: g.py, vx: Math.cos(a) * (4 + Math.random()*6), vy: Math.sin(a) * (4 + Math.random()*6) - 1, life: 0.8 + Math.random()*0.4, glyph: i % 3 === 0 ? "×" : "·", col: i % 3 === 0 ? "#f87171" : "#fca5a5" })
+      }
       if (g.lives <= 0) {
         g.running = false; stopDrone()
         setScore(g.score); setLevel(g.level)
