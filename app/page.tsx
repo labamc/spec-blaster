@@ -340,7 +340,7 @@ export default function HomePage() {
           const ox = 40 + Math.random() * (g.W - 80)
           g.words.push({ x: ox, y: -18, text, type, spd: 0.65 + Math.random() * 0.35, beh: "fall", ph: 0, ox, hp: 1, hitFlash: 0, elite: false, age: 0 })
         }
-        g.words = g.words.filter(w => { w.y += w.spd; return w.y < GH + 20 })
+        g.words = g.words.filter(w => { w.y += w.spd; w.age = Math.min(7, w.age + 1); return w.y < GH + 20 })
         g.bg.forEach(b => { b.y += b.vy; if (b.y > GH + 10) { b.y = -10; b.x = Math.random() * g.W } })
         draw(ctx, g, canvas.width, now, true)
         return
