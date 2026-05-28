@@ -869,9 +869,9 @@ export default function HomePage() {
         }
       }
 
-      // endless buzzword storm every 2000 pts
+      // endless buzzword storm every 1500 pts (was 2000 — more frequent chaos)
       if (g.endless && g.score > 0) {
-        const stormAt = Math.floor(g.score / 2000) * 2000
+        const stormAt = Math.floor(g.score / 1500) * 1500
         if (stormAt > g.lastStorm) {
           g.lastStorm = stormAt; g.shake = 6
           const slowFactor = Math.pow(0.85, g.upgrades.word_slow ?? 0)
@@ -889,9 +889,9 @@ export default function HomePage() {
         }
       }
 
-      // endless wave progression every 75 kills
+      // endless wave progression every 55 kills (was 75 — more frequent depth events)
       if (g.endless) {
-        const expectedWave = Math.floor(g.wordsKilled / 75) + 1
+        const expectedWave = Math.floor(g.wordsKilled / 55) + 1
         if (expectedWave > g.endlessWave) {
           g.endlessWave = expectedWave
           if (g.endlessWave > 1) {
@@ -1097,9 +1097,10 @@ export default function HomePage() {
         showCapyMsg(g, bossCapy[bd.name] ?? "Hostile pattern incoming.\nHold formation.", now)
       }
 
-      // endless mini-boss spawn every 100 kills
+      // endless mini-boss spawn every 65 kills (was 100 — keeps pace up)
       if (g.endless && !g.boss && !g.bossWarn) {
-        const nextMiniAt = (Math.floor(g.lastMiniAt / 100) + 1) * 100
+        const miniInterval = 65
+        const nextMiniAt = (Math.floor(g.lastMiniAt / miniInterval) + 1) * miniInterval
         if (g.wordsKilled >= nextMiniAt) {
           g.lastMiniAt = nextMiniAt
           // Filter by minDepth — THE VOID only at depth 5+
