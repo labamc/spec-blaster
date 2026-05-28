@@ -1245,6 +1245,8 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   g.bullets.forEach(b => {
     if (!b.enemy) {
       const bulletCol = g.upgrades.spray ? "#22d3ee" : (g.triple || g.upgrades.triple) ? "#4ade80" : "#966bec"
+      ctx.save()
+      ctx.shadowColor = bulletCol; ctx.shadowBlur = 8
       try {
         const grad = ctx.createLinearGradient(b.x, b.y, b.x, b.y + 22)
         grad.addColorStop(0, bulletCol)
@@ -1252,6 +1254,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
         ctx.fillStyle = grad
       } catch { ctx.fillStyle = bulletCol }
       ctx.fillRect(b.x - 2, b.y - 11, 4, 22)
+      ctx.restore()
     } else {
       // enemy bullet with fade trail
       ctx.globalAlpha = 0.2; ctx.fillStyle = "#f87171"
@@ -1401,21 +1404,33 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.fillStyle = g.score >= g.pb ? "rgba(250,204,21,0.55)" : "rgba(255,255,255,0.13)"
     ctx.fillText(g.score >= g.pb ? `★ ${g.pb.toLocaleString()}` : `PB ${g.pb.toLocaleString()}`, 10, 70)
   }
-  // wave progress bar
+  // wave progress bar + boss countdown
   if (!g.boss && !g.endless && !g.bossWarn) {
     const wPct = Math.min(1, g.wordsKilled / WORDS_TO_BOSS)
+    const remaining = WORDS_TO_BOSS - g.wordsKilled
     ctx.fillStyle = "rgba(255,255,255,0.07)"; ctx.fillRect(10, 41, 72, 3)
     ctx.fillStyle = wPct >= 0.85 ? "#f87171" : "#966bec"; ctx.fillRect(10, 41, 72 * wPct, 3)
     ctx.font = "7px monospace"; ctx.textAlign = "left"
-    ctx.fillStyle = wPct >= 0.85 ? "rgba(248,113,113,0.7)" : "rgba(255,255,255,0.22)"
-    ctx.fillText(`BOSS: ${WORDS_TO_BOSS - g.wordsKilled}`, 10, 52)
+    if (remaining <= 4 && remaining > 0) {
+      const pulse = 0.7 + 0.3 * Math.abs(Math.sin(now / 140))
+      ctx.fillStyle = `rgba(248,113,113,${pulse})`
+      ctx.fillText(`BOSS IN ${remaining}`, 10, 52)
+    } else {
+      ctx.fillStyle = "rgba(255,255,255,0.22)"
+      ctx.fillText(`BOSS: ${remaining}`, 10, 52)
+    }
   }
   ctx.textAlign = "right"; ctx.fillStyle = "#f87171"; ctx.font = "12px monospace"
   ctx.fillText("♥".repeat(g.lives) + "♡".repeat(Math.max(0, MAX_LIVES - g.lives)), cw - 10, 20)
   let pwY = 36; ctx.font = "8px monospace"; ctx.textAlign = "right"
   if (g.shield)                      { ctx.fillStyle = "#4ade80"; ctx.fillText("SHIELD",  cw-10, pwY); pwY += 12 }
   if (g.triple || g.upgrades.triple) { ctx.fillStyle = "#4ade80"; ctx.fillText("ENGAGE",  cw-10, pwY); pwY += 12 }
-  if (g.fast)                        { ctx.fillStyle = "#4ade80"; ctx.fillText("TIMEBOX", cw-10, pwY) }
+  if (g.fast)                        { ctx.fillStyle = "#4ade80"; ctx.fillText("TIMEBOX", cw-10, pwY); pwY += 12 }
+  if (g.upgrades.shield_regen && !g.shield && g.shieldRegenAt > 0) {
+    const secs = Math.ceil(Math.max(0, g.shieldRegenAt - now) / 1000)
+    ctx.fillStyle = "rgba(74,222,128,0.35)"; ctx.font = "7px monospace"; ctx.textAlign = "right"
+    ctx.fillText(`↺ ${secs}s`, cw - 10, pwY)
+  }
 
   // Active permanent upgrades list
   const jy = GH - 20
