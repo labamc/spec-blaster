@@ -86,13 +86,14 @@ const BOSSES = [
   { name: "THE COLLAPSE",   hp: 100, color: "#4ade80", shootInterval: 40 },
 ]
 const MINI_BOSSES = [
-  { name: "SCOPE SPECTRE",    color: "#c084fc" },
-  { name: "SPRINT GHOST",     color: "#67e8f9" },
-  { name: "TECH DEBT DEMON",  color: "#fb923c" },
-  { name: "BLOCKER BOT",      color: "#f87171" },
-  { name: "THE DEPENDENCY",   color: "#a3e635" },
-  { name: "THE ROADMAP",      color: "#818cf8" },
-  { name: "THE PIVOT",        color: "#f472b6" },
+  { name: "SCOPE SPECTRE",    color: "#c084fc", minDepth: 1 },
+  { name: "SPRINT GHOST",     color: "#67e8f9", minDepth: 1 },
+  { name: "TECH DEBT DEMON",  color: "#fb923c", minDepth: 1 },
+  { name: "BLOCKER BOT",      color: "#f87171", minDepth: 1 },
+  { name: "THE DEPENDENCY",   color: "#a3e635", minDepth: 2 },
+  { name: "THE ROADMAP",      color: "#818cf8", minDepth: 2 },
+  { name: "THE PIVOT",        color: "#f472b6", minDepth: 3 },
+  { name: "THE VOID",         color: "#6d28d9", minDepth: 5 },
 ]
 
 const CAPY_DIALOG = [
@@ -707,11 +708,25 @@ export default function HomePage() {
         const nextMiniAt = (Math.floor(g.lastMiniAt / 100) + 1) * 100
         if (g.wordsKilled >= nextMiniAt) {
           g.lastMiniAt = nextMiniAt
-          const mb = MINI_BOSSES[Math.floor(Math.random() * MINI_BOSSES.length)]
-          const hp = 30 + Math.floor(g.score / 800) * 3
-          g.boss = { x: g.W/2, y: 70, hp, maxHp: hp, name: mb.name, color: mb.color, dir: 1, t: 0, phase: 5, raged: false, halfTriggered: false }
-          g.shake = 8; sfx.warning()
-          showCapyMsg(g, `${mb.name}\narrives.`, now)
+          // Filter by minDepth — THE VOID only at depth 5+
+          const eligible = MINI_BOSSES.filter(mb => g.endlessWave >= (mb.minDepth ?? 1))
+          const mb = eligible[Math.floor(Math.random() * eligible.length)]
+          const isVoid = mb.name === "THE VOID"
+          const hp = isVoid
+            ? 120 + Math.floor(g.score / 600) * 8
+            : 30 + Math.floor(g.score / 800) * 3
+          const phase = isVoid ? 6 : 5
+          g.boss = { x: g.W/2, y: 70, hp, maxHp: hp, name: mb.name, color: mb.color, dir: 1, t: 0, phase, raged: false, halfTriggered: false }
+          g.shake = isVoid ? 14 : 8; sfx.warning()
+          if (isVoid) {
+            showCapyMsg(g, "THE VOID.\nComplete semantic collapse.", now)
+            for (let ri = 0; ri < 20; ri++) {
+              const a = (ri / 20) * Math.PI * 2
+              g.particles.push({ x: g.W/2, y: 70, vx: Math.cos(a)*12, vy: Math.sin(a)*12, life: 1.2, glyph: "★", col: "#6d28d9" })
+            }
+          } else {
+            showCapyMsg(g, `${mb.name}\narrives.`, now)
+          }
         }
       }
 
@@ -719,31 +734,35 @@ export default function HomePage() {
       if (g.boss) {
         const b = g.boss
         const rageMul = b.raged ? 1.55 : 1
-        b.x += b.dir * (1.4 + (Math.min(b.phase, 4)) * 0.35) * rageMul
+        const moveMul = b.phase === 6 ? 0.6 : 1  // THE VOID moves slower but more threatening
+        b.x += b.dir * (1.4 + (Math.min(b.phase, 4)) * 0.35) * rageMul * moveMul
         if (b.x > g.W - 50 || b.x < 50) b.dir *= -1
         b.t++
-        const si = Math.round((b.phase >= 5 ? 65 : (BOSSES[Math.min(g.level - 1, BOSSES.length - 1)]?.shootInterval ?? 60)) / rageMul)
-        if (b.t % si === 0) {
-          if (b.phase === 1) {
-            g.bullets.push({ x: b.x, y: b.y + 28, vy: 4, enemy: true })
-          } else if (b.phase === 2) {
-            for (const ox of [-22, 0, 22])
-              g.bullets.push({ x: b.x + ox, y: b.y + 28, vy: 3.5, enemy: true })
-          } else if (b.phase === 3) {
-            const dx = g.px - b.x, dy = g.py - b.y, dist = Math.sqrt(dx*dx+dy*dy)
-            g.bullets.push({ x: b.x, y: b.y + 28, vx: (dx/dist)*5, vy: (dy/dist)*5, enemy: true })
-          } else if (b.phase >= 5) {
-            // endless mini-boss: aimed + occasional spread burst
-            const dx = g.px - b.x, dy = g.py - b.y, dist = Math.sqrt(dx*dx+dy*dy)
-            g.bullets.push({ x: b.x, y: b.y + 28, vx: (dx/dist)*5.5, vy: (dy/dist)*5.5, enemy: true })
-            if (b.t % 200 === 0) {
-              for (const ox of [-28, 28]) g.bullets.push({ x: b.x + ox, y: b.y + 28, vy: 4.5, enemy: true })
+        // Phase 6 (THE VOID) has its own custom firing below — skip the generic shoot interval
+        if (b.phase !== 6) {
+          const si = Math.round((b.phase >= 5 ? 65 : (BOSSES[Math.min(g.level - 1, BOSSES.length - 1)]?.shootInterval ?? 60)) / rageMul)
+          if (b.t % si === 0) {
+            if (b.phase === 1) {
+              g.bullets.push({ x: b.x, y: b.y + 28, vy: 4, enemy: true })
+            } else if (b.phase === 2) {
+              for (const ox of [-22, 0, 22])
+                g.bullets.push({ x: b.x + ox, y: b.y + 28, vy: 3.5, enemy: true })
+            } else if (b.phase === 3) {
+              const dx = g.px - b.x, dy = g.py - b.y, dist = Math.sqrt(dx*dx+dy*dy)
+              g.bullets.push({ x: b.x, y: b.y + 28, vx: (dx/dist)*5, vy: (dy/dist)*5, enemy: true })
+            } else if (b.phase >= 5) {
+              // endless mini-boss: aimed + occasional spread burst
+              const dx = g.px - b.x, dy = g.py - b.y, dist = Math.sqrt(dx*dx+dy*dy)
+              g.bullets.push({ x: b.x, y: b.y + 28, vx: (dx/dist)*5.5, vy: (dy/dist)*5.5, enemy: true })
+              if (b.t % 200 === 0) {
+                for (const ox of [-28, 28]) g.bullets.push({ x: b.x + ox, y: b.y + 28, vy: 4.5, enemy: true })
+              }
+            } else {
+              const dx = g.px - b.x, dy = g.py - b.y, dist = Math.sqrt(dx*dx+dy*dy)
+              g.bullets.push({ x: b.x, y: b.y + 28, vx: (dx/dist)*5.5, vy: (dy/dist)*5.5, enemy: true })
+              g.bullets.push({ x: b.x - 30, y: b.y + 28, vy: 5, enemy: true })
+              g.bullets.push({ x: b.x + 30, y: b.y + 28, vy: 5, enemy: true })
             }
-          } else {
-            const dx = g.px - b.x, dy = g.py - b.y, dist = Math.sqrt(dx*dx+dy*dy)
-            g.bullets.push({ x: b.x, y: b.y + 28, vx: (dx/dist)*5.5, vy: (dy/dist)*5.5, enemy: true })
-            g.bullets.push({ x: b.x - 30, y: b.y + 28, vy: 5, enemy: true })
-            g.bullets.push({ x: b.x + 30, y: b.y + 28, vy: 5, enemy: true })
           }
         }
         // The Roadmap: periodically spawns healing words
@@ -760,6 +779,76 @@ export default function HomePage() {
             g.bullets.push({ x: b.x, y: b.y, vx: Math.cos(ang) * 4.2, vy: Math.sin(ang) * 4.2, enemy: true })
           }
           spawnParticles(g, b.x, b.y, "#f472b6", "⟳", 8)
+        }
+        // Scope Spectre: fires two crossing diagonal shots every 110 frames
+        if (b.name === "SCOPE SPECTRE" && b.t > 0 && b.t % 110 === 0) {
+          for (const sx of [-1, 1]) {
+            g.bullets.push({ x: b.x, y: b.y + 28, vx: sx * 3.5, vy: 4, enemy: true })
+            g.bullets.push({ x: b.x + sx * 50, y: b.y + 28, vx: -sx * 3.5, vy: 4, enemy: true })
+          }
+          spawnParticles(g, b.x, b.y, "#c084fc", "×", 6)
+        }
+        // Sprint Ghost: quantum jump — teleports to random X every 80 frames with brief invis
+        if (b.name === "SPRINT GHOST" && b.t > 0 && b.t % 80 === 0) {
+          b.x = 50 + Math.random() * (g.W - 100)
+          g.shake = 2
+          for (let qi = 0; qi < 6; qi++) {
+            g.particles.push({ x: b.x + (Math.random()-0.5)*60, y: b.y + (Math.random()-0.5)*30,
+              vx: (Math.random()-0.5)*5, vy: (Math.random()-0.5)*4, life: 0.55, glyph: "·", col: "#67e8f9" })
+          }
+        }
+        // Tech Debt Demon: regenerates 8 HP every 220 frames
+        if (b.name === "TECH DEBT DEMON" && b.t > 0 && b.t % 220 === 0) {
+          const gain = Math.min(8, b.maxHp - b.hp)
+          if (gain > 0) {
+            b.hp += gain
+            spawnParticles(g, b.x, b.y, "#fb923c", "↑", 5)
+            g.particles.push({ x: b.x, y: b.y - 28, vx: 0, vy: -0.9, life: 1.2, glyph: `+${gain} debt`, col: "#fb923c", sz: 9 })
+          }
+        }
+        // Blocker Bot: fires a 3-shot aimed burst + 2 walls every 100 frames
+        if (b.name === "BLOCKER BOT" && b.t > 0 && b.t % 100 === 0) {
+          const dx = g.px - b.x, dy = g.py - b.y, dist = Math.sqrt(dx*dx+dy*dy)
+          for (let bi = 0; bi < 3; bi++) {
+            const spread = (bi - 1) * 0.35
+            g.bullets.push({ x: b.x, y: b.y + 28, vx: (dx/dist)*5.2 + spread, vy: (dy/dist)*5.2, enemy: true })
+          }
+          // wall shots: straight down on both flanks
+          g.bullets.push({ x: b.x - 55, y: b.y + 28, vy: 5, enemy: true })
+          g.bullets.push({ x: b.x + 55, y: b.y + 28, vy: 5, enemy: true })
+          spawnParticles(g, b.x, b.y, "#f87171", "▮", 4)
+        }
+        // The Dependency: spawns new enemy words every 160 frames
+        if (b.name === "THE DEPENDENCY" && b.t > 0 && b.t % 160 === 0) {
+          const dx = 40 + Math.random() * (g.W - 80)
+          const deps = ["legacy code","vendor lock","npm audit","circular dep","peer dep","semver range"]
+          const depText = deps[Math.floor(Math.random() * deps.length)]
+          g.words.push({ x: dx, y: -18, text: depText, type: "bug", spd: 1.6, beh: "fall", ph: 0, ox: dx, hp: 1, hitFlash: 0, elite: false, age: 0 })
+          spawnParticles(g, b.x, b.y, "#a3e635", "⇣", 4)
+        }
+        // The Void (phase 6): deep endless boss — phase-fires expanding rings + tracked burst
+        if (b.name === "THE VOID") {
+          if (b.t % 55 === 0) {
+            // Expanding ring of 12 bullets
+            for (let vi = 0; vi < 12; vi++) {
+              const ang = (vi / 12) * Math.PI * 2 + (b.t * 0.04)
+              g.bullets.push({ x: b.x, y: b.y, vx: Math.cos(ang) * 3.8, vy: Math.sin(ang) * 3.8, enemy: true })
+            }
+          }
+          if (b.t % 130 === 0) {
+            // 3-shot aimed burst at player
+            const dx = g.px - b.x, dy = g.py - b.y, dist = Math.sqrt(dx*dx+dy*dy)
+            for (const sp of [-0.4, 0, 0.4])
+              g.bullets.push({ x: b.x, y: b.y, vx: (dx/dist)*6.5 + sp, vy: (dy/dist)*6.5, enemy: true })
+          }
+          if (b.t % 300 === 0 && b.hp < b.maxHp * 0.5) {
+            // Rage burst at half HP
+            for (let vi = 0; vi < 20; vi++) {
+              const ang = (vi / 20) * Math.PI * 2
+              g.bullets.push({ x: b.x, y: b.y, vx: Math.cos(ang) * 6.5, vy: Math.sin(ang) * 6.5, enemy: true })
+            }
+            g.shake = 6
+          }
         }
       }
 
