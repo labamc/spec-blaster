@@ -261,6 +261,7 @@ export default function HomePage() {
   const [personalBest, setPersonalBest]     = useState(0)
   const [isTouchDevice, setIsTouchDevice]   = useState(false)
   const [unlockedAgents, setUnlockedAgents] = useState<string[]>([])
+  const [selectedAgents, setSelectedAgents] = useState<string[]>([])
   const [showAgentModule, setShowAgentModule] = useState(false)
   const unlockAgentRef = useRef<(id: string) => void>(() => {})
 
@@ -273,7 +274,13 @@ export default function HomePage() {
     try { setPersonalBest(parseInt(localStorage.getItem("sb_pb") || "0")) } catch {}
     try {
       const saved = localStorage.getItem("sb_agents")
-      if (saved) setUnlockedAgents(saved.split(",").filter(Boolean))
+      if (saved) {
+        const agents = saved.split(",").filter(Boolean)
+        setUnlockedAgents(agents)
+        // Selected agents default to all unlocked (can be modified in AgentModule)
+        const sel = localStorage.getItem("sb_selected_agents")
+        setSelectedAgents(sel ? sel.split(",").filter(Boolean) : agents)
+      }
     } catch {}
     setIsTouchDevice("ontouchstart" in window || navigator.maxTouchPoints > 0)
   }, [])
@@ -284,7 +291,7 @@ export default function HomePage() {
     const pb = personalBest
     Object.assign(g, initState(W))
     g.pb = pb; g.pbShown = pb === 0
-    g.activeAgents = [...unlockedAgents]
+    g.activeAgents = selectedAgents.filter(id => unlockedAgents.includes(id))
     g.running = true
     setShowAgentModule(false)
     g.waveAnn = { text: `SECTOR 1 · ${BOSSES[0].name}`, t: 0 }
@@ -302,6 +309,13 @@ export default function HomePage() {
       if (prev.includes(id)) return prev
       const next = [...prev, id]
       try { localStorage.setItem("sb_agents", next.join(",")) } catch {}
+      return next
+    })
+    // Auto-select newly unlocked agents
+    setSelectedAgents(prev => {
+      if (prev.includes(id)) return prev
+      const next = [...prev, id]
+      try { localStorage.setItem("sb_selected_agents", next.join(",")) } catch {}
       return next
     })
   }
@@ -1234,41 +1248,68 @@ export default function HomePage() {
         <div ref={wrapRef} style={{ position:"relative", width:"100%", borderRadius:"6px", overflow:"hidden", border:"1px solid rgba(255,255,255,0.08)" }}>
 
           {phase === "attract" && (
-            <Overlay onClick={startGame} dim={0.88}>
-              <div style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"2rem 2.5rem", maxWidth:"380px" }}>
-                <div style={{ fontSize:"2.75rem", marginBottom:"0.75rem" }}>🦫</div>
-                <p style={{ color:"#966bec", fontSize:"1.1rem", fontWeight:600, marginBottom:"0.3rem", letterSpacing:"0.1em" }}>SPEC BLASTER</p>
-                <p style={{ color:"#a09fa2", fontSize:"0.8rem", marginBottom:"1.5rem" }}>Navigate semantic collapse. Protect The Signal.</p>
-                <div style={{ display:"flex", flexDirection:"column", gap:"0.4rem", marginBottom:"1.75rem", textAlign:"left" }}>
-                  {[["#fdba74","corruption","corrupted intent · +75pts"],["#7dd3fc","noise","ghost directives · +10pts"],["#4ade80","artifacts","CLARITY · ANCHOR · AMPLIFY · REBASE · HOTFIX"]].map(([col,label,desc]) => (
-                    <div key={label} style={{ display:"flex", alignItems:"center", gap:"0.6rem", fontSize:"0.78rem", color:"#d8d7d8" }}>
-                      <span style={{ width:8, height:8, borderRadius:"50%", background:col, display:"inline-block", flexShrink:0 }} />
-                      {label} — <span style={{ color:"#a09fa2" }}>{desc}</span>
+            <Overlay onClick={startGame} dim={0.9}>
+              <div style={{ background:"#111118", border:"1px solid rgba(150,107,236,0.18)", borderRadius:"8px", padding:"1.75rem 2.25rem", maxWidth:"400px", width:"100%" }}>
+                {/* Title */}
+                <div style={{ marginBottom:"1.25rem" }}>
+                  <div style={{ fontSize:"2.25rem", marginBottom:"0.55rem" }}>🦫</div>
+                  <p style={{ color:"rgba(255,255,255,0.14)", fontSize:"0.58rem", fontFamily:"monospace", letterSpacing:"0.32em", margin:"0 0 0.3rem" }}>CARRIER SIGNAL · ACTIVE</p>
+                  <p style={{ color:"#966bec", fontSize:"1.2rem", fontWeight:700, letterSpacing:"0.14em", margin:"0 0 0.2rem", fontFamily:"monospace" }}>SPEC BLASTER</p>
+                  <p style={{ color:"rgba(255,255,255,0.3)", fontSize:"0.75rem", margin:0 }}>Navigate semantic collapse. Protect The Signal.</p>
+                </div>
+
+                {/* Targets legend */}
+                <div style={{ display:"flex", flexDirection:"column", gap:"0.35rem", marginBottom:"1.25rem", textAlign:"left",
+                  background:"rgba(255,255,255,0.025)", borderRadius:"5px", padding:"0.75rem 1rem", border:"1px solid rgba(255,255,255,0.05)" }}>
+                  {([
+                    ["#fdba74","CORRUPTION","corrupted intent · +75pts · primary target"],
+                    ["#7dd3fc","NOISE","ghost directives · +10pts · clear them all"],
+                    ["#4ade80","ARTIFACTS","powerups — CLARITY · ANCHOR · REBASE · HOTFIX"],
+                  ] as const).map(([col,label,desc]) => (
+                    <div key={label} style={{ display:"flex", alignItems:"center", gap:"0.6rem", fontSize:"0.72rem" }}>
+                      <span style={{ width:7, height:7, borderRadius:"50%", background:col, display:"inline-block", flexShrink:0 }} />
+                      <span style={{ color:col, fontFamily:"monospace", fontSize:"0.68rem", letterSpacing:"0.06em", flexShrink:0 }}>{label}</span>
+                      <span style={{ color:"rgba(255,255,255,0.28)" }}>{desc}</span>
                     </div>
                   ))}
                 </div>
-                <p style={{ color:"rgba(255,255,255,0.22)", fontSize:"0.7rem", marginBottom:"1.25rem", fontFamily:"monospace" }}>
-                  WASD / arrows move · SPACE or click shoot
+
+                {/* Controls */}
+                <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.68rem", marginBottom:"1.25rem", fontFamily:"monospace", textAlign:"left" }}>
+                  WASD / ← → move · SPACE fire · hold SPACE = laser charge · M = mine
                 </p>
-                <div style={{ background:"#966bec", color:"#fff", borderRadius:"4px", padding:"0.5rem 1.25rem", fontSize:"0.85rem", fontWeight:500, display:"inline-block", marginBottom:"0.75rem" }}>
-                  Start game
-                </div>
-                <div style={{ marginBottom: topEntry || personalBest > 0 ? "1rem" : 0 }}>
+
+                {/* CTA */}
+                <div style={{ display:"flex", alignItems:"center", gap:"0.75rem", marginBottom:"0.85rem", justifyContent:"center" }}>
+                  <div style={{ background:"#966bec", color:"#fff", borderRadius:"4px", padding:"0.55rem 1.5rem",
+                    fontSize:"0.88rem", fontWeight:600, letterSpacing:"0.06em" }}>
+                    Launch mission
+                  </div>
                   <button onClick={e => { e.stopPropagation(); setShowAgentModule(true) }}
-                    style={{ background:"transparent", border:"1px solid rgba(150,107,236,0.3)", borderRadius:"4px", padding:"0.3rem 0.85rem", color:"rgba(150,107,236,0.75)", fontSize:"0.7rem", cursor:"pointer", fontFamily:"monospace", letterSpacing:"0.1em" }}>
-                    THE SIGNAL{unlockedAgents.length > 0 && <span style={{ marginLeft:"0.45rem", color:"#4ade80" }}>{unlockedAgents.length}</span>}
+                    style={{ background:"rgba(150,107,236,0.08)", border:"1px solid rgba(150,107,236,0.28)",
+                      borderRadius:"4px", padding:"0.5rem 1rem", color:"rgba(150,107,236,0.85)",
+                      fontSize:"0.72rem", cursor:"pointer", fontFamily:"monospace", letterSpacing:"0.08em" }}>
+                    THE SIGNAL
+                    {unlockedAgents.length > 0 && (
+                      <span style={{ marginLeft:"0.4rem", color:"#4ade80", fontSize:"0.68rem" }}>
+                        {selectedAgents.filter(id => unlockedAgents.includes(id)).length}/{unlockedAgents.length}
+                      </span>
+                    )}
                   </button>
                 </div>
+
+                {/* Scores */}
                 {(topEntry || personalBest > 0) && (
-                  <div style={{ display:"flex", gap:"1rem", justifyContent:"center", flexWrap:"wrap" }}>
+                  <div style={{ display:"flex", gap:"1.25rem", justifyContent:"center", flexWrap:"wrap",
+                    borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:"0.75rem" }}>
                     {topEntry && (
-                      <p style={{ color:"rgba(253,186,116,0.7)", fontSize:"0.67rem", fontFamily:"monospace", margin:0 }}>
-                        🏆 {topEntry.handle}: {topEntry.score.toLocaleString()}
+                      <p style={{ color:"rgba(253,186,116,0.65)", fontSize:"0.65rem", fontFamily:"monospace", margin:0 }}>
+                        🏆 {topEntry.handle} · {topEntry.score.toLocaleString()}
                       </p>
                     )}
                     {personalBest > 0 && (
-                      <p style={{ color:"rgba(150,107,236,0.6)", fontSize:"0.67rem", fontFamily:"monospace", margin:0 }}>
-                        PB: {personalBest.toLocaleString()}
+                      <p style={{ color:"rgba(150,107,236,0.55)", fontSize:"0.65rem", fontFamily:"monospace", margin:0 }}>
+                        PB · {personalBest.toLocaleString()}
                       </p>
                     )}
                   </div>
@@ -1298,7 +1339,15 @@ export default function HomePage() {
           {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} onRestart={startGame} unlockedAgents={unlockedAgents} onShowStack={() => setShowAgentModule(true)} />}
 
           {showAgentModule && (
-            <AgentModule unlocked={unlockedAgents} onClose={() => setShowAgentModule(false)} />
+            <AgentModule unlocked={unlockedAgents} selected={selectedAgents}
+              onToggle={(id) => {
+                setSelectedAgents(prev => {
+                  const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+                  try { localStorage.setItem("sb_selected_agents", next.join(",")) } catch {}
+                  return next
+                })
+              }}
+              onClose={() => setShowAgentModule(false)} />
           )}
 
           <canvas ref={canvasRef} height={GH} style={{ display:"block", width:"100%", height:GH, cursor:"crosshair" }} />
@@ -2402,54 +2451,83 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
 }
 
 // ── Signal Interior (Crew + Systems) ──────────────────────────────────────
-function AgentModule({ unlocked, onClose }: { unlocked: string[]; onClose: () => void }) {
+function AgentModule({ unlocked, selected, onToggle, onClose }: {
+  unlocked: string[]; selected: string[]; onToggle: (id: string) => void; onClose: () => void
+}) {
+  const deployCount = selected.filter(id => unlocked.includes(id)).length
+
   return (
     <div
       onClick={onClose}
-      style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(13,13,20,0.97)", zIndex:20, cursor:"pointer" }}
+      style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center",
+        background:"rgba(8,8,15,0.97)", zIndex:20, cursor:"pointer", overflowY:"auto" }}
     >
-      <div onClick={e => e.stopPropagation()} style={{ width:"100%", maxWidth:"560px", padding:"1.5rem", cursor:"default" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width:"100%", maxWidth:"580px", padding:"1.5rem 1.25rem", cursor:"default" }}>
 
         {/* Header */}
         <div style={{ textAlign:"center", marginBottom:"1.5rem" }}>
-          <p style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.6rem", fontFamily:"monospace", letterSpacing:"0.22em", margin:"0 0 0.3rem" }}>SIGNAL INTERIOR</p>
-          <h2 style={{ color:"#966bec", fontSize:"1.2rem", fontWeight:700, fontFamily:"monospace", letterSpacing:"0.14em", margin:"0 0 0.4rem" }}>THE SIGNAL</h2>
-          <p style={{ color:"#a09fa2", fontSize:"0.75rem", margin:0, lineHeight:1.6 }}>
-            The last coherent carrier of human meaning.<br />
-            <span style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.68rem" }}>Clear collapses to bring crew online. All active agents deploy each run.</span>
+          <p style={{ color:"rgba(255,255,255,0.14)", fontSize:"0.58rem", fontFamily:"monospace", letterSpacing:"0.28em", margin:"0 0 0.35rem" }}>SIGNAL INTERIOR · CREW MANIFEST</p>
+          <h2 style={{ color:"#966bec", fontSize:"1.3rem", fontWeight:700, fontFamily:"monospace", letterSpacing:"0.14em", margin:"0 0 0.5rem" }}>THE SIGNAL</h2>
+          <p style={{ color:"rgba(255,255,255,0.3)", fontSize:"0.72rem", margin:0, lineHeight:1.6 }}>
+            The last coherent carrier of human meaning.
           </p>
+          {unlocked.length > 0 && (
+            <p style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.65rem", margin:"0.4rem 0 0", fontFamily:"monospace" }}>
+              Click to deploy/bench agents for the next run
+            </p>
+          )}
         </div>
 
         {/* Agent grid */}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.55rem", marginBottom:"1.5rem" }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.6rem", marginBottom:"1.25rem" }}>
           {AGENT_DEFS.map(agent => {
             const isUnlocked = unlocked.includes(agent.id)
+            const isSelected = isUnlocked && selected.includes(agent.id)
+            const borderCol = isSelected ? "rgba(74,222,128,0.32)" : isUnlocked ? "rgba(150,107,236,0.2)" : "rgba(255,255,255,0.05)"
+            const bgCol = isSelected ? "rgba(74,222,128,0.06)" : isUnlocked ? "rgba(150,107,236,0.04)" : "rgba(255,255,255,0.01)"
+
             return (
-              <div key={agent.id} style={{
-                background: isUnlocked ? "rgba(74,222,128,0.05)" : "rgba(255,255,255,0.02)",
-                border: `1px solid ${isUnlocked ? "rgba(74,222,128,0.18)" : "rgba(255,255,255,0.06)"}`,
-                borderRadius:"6px", padding:"0.85rem 0.75rem",
-                position:"relative", overflow:"hidden",
-              }}>
-                {isUnlocked && (
-                  <div style={{ position:"absolute", top:0, left:0, right:0, height:"1px", background:"linear-gradient(90deg,transparent,rgba(74,222,128,0.45),transparent)" }} />
+              <div key={agent.id}
+                onClick={isUnlocked ? () => onToggle(agent.id) : undefined}
+                style={{
+                  background: bgCol,
+                  border: `1px solid ${borderCol}`,
+                  borderRadius:"6px", padding:"0.85rem 0.75rem",
+                  position:"relative", overflow:"hidden",
+                  cursor: isUnlocked ? "pointer" : "default",
+                  transition: "border-color 0.15s, background 0.15s",
+                  opacity: isUnlocked ? 1 : 0.55,
+                }}>
+                {isSelected && (
+                  <div style={{ position:"absolute", top:0, left:0, right:0, height:"1px",
+                    background:"linear-gradient(90deg,transparent,rgba(74,222,128,0.6),transparent)" }} />
                 )}
                 <p style={{
-                  color: isUnlocked ? "rgba(74,222,128,0.5)" : "rgba(255,255,255,0.12)",
-                  fontSize:"0.57rem", fontFamily:"monospace", letterSpacing:"0.14em", margin:"0 0 0.3rem"
+                  color: isSelected ? "rgba(74,222,128,0.6)" : isUnlocked ? "rgba(150,107,236,0.55)" : "rgba(255,255,255,0.1)",
+                  fontSize:"0.56rem", fontFamily:"monospace", letterSpacing:"0.14em", margin:"0 0 0.3rem"
                 }}>{agent.station}</p>
                 <p style={{
-                  color: isUnlocked ? "#d8d7d8" : "#505055",
-                  fontSize:"0.75rem", fontWeight:600, margin:"0 0 0.3rem", fontFamily:"monospace"
+                  color: isSelected ? "#d8d7d8" : isUnlocked ? "#a09fa2" : "#404045",
+                  fontSize:"0.72rem", fontWeight:600, margin:"0 0 0.25rem", fontFamily:"monospace"
                 }}>{agent.name}</p>
                 <p style={{
-                  color: isUnlocked ? "#a09fa2" : "rgba(255,255,255,0.18)",
-                  fontSize:"0.67rem", margin:"0 0 0.4rem", lineHeight:1.55
+                  color: isUnlocked ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.12)",
+                  fontSize:"0.63rem", margin:"0 0 0.45rem", lineHeight:1.5
                 }}>{agent.desc}</p>
                 {isUnlocked ? (
-                  <p style={{ color:"rgba(74,222,128,0.55)", fontSize:"0.58rem", fontFamily:"monospace", margin:0 }}>● ACTIVE</p>
+                  <div style={{ display:"flex", alignItems:"center", gap:"0.4rem" }}>
+                    <span style={{
+                      width:7, height:7, borderRadius:"50%",
+                      background: isSelected ? "#4ade80" : "rgba(255,255,255,0.18)",
+                      display:"inline-block", flexShrink:0,
+                    }} />
+                    <p style={{ color: isSelected ? "rgba(74,222,128,0.7)" : "rgba(255,255,255,0.22)",
+                      fontSize:"0.57rem", fontFamily:"monospace", margin:0 }}>
+                      {isSelected ? "DEPLOYED" : "BENCHED"}
+                    </p>
+                  </div>
                 ) : (
-                  <p style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.58rem", fontFamily:"monospace", margin:0 }}>⊗ {agent.unlockNote}</p>
+                  <p style={{ color:"rgba(255,255,255,0.14)", fontSize:"0.56rem", fontFamily:"monospace", margin:0 }}>⊗ {agent.unlockNote}</p>
                 )}
               </div>
             )
@@ -2459,16 +2537,20 @@ function AgentModule({ unlocked, onClose }: { unlocked: string[]; onClose: () =>
         {/* Footer */}
         <div style={{ textAlign:"center" }}>
           {unlocked.length === 0 ? (
-            <p style={{ color:"rgba(255,255,255,0.22)", fontSize:"0.72rem", margin:"0 0 1rem" }}>
+            <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.72rem", margin:"0 0 1rem" }}>
               No crew online. Survive <span style={{ color:"#966bec" }}>THE RECURSION</span> to bring the first agent aboard.
             </p>
           ) : (
-            <p style={{ color:"rgba(74,222,128,0.55)", fontSize:"0.72rem", margin:"0 0 1rem", fontFamily:"monospace" }}>
-              {unlocked.length} of {AGENT_DEFS.length} crew active — The Signal carries them forward
+            <p style={{ color: deployCount > 0 ? "rgba(74,222,128,0.5)" : "rgba(255,255,255,0.2)",
+              fontSize:"0.7rem", margin:"0 0 1rem", fontFamily:"monospace" }}>
+              {deployCount > 0
+                ? `${deployCount} of ${unlocked.length} crew deployed — The Signal carries them forward`
+                : "No crew deployed — run solo"}
             </p>
           )}
-          <button onClick={onClose} style={{ background:"transparent", border:"1px solid rgba(150,107,236,0.3)", borderRadius:"4px", padding:"0.45rem 1.5rem", color:"#966bec", cursor:"pointer", fontSize:"0.8rem" }}>
-            Close
+          <button onClick={onClose} style={{ background:"transparent", border:"1px solid rgba(150,107,236,0.3)",
+            borderRadius:"4px", padding:"0.45rem 1.5rem", color:"#966bec", cursor:"pointer", fontSize:"0.8rem" }}>
+            Launch run
           </button>
         </div>
 
