@@ -14,6 +14,25 @@ const STORY_WORDS = ["as a user", "I want to", "so that I", "acceptance criteria
 const POWERUP_WORDS = ["KNOWLEDGE", "FLAG", "ENGAGE", "TIMEBOX"]
 const SDLC_PHASES = ["DISCOVER", "DEFINE", "DESIGN", "DELIVER"]
 
+// ── Upgrades ───────────────────────────────────────────────────────────────
+interface UpgradeDef { id: string; name: string; desc: string; max: number; instant?: (g: GState) => void }
+const UPGRADES: UpgradeDef[] = [
+  { id: "fire_rate",    name: "QA Cadence",           desc: "Fire 15% faster. Stacks 4×.",         max: 4 },
+  { id: "word_slow",    name: "Scope Freeze",          desc: "Words fall 15% slower. Stacks 3×.",   max: 3 },
+  { id: "score_mul",    name: "Stakeholder Approval",  desc: "+20% score per kill. Stacks 3×.",      max: 3 },
+  { id: "triple",       name: "Triple Output",         desc: "Always fire 3 bullets.",               max: 1 },
+  { id: "spray",        name: "Spray & Pray",          desc: "Fire 5 bullets in a wide arc.",        max: 1 },
+  { id: "piercing",     name: "Context Anchor",        desc: "Bullets pierce through words.",        max: 1 },
+  { id: "shield_regen", name: "Auto Firewall",         desc: "Shield recharges every 25 seconds.",   max: 1 },
+  { id: "extra_life",   name: "Rollback",              desc: "Restore +1 life immediately.",         max: 3,
+    instant: (g) => { g.lives = Math.min(g.lives + 1, MAX_LIVES + 2); } },
+]
+
+function pickUpgrades(current: Record<string, number>): UpgradeDef[] {
+  const available = UPGRADES.filter(u => (current[u.id] ?? 0) < u.max)
+  return [...available].sort(() => Math.random() - 0.5).slice(0, Math.min(3, available.length))
+}
+
 const BOSSES = [
   { name: "THE BACKLOG",    hp: 30,  color: "#f87171", shootInterval: 90 },
   { name: "SPRINT ZERO",   hp: 50,  color: "#fb923c", shootInterval: 70 },
@@ -65,6 +84,7 @@ interface GState {
   keys: Set<string>; lastShot: number; lastWord: number; wordsKilled: number; bossSpawned: boolean
   shield: boolean; shieldEnd: number; triple: boolean; tripleEnd: number; fast: boolean; fastEnd: number
   invuln: boolean; invulnEnd: number; W: number; running: boolean
+  upgrades: Record<string, number>; shieldRegenAt: number
 }
 
 function initState(W: number): GState {
@@ -74,6 +94,7 @@ function initState(W: number): GState {
     keys: new Set(), lastShot: 0, lastWord: 0, wordsKilled: 0, bossSpawned: false,
     shield: false, shieldEnd: 0, triple: false, tripleEnd: 0, fast: false, fastEnd: 0,
     invuln: false, invulnEnd: 0, W, running: false,
+    upgrades: {}, shieldRegenAt: 0,
   }
 }
 
@@ -84,7 +105,7 @@ export default function HomePage() {
   const rafRef    = useRef(0)
   const G         = useRef<GState>(initState(GW))
 
-  const [phase, setPhase]           = useState<"attract"|"playing"|"capy"|"over">("attract")
+  const [phase, setPhase]           = useState<"attract"|"playing"|"capy"|"upgrade"|"over">("attract")
   const [score, setScore]           = useState(0)
   const [level, setLevel]           = useState(1)
   const [lives, setLives]           = useState(MAX_LIVES)
@@ -93,6 +114,8 @@ export default function HomePage() {
   const capyIdxRef                  = useRef(0)
   const capyLinesRef                = useRef<string[]>([])
   const phaseRef                    = useRef("attract")
+  const pendingCapyRef              = useRef<string[]>([])
+  const [upgradeOptions, setUpgradeOptions] = useState<UpgradeDef[]>([])
 
   function startGame() {
     const g = G.current
@@ -102,6 +125,19 @@ export default function HomePage() {
     setScore(0); setLevel(1); setLives(MAX_LIVES)
     phaseRef.current = "playing"
     setPhase("playing")
+  }
+
+  function onUpgradePick(id: string) {
+    const g = G.current
+    g.upgrades[id] = (g.upgrades[id] ?? 0) + 1
+    const def = UPGRADES.find(u => u.id === id)
+    if (def?.instant) def.instant(g)
+    setLives(g.lives)
+    const lines = pendingCapyRef.current
+    capyLinesRef.current = lines; capyIdxRef.current = 0
+    setCapyLines(lines); setCapyIdx(0)
+    pendingCapyRef.current = []
+    phaseRef.current = "capy"; setPhase("capy")
   }
 
   function advanceCapy() {
@@ -180,12 +216,26 @@ export default function HomePage() {
       if (g.keys.has("ArrowLeft") || g.keys.has("a")) g.px = Math.max(20, g.px - spd)
       if (g.keys.has("ArrowRight") || g.keys.has("d")) g.px = Math.min(g.W - 20, g.px + spd)
 
+      // shield regen upgrade — init timer on first tick after acquiring
+      if (g.upgrades.shield_regen) {
+        if (g.shieldRegenAt === 0) g.shieldRegenAt = now + 25000
+        if (!g.shield && now > g.shieldRegenAt) {
+          g.shield = true; g.shieldEnd = now + 20000; g.shieldRegenAt = now + 25000
+        }
+      }
+
       // shoot
-      if (g.keys.has(" ") && now - g.lastShot > 175) {
-        g.bullets.push({ x: g.px, y: PLAYER_Y - 20 })
-        if (g.triple) {
-          g.bullets.push({ x: g.px - 16, y: PLAYER_Y - 14 })
-          g.bullets.push({ x: g.px + 16, y: PLAYER_Y - 14 })
+      const fireInterval = Math.max(75, 175 - (g.upgrades.fire_rate ?? 0) * 22)
+      if (g.keys.has(" ") && now - g.lastShot > fireInterval) {
+        if (g.upgrades.spray) {
+          for (let a = -2; a <= 2; a++)
+            g.bullets.push({ x: g.px + a * 10, y: PLAYER_Y - 20, vx: a * 0.8 })
+        } else {
+          g.bullets.push({ x: g.px, y: PLAYER_Y - 20 })
+          if (g.triple || g.upgrades.triple) {
+            g.bullets.push({ x: g.px - 16, y: PLAYER_Y - 14 })
+            g.bullets.push({ x: g.px + 16, y: PLAYER_Y - 14 })
+          }
         }
         g.lastShot = now
         sfx.shoot()
@@ -201,7 +251,8 @@ export default function HomePage() {
           if (roll < 0.14) { type = "bug";     text = BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)] }
           else if (roll < 0.21) { type = "powerup"; text = POWERUP_WORDS[Math.floor(Math.random() * POWERUP_WORDS.length)] }
           else              { text = STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)] }
-          const spd2 = 1.3 + g.level * 0.25 + (g.endless ? Math.floor(g.score / 800) * 0.12 : 0)
+          const slowFactor = Math.pow(0.85, g.upgrades.word_slow ?? 0)
+          const spd2 = (1.3 + g.level * 0.25 + (g.endless ? Math.floor(g.score / 800) * 0.12 : 0)) * slowFactor
           g.words.push({ x: 30 + Math.random() * (g.W - 60), y: -18, text, type, spd: spd2 })
         }
       }
@@ -280,14 +331,14 @@ export default function HomePage() {
           const w = g.words[j]
           const hw = w.text.length * 5.5 + 8
           if (Math.abs(b.x - w.x) < hw && Math.abs(b.y - w.y) < 14) {
-            g.score += w.type === "bug" ? 75 : w.type === "powerup" ? 0 : 10
+            const base = w.type === "bug" ? 75 : w.type === "powerup" ? 0 : 10
+            g.score += Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0))
             g.kills++; g.wordsKilled++
             if (w.type === "powerup") applyPowerup(g, w.text, now)
             spawnLetterExplosion(g, w)
             sfx.kill()
             g.words.splice(j, 1)
-            g.bullets.splice(i, 1)
-            continue outer
+            if (g.upgrades.piercing) { break } else { g.bullets.splice(i, 1); continue outer }
           }
         }
       }
@@ -311,12 +362,11 @@ export default function HomePage() {
               const lvl = g.level
               g.level++
               setLevel(g.level); setScore(g.score); setLives(g.lives)
-              const lines = CAPY_DIALOG[lvl - 1] || ["You made it.", "Keep shipping."]
-              capyLinesRef.current = lines
-              capyIdxRef.current = 0
-              setCapyLines(lines); setCapyIdx(0)
-              phaseRef.current = "capy"
-              setPhase("capy")
+              pendingCapyRef.current = CAPY_DIALOG[lvl - 1] || ["You made it.", "Keep shipping."]
+              const opts = pickUpgrades(g.upgrades)
+              setUpgradeOptions(opts)
+              phaseRef.current = "upgrade"
+              setPhase("upgrade")
               break
             }
           }
@@ -416,6 +466,10 @@ export default function HomePage() {
                 )}
               </div>
             </Overlay>
+          )}
+
+          {phase === "upgrade" && (
+            <UpgradeScreen options={upgradeOptions} onPick={onUpgradePick} />
           )}
 
           {phase === "over" && (
@@ -601,6 +655,30 @@ function Overlay({ children, onClick }: { children: React.ReactNode; onClick: ()
   return (
     <div onClick={onClick} style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(20,20,26,0.97)", cursor:"pointer", zIndex:10 }}>
       <div style={{ textAlign:"center", padding:"1.5rem" }}>{children}</div>
+    </div>
+  )
+}
+
+function UpgradeScreen({ options, onPick }: { options: UpgradeDef[]; onPick: (id: string) => void }) {
+  return (
+    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(20,20,26,0.97)", zIndex:10 }}>
+      <div style={{ width:"100%", maxWidth:"580px", padding:"1.5rem" }}>
+        <p style={{ textAlign:"center", color:"#a09fa2", fontSize:"0.72rem", fontFamily:"monospace", marginBottom:"1.25rem", letterSpacing:"0.12em" }}>
+          CHOOSE UPGRADE
+        </p>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.75rem" }}>
+          {options.map(u => (
+            <button key={u.id} onClick={() => onPick(u.id)}
+              style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"1.25rem 1rem", textAlign:"left", cursor:"pointer", display:"block", width:"100%" }}
+              onMouseEnter={e => (e.currentTarget.style.borderColor = "rgba(150,107,236,0.45)")}
+              onMouseLeave={e => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.07)")}
+            >
+              <p style={{ color:"#966bec", fontWeight:600, fontSize:"0.875rem", marginBottom:"0.4rem" }}>{u.name}</p>
+              <p style={{ color:"#a09fa2", fontSize:"0.75rem", lineHeight:1.55 }}>{u.desc}</p>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
