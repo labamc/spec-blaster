@@ -217,6 +217,18 @@ const AGENT_DEFS: AgentDef[] = [
   { id: "claude_sec",    name: "CLAUDE SEC",    role: "Isolation",   desc: "2s containment per sector entry",    station: "SECURITY",  unlockNote: "100 kills in recursion" },
 ]
 
+// ── Merc Agents (purchasable via CLI) ─────────────────────────────────────
+interface MercAgentDef { id: string; name: string; role: string; desc: string; station: string; cost: number }
+const MERC_AGENTS: MercAgentDef[] = [
+  { id: "claude_ops",  name: "CLAUDE OPS",  role: "Operations", desc: "Fire rate +15% / upgrade",               station: "OPS",      cost: 800  },
+  { id: "claude_data", name: "CLAUDE DATA", role: "Analytics",  desc: "+10% score on every kill",               station: "ANALYTICS",cost: 600  },
+  { id: "claude_exec", name: "CLAUDE EXEC", role: "Strategy",   desc: "Revive once per sector at 1 HP",         station: "STRATEGY", cost: 1000 },
+]
+const AGENT_UPGRADE_COSTS = [400, 800] // first upgrade, second upgrade
+const MAX_AGENT_UPGRADES = 2
+// All agent IDs (core + mercs combined)
+const ALL_AGENT_IDS = [...AGENT_DEFS.map(a => a.id), ...MERC_AGENTS.map(a => a.id)]
+
 // ── Audio ──────────────────────────────────────────────────────────────────
 let audioCtx: AudioContext | null = null
 function getAudio() {
@@ -316,6 +328,7 @@ interface GState {
   redFlash: number; whiteFlash: number; lastMiniAt: number
   pb: number; pbShown: boolean; shotsFired: number
   activeAgents: string[]; endlessWave: number; secUnlockTriggered: boolean
+  agentUpgrades: Record<string,number>; agentSectorRevived: boolean
   laserChargeStart: number; laserFireEnd: number; laserCooldownEnd: number
   mines: Mine[]; lastMine: number; dropMine: boolean
   trail: Array<{x: number; y: number}>
@@ -350,6 +363,7 @@ function initState(W: number): GState {
     redFlash: 0, whiteFlash: 0, lastMiniAt: 0,
     pb: 0, pbShown: false, shotsFired: 0,
     activeAgents: [], endlessWave: 0, secUnlockTriggered: false,
+    agentUpgrades: {}, agentSectorRevived: false,
     laserChargeStart: 0, laserFireEnd: 0, laserCooldownEnd: 0,
     mines: [], lastMine: 0, dropMine: false,
     trail: [],
@@ -385,6 +399,8 @@ export default function HomePage() {
   const [isTouchDevice, setIsTouchDevice]         = useState(false)
   const [unlockedAgents, setUnlockedAgents] = useState<string[]>([])
   const [selectedAgents, setSelectedAgents] = useState<string[]>([])
+  const [agentUpgrades, setAgentUpgrades] = useState<Record<string,number>>({})
+  const [agentNames, setAgentNames] = useState<Record<string,string>>({})
   const [showAgentModule, setShowAgentModule] = useState(false)
   const unlockAgentRef = useRef<(id: string) => void>(() => {})
 
@@ -406,6 +422,8 @@ export default function HomePage() {
         setSelectedAgents(sel ? sel.split(",").filter(Boolean) : agents)
       }
     } catch {}
+    try { const au = localStorage.getItem("sb_agent_upgrades"); if (au) setAgentUpgrades(JSON.parse(au)) } catch {}
+    try { const an = localStorage.getItem("sb_agent_names"); if (an) setAgentNames(JSON.parse(an)) } catch {}
     setIsTouchDevice("ontouchstart" in window || navigator.maxTouchPoints > 0)
   }, [])
 
@@ -416,6 +434,8 @@ export default function HomePage() {
     Object.assign(g, initState(W))
     g.pb = pb; g.pbShown = pb === 0
     g.activeAgents = selectedAgents.filter(id => unlockedAgents.includes(id))
+    g.agentUpgrades = { ...agentUpgrades }
+    g.agentSectorRevived = false
     g.running = true
     setShowAgentModule(false)
     g.waveAnn = { text: `SECTOR 1 · ${BOSSES[0].name}`, t: 0 }
@@ -466,6 +486,7 @@ export default function HomePage() {
       const g = G.current
       g.running = true; g.bossSpawned = false; g.wordsKilled = 0
       g.livesAtWave = g.lives; g.sectorClearAt = 0; g.lastMsWave = -1
+      g.agentSectorRevived = false
       // Activate endless mode when entering level 5+
       if (g.level > 4) {
         g.endless = true
@@ -480,8 +501,11 @@ export default function HomePage() {
         g.waveAnn = { text: "INFINITE RECURSION · CARRY THE SIGNAL", t: 0 }
       }
       // CLAUDE SEC: brief invuln at each wave start
+      // claude_sec: containment scales lv1→2s, lv2→3s, lv3→4.5s
       if (g.activeAgents.includes("claude_sec")) {
-        g.invuln = true; g.invulnEnd = Date.now() + 2000
+        const secLv = 1 + (g.agentUpgrades.claude_sec ?? 0)
+        const secDur = secLv >= 3 ? 4500 : secLv >= 2 ? 3000 : 2000
+        g.invuln = true; g.invulnEnd = Date.now() + secDur
       }
       phaseRef.current = "playing"; setPhase("playing")
     }
@@ -622,9 +646,10 @@ export default function HomePage() {
       if (g.fast   && now > g.fastEnd)   g.fast   = false
       if (g.invuln && now > g.invulnEnd) g.invuln = false
 
-      // shield regen upgrade
+      // shield regen upgrade (claude_qa scales: base 17s → lv2 13s → lv3 10s)
       if (g.upgrades.shield_regen) {
-        const srInterval = g.activeAgents.includes("claude_qa") ? 17000 : 25000
+        const qaLv = g.activeAgents.includes("claude_qa") ? 1 + (g.agentUpgrades.claude_qa ?? 0) : 0
+        const srInterval = qaLv >= 3 ? 10000 : qaLv >= 2 ? 13000 : qaLv >= 1 ? 17000 : 25000
         if (g.shieldRegenAt === 0) g.shieldRegenAt = now + srInterval
         if (!g.shield && now > g.shieldRegenAt) {
           g.shield = true; g.shieldEnd = now + 20000; g.shieldRegenAt = now + srInterval
@@ -719,8 +744,13 @@ export default function HomePage() {
       }
 
       // shoot — laser charging logic
-      const engMul = g.activeAgents.includes("claude_eng") ? 0.88 : 1
-      const fireInterval = Math.max(75, (175 - (g.upgrades.fire_rate ?? 0) * 22) * engMul)
+      // claude_eng scales: base 12% faster → lv2 18% → lv3 25%
+      const engLv = g.activeAgents.includes("claude_eng") ? 1 + (g.agentUpgrades.claude_eng ?? 0) : 0
+      const engMul = engLv >= 3 ? 0.75 : engLv >= 2 ? 0.82 : engLv >= 1 ? 0.88 : 1
+      // claude_ops: additional fire rate bonus (lv1→15%, lv2→22%, lv3→28%)
+      const opsLv = g.activeAgents.includes("claude_ops") ? 1 + (g.agentUpgrades.claude_ops ?? 0) : 0
+      const opsMul = opsLv >= 3 ? 0.72 : opsLv >= 2 ? 0.78 : opsLv >= 1 ? 0.85 : 1
+      const fireInterval = Math.max(75, (175 - (g.upgrades.fire_rate ?? 0) * 22) * engMul * opsMul)
 
       if (g.upgrades.laser) {
         if (g.keys.has(" ") && now > g.laserCooldownEnd) {
@@ -806,7 +836,9 @@ export default function HomePage() {
             }
           }
           const slowFactor = Math.pow(0.85, g.upgrades.word_slow ?? 0)
-          const designMul = g.activeAgents.includes("claude_design") ? 0.88 : 1
+          // claude_design scales: base 12% slower → lv2 20% → lv3 28%
+          const designLv = g.activeAgents.includes("claude_design") ? 1 + (g.agentUpgrades.claude_design ?? 0) : 0
+          const designMul = designLv >= 3 ? 0.72 : designLv >= 2 ? 0.80 : designLv >= 1 ? 0.88 : 1
           // Speed: sector 1 ~1.55, sector 4 ~2.2, endless scales up gently
           const spd2 = (1.3 + g.level * 0.22 + (g.endless ? Math.floor(g.score / 800) * 0.1 : 0)) * slowFactor * designMul
           const br = Math.random()
@@ -1391,8 +1423,13 @@ export default function HomePage() {
             const base = w.type === "bug" ? 75 : w.type === "powerup" ? 0 : 10
             const eliteMul = w.elite ? 3 : 1
             const mult = g.combo >= 3 ? 1 + (g.combo - 2) * 0.2 : 1
-            const pmMul = g.activeAgents.includes("claude_pm") ? 1.15 : 1
-            const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul * pmMul)
+            // claude_pm scales: base +15% → lv2 +22% → lv3 +30%
+            const pmLv = g.activeAgents.includes("claude_pm") ? 1 + (g.agentUpgrades.claude_pm ?? 0) : 0
+            const pmMul = pmLv >= 3 ? 1.30 : pmLv >= 2 ? 1.22 : pmLv >= 1 ? 1.15 : 1
+            // claude_data: +10% score per upgrade level (mercs don't have boss unlocks)
+            const dataLv = g.activeAgents.includes("claude_data") ? 1 + (g.agentUpgrades.claude_data ?? 0) : 0
+            const dataMul = 1 + dataLv * 0.10
+            const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul * pmMul * dataMul)
             g.score += pts
             g.kills++; g.wordsKilled++
             // "one kill to boss" capy warning (non-endless only)
@@ -1719,9 +1756,11 @@ export default function HomePage() {
         sfx.newPB()
       }
 
-      // endless life regen every 5000 pts
-      if (g.endless && g.score >= (g.activeAgents.includes("claude_infra") ? 4000 : 5000)) {
-        const lifeStep = g.activeAgents.includes("claude_infra") ? 4000 : 5000
+      // endless life regen (claude_infra scales: base 4k → lv2 3k → lv3 2k)
+      const infraLv = g.activeAgents.includes("claude_infra") ? 1 + (g.agentUpgrades.claude_infra ?? 0) : 0
+      const infraStep = infraLv >= 3 ? 2000 : infraLv >= 2 ? 3000 : infraLv >= 1 ? 4000 : 5000
+      if (g.endless && g.score >= infraStep) {
+        const lifeStep = infraStep
         const lifeM = Math.floor(g.score / lifeStep) * lifeStep
         if (lifeM > g.lastLifeRegen && g.lives < MAX_LIVES) {
           g.lastLifeRegen = lifeM
@@ -1777,6 +1816,19 @@ export default function HomePage() {
     }
 
     function loseLife(g: GState, now: number) {
+      // claude_exec: revive once per sector before losing a life
+      if (g.activeAgents.includes("claude_exec") && !g.agentSectorRevived && g.lives <= 1) {
+        g.agentSectorRevived = true
+        g.shake = 18; g.whiteFlash = 20; g.invuln = true; g.invulnEnd = now + 2500
+        g.particles.push({ x: g.px, y: g.py, vx: 0, vy: 0, life: 0.9, initLife: 0.9, glyph: "", col: "#a78bfa", ring: true })
+        for (let i = 0; i < 20; i++) {
+          const a = (i / 20) * Math.PI * 2
+          g.particles.push({ x: g.px, y: g.py, vx: Math.cos(a)*6, vy: Math.sin(a)*6, life: 1.0, glyph: "✦", col: "#a78bfa" })
+        }
+        showCapyMsg(g, "EXEC override.\nSignal preserved.\nLast stand.", now)
+        sfx.shield()
+        return
+      }
       g.lives--; g.shake = 14; g.redFlash = 16; setLives(g.lives); sfx.hit()
       g.invuln = true; g.invulnEnd = now + 1600
       const hitLines = [
@@ -1948,7 +2000,44 @@ export default function HomePage() {
             />
           )}
 
-          {phase === "upgrade" && <CLIScreen options={upgradeOptions} onPick={onUpgradePick} score={score} kills={G.current.kills} onReroll={() => pickUpgrades(G.current.upgrades)} />}
+          {phase === "upgrade" && <CLIScreen
+            options={upgradeOptions}
+            onPick={onUpgradePick}
+            score={score}
+            kills={G.current.kills}
+            onReroll={() => pickUpgrades(G.current.upgrades)}
+            crew={{ unlocked: unlockedAgents, selected: selectedAgents, upgrades: agentUpgrades, names: agentNames }}
+            onAgentHire={(id) => {
+              setUnlockedAgents(prev => {
+                const next = prev.includes(id) ? prev : [...prev, id]
+                try { localStorage.setItem("sb_agents", next.join(",")) } catch {}
+                return next
+              })
+              setSelectedAgents(prev => {
+                const next = prev.includes(id) ? prev : [...prev, id]
+                try { localStorage.setItem("sb_selected_agents", next.join(",")) } catch {}
+                return next
+              })
+              // Also apply to current game immediately
+              if (!G.current.activeAgents.includes(id)) G.current.activeAgents.push(id)
+            }}
+            onAgentUpgrade={(id) => {
+              setAgentUpgrades(prev => {
+                const next = { ...prev, [id]: (prev[id] ?? 0) + 1 }
+                try { localStorage.setItem("sb_agent_upgrades", JSON.stringify(next)) } catch {}
+                // Apply to current game immediately
+                G.current.agentUpgrades = { ...next }
+                return next
+              })
+            }}
+            onAgentRename={(id, name) => {
+              setAgentNames(prev => {
+                const next = { ...prev, [id]: name }
+                try { localStorage.setItem("sb_agent_names", JSON.stringify(next)) } catch {}
+                return next
+              })
+            }}
+          />}
 
           {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} onRestart={startGame} unlockedAgents={unlockedAgents} onShowStack={() => setShowAgentModule(true)} endless={G.current.endless} endlessDepth={G.current.endlessWave} prevDepthBest={personalDepthBest} />}
 
@@ -3117,9 +3206,20 @@ function matchUpgrade(cmd: string, options: UpgradeDef[]): UpgradeDef {
 
 const REROLL_BASE_COST = 120
 
-function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: {
+interface CrewState {
+  unlocked: string[]
+  selected: string[]
+  upgrades: Record<string,number>
+  names: Record<string,string>
+}
+
+function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll, crew, onAgentHire, onAgentUpgrade, onAgentRename }: {
   options: UpgradeDef[]; onPick: (id: string) => void; score: number; kills: number
   onReroll?: () => UpgradeDef[]
+  crew?: CrewState
+  onAgentHire?: (id: string) => void
+  onAgentUpgrade?: (id: string) => void
+  onAgentRename?: (id: string, name: string) => void
 }) {
   const totalTokens = Math.floor(score / 6) + kills * 3
   const [liveOptions, setLiveOptions] = useState(initialOptions)
@@ -3141,16 +3241,53 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: 
   // Auto-scroll
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior:"smooth" }) }, [lines])
 
+  // Build crew manifest lines for boot sequence
+  function buildCrewLines(): CLILine[] {
+    if (!crew) return []
+    const lines: CLILine[] = [
+      { text: "THE SIGNAL · CREW MANIFEST", type: "sys" },
+    ]
+    const deployed = [...AGENT_DEFS, ...MERC_AGENTS].filter(a => crew.selected.includes(a.id) && crew.unlocked.includes(a.id))
+    const available = AGENT_DEFS.filter(a => crew.unlocked.includes(a.id) && !crew.selected.includes(a.id))
+    const hirable = MERC_AGENTS.filter(a => !crew.unlocked.includes(a.id))
+    if (deployed.length > 0) {
+      lines.push({ text: "  DEPLOYED:", type: "dim" })
+      deployed.forEach(a => {
+        const upLv = crew.upgrades[a.id] ?? 0
+        const displayName = crew.names[a.id] ?? a.name
+        const lvTag = upLv > 0 ? ` lv.${upLv + 1}` : ""
+        lines.push({ text: `  ● ${displayName.padEnd(16)} ${a.role.padEnd(12)}${lvTag}`, type: "ok" })
+      })
+    }
+    if (available.length > 0) {
+      lines.push({ text: "  STANDBY:", type: "dim" })
+      available.forEach(a => {
+        lines.push({ text: `  ○ ${(crew.names[a.id] ?? a.name).padEnd(16)} ${a.role}`, type: "dim" })
+      })
+    }
+    if (hirable.length > 0) {
+      lines.push({ text: "  FOR HIRE:", type: "dim" })
+      hirable.forEach(a => {
+        lines.push({ text: `  ◇ ${a.name.padEnd(16)} ${a.role.padEnd(12)} ${a.cost} tokens`, type: "dim" })
+      })
+    }
+    lines.push({ text: `  type "crew" to view full manifest · "hire <name>" · "upgrade <name>" · "rename <name> <alias>"`, type: "dim" })
+    lines.push({ text: "", type: "blank" })
+    return lines
+  }
+
   // Boot sequence — shows options immediately so player can act fast
   useEffect(() => {
     const optLines: CLILine[] = initialOptions.map((o, i) => ({
       text: `  [${i+1}]  ${o.name.padEnd(22)}${o.desc}`,
       type: "dim" as CLILineType,
     }))
+    const crewLines = buildCrewLines()
     const boot: CLILine[] = [
       { text:"SIGNAL://runtime stabilized", type:"sys" },
       { text:`TOKENS AVAILABLE: ${totalTokens.toLocaleString()}`, type:"dim" },
       { text:"", type:"blank" },
+      ...crewLines,
       { text:"COMPILE TARGETS:", type:"sys" },
       ...optLines,
       { text:"", type:"blank" },
@@ -3159,7 +3296,7 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: 
     ]
     let i = 0
     const tick = () => {
-      if (i < boot.length) { setLines(prev => [...prev, boot[i++]]); setTimeout(tick, 42) }
+      if (i < boot.length) { setLines(prev => [...prev, boot[i++]]); setTimeout(tick, 38) }
       else { setPhase("ready"); setTimeout(() => inputRef.current?.focus(), 40) }
     }
     setTimeout(tick, 80)
@@ -3274,6 +3411,186 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: 
         { text:"AVAILABLE COMPILE TARGETS:", type:"sys" },
         ...liveOptions.map((o, i) => ({ text:`  [${i+1}]  ${o.name.padEnd(24)}${o.desc}`, type:"dim" as CLILineType })),
         canReroll ? { text:`  reroll  — spend ${rerollCost} tokens for new directives`, type:"dim" as CLILineType } : { text:"", type:"blank" as CLILineType },
+        { text:"", type:"blank" },
+        { text:"CREW COMMANDS:", type:"sys" as CLILineType },
+        { text:"  crew                    — view full crew manifest", type:"dim" as CLILineType },
+        { text:"  hire <name>             — recruit a merc agent", type:"dim" as CLILineType },
+        { text:"  upgrade <name>          — enhance an agent (400/800 tokens)", type:"dim" as CLILineType },
+        { text:"  rename <name> <alias>   — give an agent a callsign", type:"dim" as CLILineType },
+        { text:"", type:"blank" as CLILineType },
+      ])
+      setInput(""); return
+    }
+    // crew manifest command
+    if (cmd.toLowerCase() === "crew" || cmd.toLowerCase() === "manifest") {
+      setLines(prev => [...prev, { text:`> ${cmd}`, type:"cmd" }, { text:"", type:"blank" }])
+      if (!crew) {
+        setLines(prev => [...prev, { text:"SIGNAL://no crew data", type:"sys" }, { text:"", type:"blank" }])
+        setInput(""); return
+      }
+      const out: CLILine[] = [{ text:"THE SIGNAL · CREW MANIFEST", type:"sys" }]
+      const allAgents = [...AGENT_DEFS, ...MERC_AGENTS]
+      const deployed = allAgents.filter(a => crew.selected.includes(a.id) && crew.unlocked.includes(a.id))
+      const available = AGENT_DEFS.filter(a => crew.unlocked.includes(a.id) && !crew.selected.includes(a.id))
+      const hirable = MERC_AGENTS.filter(a => !crew.unlocked.includes(a.id))
+      out.push({ text:"──────────────────────────────────────", type:"dim" })
+      if (deployed.length > 0) {
+        out.push({ text:"  [DEPLOYED]", type:"ok" })
+        deployed.forEach(a => {
+          const upLv = crew.upgrades[a.id] ?? 0
+          const displayName = crew.names[a.id] ?? a.name
+          const lvStr = `lv.${upLv+1}/${MAX_AGENT_UPGRADES+1}`
+          const nextCost = upLv < MAX_AGENT_UPGRADES ? `  next upgrade: ${AGENT_UPGRADE_COSTS[upLv]} tokens` : "  [MAX LEVEL]"
+          out.push({ text:`  ● ${displayName.padEnd(18)} ${lvStr.padEnd(8)} ${a.role}`, type:"ok" })
+          out.push({ text:`    ${a.desc}${nextCost}`, type:"dim" })
+        })
+      }
+      if (available.length > 0) {
+        out.push({ text:"", type:"blank" })
+        out.push({ text:"  [STANDBY — not active this game]", type:"dim" })
+        available.forEach(a => {
+          out.push({ text:`  ○ ${(crew.names[a.id] ?? a.name).padEnd(18)} ${a.role}`, type:"dim" })
+        })
+      }
+      if (hirable.length > 0) {
+        out.push({ text:"", type:"blank" })
+        out.push({ text:"  [MERCS FOR HIRE]", type:"sys" })
+        hirable.forEach(a => {
+          out.push({ text:`  ◇ ${a.name.padEnd(18)} ${a.cost} tokens  — ${a.desc}`, type:"dim" })
+          out.push({ text:`    type: hire ${a.id.replace("claude_","")}`, type:"dim" })
+        })
+      }
+      out.push({ text:"──────────────────────────────────────", type:"dim" })
+      out.push({ text:"", type:"blank" })
+      setLines(prev => [...prev, ...out])
+      setInput(""); return
+    }
+    // hire command — recruit merc agent
+    const hireMatch = cmd.match(/^hire\s+(.+)$/i)
+    if (hireMatch) {
+      const target = hireMatch[1].trim().toLowerCase()
+      const merc = MERC_AGENTS.find(a =>
+        a.name.toLowerCase().includes(target) ||
+        a.id.toLowerCase().includes(target) ||
+        a.id.replace("claude_","").includes(target) ||
+        a.role.toLowerCase().includes(target)
+      )
+      setLines(prev => [...prev, { text:`> ${cmd}`, type:"cmd" }, { text:"", type:"blank" }])
+      if (!merc) {
+        setLines(prev => [...prev,
+          { text:"SIGNAL://target not found", type:"sys" },
+          { text:`Available mercs: ${MERC_AGENTS.map(a => a.name).join(" · ")}`, type:"dim" },
+          { text:"", type:"blank" },
+        ])
+        setInput(""); return
+      }
+      if (crew?.unlocked.includes(merc.id)) {
+        setLines(prev => [...prev,
+          { text:`SIGNAL://already on crew — ${merc.name}`, type:"sys" },
+          { text:"", type:"blank" },
+        ])
+        setInput(""); return
+      }
+      if (tokensAvailable < merc.cost) {
+        setLines(prev => [...prev,
+          { text:`SIGNAL://insufficient tokens — need ${merc.cost.toLocaleString()}`, type:"sys" },
+          { text:`Available: ${tokensAvailable.toLocaleString()} · short by ${(merc.cost - tokensAvailable).toLocaleString()}`, type:"dim" },
+          { text:"", type:"blank" },
+        ])
+        setInput(""); return
+      }
+      setTokensSpent(t => t + merc.cost)
+      onAgentHire?.(merc.id)
+      setLines(prev => [...prev,
+        { text:"SIGNAL://contract executed", type:"sys" },
+        { text:`${merc.name} · ${merc.role} joined the crew`, type:"ok" },
+        { text:`> ${merc.desc}`, type:"ok" },
+        { text:`TOKENS CONSUMED: ${merc.cost.toLocaleString()} · remaining: ${(tokensAvailable - merc.cost).toLocaleString()}`, type:"dim" },
+        { text:"SIGNAL://agent active next sector", type:"sys" },
+        { text:"", type:"blank" },
+      ])
+      setInput(""); return
+    }
+    // upgrade command — level up an agent
+    const upgradeMatch = cmd.match(/^upgrade\s+(.+)$/i)
+    if (upgradeMatch) {
+      const target = upgradeMatch[1].trim().toLowerCase()
+      const allAgents = [...AGENT_DEFS, ...MERC_AGENTS]
+      const agent = allAgents.find(a =>
+        crew?.unlocked.includes(a.id) && (
+          a.name.toLowerCase().includes(target) ||
+          a.id.replace("claude_","").includes(target) ||
+          a.role.toLowerCase().includes(target) ||
+          (crew?.names[a.id] ?? "").toLowerCase().includes(target)
+        )
+      )
+      setLines(prev => [...prev, { text:`> ${cmd}`, type:"cmd" }, { text:"", type:"blank" }])
+      if (!agent) {
+        const activeIds = [...AGENT_DEFS,...MERC_AGENTS].filter(a => crew?.unlocked.includes(a.id))
+        setLines(prev => [...prev,
+          { text:"SIGNAL://agent not found in crew", type:"sys" },
+          { text:`Crew: ${activeIds.map(a => crew?.names[a.id] ?? a.name).join(" · ") || "none"}`, type:"dim" },
+          { text:"", type:"blank" },
+        ])
+        setInput(""); return
+      }
+      const currentLv = crew?.upgrades[agent.id] ?? 0
+      if (currentLv >= MAX_AGENT_UPGRADES) {
+        setLines(prev => [...prev,
+          { text:`SIGNAL://agent at max level`, type:"sys" },
+          { text:`${crew?.names[agent.id] ?? agent.name} is level ${currentLv+1}/${MAX_AGENT_UPGRADES+1} — no further upgrades`, type:"dim" },
+          { text:"", type:"blank" },
+        ])
+        setInput(""); return
+      }
+      const cost = AGENT_UPGRADE_COSTS[currentLv]
+      if (tokensAvailable < cost) {
+        setLines(prev => [...prev,
+          { text:`SIGNAL://insufficient tokens — need ${cost.toLocaleString()}`, type:"sys" },
+          { text:`Available: ${tokensAvailable.toLocaleString()} · short by ${(cost - tokensAvailable).toLocaleString()}`, type:"dim" },
+          { text:"", type:"blank" },
+        ])
+        setInput(""); return
+      }
+      setTokensSpent(t => t + cost)
+      onAgentUpgrade?.(agent.id)
+      const newLv = currentLv + 2
+      setLines(prev => [...prev,
+        { text:"SIGNAL://upgrade compiled", type:"sys" },
+        { text:`${crew?.names[agent.id] ?? agent.name} → level ${newLv}/${MAX_AGENT_UPGRADES+1}`, type:"ok" },
+        { text:`> ${agent.desc} (enhanced)`, type:"ok" },
+        { text:`TOKENS CONSUMED: ${cost.toLocaleString()} · remaining: ${(tokensAvailable - cost).toLocaleString()}`, type:"dim" },
+        { text:"SIGNAL://upgrade active next sector", type:"sys" },
+        { text:"", type:"blank" },
+      ])
+      setInput(""); return
+    }
+    // rename command — give an agent a callsign
+    const renameMatch = cmd.match(/^rename\s+(\S+)\s+(.+)$/i)
+    if (renameMatch) {
+      const target = renameMatch[1].trim().toLowerCase()
+      const newName = renameMatch[2].trim().toUpperCase().slice(0, 24)
+      const allAgents = [...AGENT_DEFS, ...MERC_AGENTS]
+      const agent = allAgents.find(a =>
+        crew?.unlocked.includes(a.id) && (
+          a.name.toLowerCase().includes(target) ||
+          a.id.replace("claude_","").includes(target) ||
+          (crew?.names[a.id] ?? "").toLowerCase().includes(target)
+        )
+      )
+      setLines(prev => [...prev, { text:`> ${cmd}`, type:"cmd" }, { text:"", type:"blank" }])
+      if (!agent) {
+        setLines(prev => [...prev,
+          { text:"SIGNAL://agent not found — must be in your crew", type:"sys" },
+          { text:"", type:"blank" },
+        ])
+        setInput(""); return
+      }
+      onAgentRename?.(agent.id, newName)
+      setLines(prev => [...prev,
+        { text:"SIGNAL://callsign updated", type:"sys" },
+        { text:`${agent.name} → ${newName}`, type:"ok" },
+        { text:"Identity persists across sectors.", type:"dim" },
         { text:"", type:"blank" },
       ])
       setInput(""); return
