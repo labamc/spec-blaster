@@ -69,6 +69,9 @@ const UPGRADES: UpgradeDef[] = [
   { id: "extra_life",   name: "Rollback",             desc: "Restore +1 life immediately.",            max: 3,
     instant: (g) => { g.lives = Math.min(g.lives + 1, MAX_LIVES + 2) } },
   { id: "auto_fire",    name: "Daily Stand-Up",        desc: "Auto-fires at the nearest word every 3s.", max: 1 },
+  { id: "laser",        name: "Laser Pulse",           desc: "Hold SPACE to charge beam. Release to fire a column.", max: 1 },
+  { id: "cluster",      name: "Chain Reaction",        desc: "Each kill spawns 4 shrapnel that hit nearby patterns.", max: 1 },
+  { id: "mine",         name: "Mine Layer",            desc: "M key drops proximity mines. Max 3 active.", max: 1 },
 ]
 
 function pickUpgrades(current: Record<string, number>): UpgradeDef[] {
@@ -168,12 +171,16 @@ const sfx = {
   clutch:   () => { tone(1400, 0.06, 0.3); setTimeout(() => tone(1800, 0.09, 0.35), 80) },
   miniBoss: () => { tone(440, 0.1, 0.28, "sawtooth"); setTimeout(() => tone(330, 0.15, 0.28, "sawtooth"), 140) },
   newPB:    () => { tone(660, 0.1, 0.3); setTimeout(() => tone(880, 0.1, 0.3), 110); setTimeout(() => tone(1100, 0.18, 0.38), 220) },
+  laser:    () => { tone(1800, 0.04, 0.15, "sawtooth"); setTimeout(() => tone(2400, 0.18, 0.28, "sawtooth"), 50); setTimeout(() => tone(900, 0.4, 0.35, "square"), 100) },
+  mineDrop: () => { tone(180, 0.07, 0.15); setTimeout(() => tone(120, 0.09, 0.12), 80) },
+  mineBlast:() => { tone(90, 0.4, 0.45, "sawtooth"); setTimeout(() => tone(70, 0.45, 0.35, "sawtooth"), 70); setTimeout(() => tone(440, 0.2, 0.25), 120) },
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Behavior = "fall" | "charge" | "zigzag" | "sine"
 interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean; age: number; regenBoss?: boolean }
-interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean }
+interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean; cluster?: boolean }
+interface Mine      { x: number; y: number; age: number; armAt: number }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
 interface Boss      { x: number; y: number; hp: number; maxHp: number; name: string; color: string; dir: number; t: number; phase: number; raged: boolean; halfTriggered: boolean }
@@ -194,6 +201,8 @@ interface GState {
   redFlash: number; whiteFlash: number; lastMiniAt: number
   pb: number; pbShown: boolean; shotsFired: number
   activeAgents: string[]; endlessWave: number; secUnlockTriggered: boolean
+  laserChargeStart: number; laserFireEnd: number; laserCooldownEnd: number
+  mines: Mine[]; lastMine: number; dropMine: boolean
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -222,6 +231,8 @@ function initState(W: number): GState {
     redFlash: 0, whiteFlash: 0, lastMiniAt: 0,
     pb: 0, pbShown: false, shotsFired: 0,
     activeAgents: [], endlessWave: 0, secUnlockTriggered: false,
+    laserChargeStart: 0, laserFireEnd: 0, laserCooldownEnd: 0,
+    mines: [], lastMine: 0, dropMine: false,
   }
 }
 
@@ -348,11 +359,14 @@ export default function HomePage() {
     window.addEventListener("resize", resize)
 
     function onKey(e: KeyboardEvent) {
-      if ([" ","ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) e.preventDefault()
+      if ([" ","ArrowLeft","ArrowRight","ArrowUp","ArrowDown","m","M"].includes(e.key)) e.preventDefault()
       if (e.type === "keydown") {
         G.current.keys.add(e.key)
         if ((e.key === "p" || e.key === "P" || e.key === "Escape") && phaseRef.current === "playing" && G.current.running) {
           G.current.paused = !G.current.paused
+        }
+        if ((e.key === "m" || e.key === "M") && G.current.upgrades.mine) {
+          G.current.dropMine = true
         }
       } else {
         G.current.keys.delete(e.key)
@@ -513,10 +527,30 @@ export default function HomePage() {
         })
       }
 
-      // shoot
+      // shoot — laser charging logic
       const engMul = g.activeAgents.includes("claude_eng") ? 0.88 : 1
       const fireInterval = Math.max(75, (175 - (g.upgrades.fire_rate ?? 0) * 22) * engMul)
-      if (g.keys.has(" ") && now - g.lastShot > fireInterval) {
+
+      if (g.upgrades.laser) {
+        if (g.keys.has(" ") && now > g.laserCooldownEnd) {
+          if (g.laserChargeStart === 0) g.laserChargeStart = now
+          // Auto-fire at full charge (1200ms)
+          if (now - g.laserChargeStart >= 1200) {
+            const power = 1.0
+            fireLaser(g, now, power, canvas.width)
+          }
+        } else if (!g.keys.has(" ") && g.laserChargeStart > 0) {
+          const held = now - g.laserChargeStart
+          if (held >= 400 && now > g.laserCooldownEnd) {
+            fireLaser(g, now, Math.min(1, held / 1200), canvas.width)
+          }
+          g.laserChargeStart = 0
+        }
+      }
+
+      // Normal shoot (suppressed if laser has been held > 300ms)
+      const laserCharging = g.upgrades.laser && g.laserChargeStart > 0 && (now - g.laserChargeStart) > 300
+      if (!laserCharging && g.keys.has(" ") && now - g.lastShot > fireInterval) {
         if (g.upgrades.spray) {
           for (let a = -2; a <= 2; a++)
             g.bullets.push({ x: g.px + a * 10, y: g.py - 20, vx: a * 0.8 })
@@ -529,6 +563,16 @@ export default function HomePage() {
         }
         g.lastShot = now; sfx.shoot()
         g.shotsFired += g.upgrades.spray ? 5 : (g.triple || g.upgrades.triple ? 3 : 1)
+      }
+
+      // Mine drop
+      if (g.dropMine) {
+        g.dropMine = false
+        if (g.mines.length < 3 && now - g.lastMine > 1200) {
+          g.mines.push({ x: g.px, y: g.py + 8, age: 0, armAt: now + 600 })
+          g.lastMine = now; sfx.mineDrop()
+          spawnParticles(g, g.px, g.py + 8, "#f59e0b", "◉", 4)
+        }
       }
 
       // auto-fire upgrade (Daily Stand-Up)
@@ -723,6 +767,7 @@ export default function HomePage() {
       g.bullets = g.bullets.filter(b => {
         b.y += b.vy ?? (b.enemy ? 4 : -9)
         if (b.vx) b.x += b.vx
+        if (b.cluster) return b.y < GH + 10 && b.y > -10 && b.x > -10 && b.x < g.W + 10
         return b.enemy ? b.y < GH + 10 : b.y > -10
       })
 
@@ -781,6 +826,7 @@ export default function HomePage() {
       for (let i = g.bullets.length - 1; i >= 0; i--) {
         if (g.bullets[i].enemy) continue
         const b = g.bullets[i]
+        const isClusterShot = b.cluster === true
         for (let j = g.words.length - 1; j >= 0; j--) {
           const w = g.words[j]
           const hw = w.text.length * 5.5 + 8
@@ -834,6 +880,14 @@ export default function HomePage() {
               showCapyMsg(g, "Close range.\nSignal holds.", now)
             }
             sfx.kill(g.combo)
+            // cluster shrapnel: 4 bullets fan upward, don't chain
+            if (g.upgrades.cluster && !isClusterShot && w.type !== "powerup") {
+              const spread = [Math.PI*1.25, Math.PI*1.6, Math.PI*1.85, Math.PI*2.1]
+              spread.forEach(ang => {
+                const jitter = (Math.random()-0.5)*0.4
+                g.bullets.push({ x: w.x, y: w.y, vx: Math.cos(ang+jitter)*8, vy: Math.sin(ang+jitter)*8, cluster: true })
+              })
+            }
             g.words.splice(j, 1)
             if (g.upgrades.piercing) { break } else { continue outer }
           }
@@ -861,57 +915,101 @@ export default function HomePage() {
               g.particles.push({ x: bx.x, y: bx.y - 20, vx: 0, vy: -1.2, life: 1.4, glyph: "ENRAGED", col: "#f87171", sz: 11 })
               showCapyMsg(g, "Pattern is escalating.\nIt knows you're here.", now)
             }
-            if (bx.hp <= 0) {
-              sfx.bossDead()
-              g.shake = 14
-              spawnParticles(g, bx.x, bx.y, bx.color, "★", g.endless ? 20 : 30)
-              bx.name.split("").forEach((ch, i2) => {
-                g.particles.push({
-                  x: bx.x + (i2 - bx.name.length/2) * 8, y: bx.y,
-                  vx: (Math.random()-0.5)*12, vy: -3 - Math.random()*6,
-                  life: 1.2, glyph: ch, col: bx.color,
-                  rot: (Math.random()-0.5)*1.5, rotV: (Math.random()-0.5)*0.25,
-                })
-              })
-              g.boss = null
-              if (g.endless) {
-                // Endless mini-boss: keep playing, drop a powerup
-                sfx.miniBoss()
-                g.score += 250
-                g.words.push({ x: bx.x, y: Math.min(bx.y + 55, GH - 80), text: "KNOWLEDGE", type: "powerup", spd: 0.85, beh: "fall", ph: 0, ox: bx.x, hp: 1, hitFlash: 0, elite: false, age: 7 })
-                showCapyMsg(g, "Pattern dissolved.\nThe Signal holds.", now)
-              } else {
-                // Story boss: transition to upgrade / capy screen
-                g.score += 500
-                if (g.lives >= g.livesAtWave) {
-                  g.score += 300
-                  g.particles.push({ x: bx.x, y: bx.y - 35, vx: 0, vy: -0.8, life: 1.8, glyph: "no regressions +300", col: "#4ade80", sz: 10 })
-                  showCapyMsg(g, "Signal intact.\nNo corruption.", now)
-                }
-                g.running = false
-                const lvl = g.level; g.level++
-                // Unlock agents as you clear each wave
-                const agentUnlocks: Record<number, string[]> = { 1: ["claude_pm"], 2: ["claude_qa"], 3: ["claude_eng"], 4: ["claude_design", "claude_infra"] }
-                ;(agentUnlocks[lvl] ?? []).forEach(id => unlockAgentRef.current(id))
-                if (lvl === 4) {
-                  g.shake = 22
-                  for (let ri = 0; ri < 55; ri++) {
-                    const ra = Math.random() * Math.PI * 2, rr = Math.random() * 130
-                    g.particles.push({ x: bx.x + Math.cos(ra)*rr, y: bx.y + Math.sin(ra)*rr, vx: Math.cos(ra)*9, vy: Math.sin(ra)*9, life: 1.6, glyph: "★", col: "#4ade80" })
+          }
+        }
+      }
+
+      // Mine updates: age, proximity trigger, expiry
+      if (g.mines.length > 0) {
+        const surviving: Mine[] = []
+        for (const mine of g.mines) {
+          mine.age++
+          let detonated = false
+          if (now >= mine.armAt) {
+            for (let wi = g.words.length - 1; wi >= 0; wi--) {
+              const w = g.words[wi]
+              if (Math.hypot(w.x - mine.x, w.y - mine.y) < 32) {
+                // Detonate!
+                const blastR = 65
+                let chain = 0
+                for (let wj = g.words.length - 1; wj >= 0; wj--) {
+                  const ww = g.words[wj]
+                  if (Math.hypot(ww.x - mine.x, ww.y - mine.y) < blastR) {
+                    spawnLetterExplosion(g, ww, 0, 1)
+                    g.score += ww.type === "bug" ? 75 : 10
+                    g.kills++; g.wordsKilled++; chain++
                   }
-                  g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.6, life: 2.4, glyph: "THE SIGNAL PERSISTS", col: "#4ade80", sz: 13 })
-                  showCapyMsg(g, "All collapses survived.\nThe Signal persists.\nInfinite recursion begins.", now)
                 }
-                setLevel(g.level); setScore(g.score); setLives(g.lives)
-                pendingCapyRef.current = CAPY_DIALOG[lvl - 1] || ["You made it.", "Keep shipping."]
-                const opts = pickUpgrades(g.upgrades)
-                upgradeOptionsRef.current = opts
-                setUpgradeOptions(opts)
-                phaseRef.current = "upgrade"; setPhase("upgrade")
+                g.words = g.words.filter(ww => Math.hypot(ww.x - mine.x, ww.y - mine.y) >= blastR)
+                if (g.boss && Math.hypot(g.boss.x - mine.x, g.boss.y - mine.y) < blastR + 40) {
+                  const mineDmg = 5
+                  g.boss.hp -= mineDmg
+                  spawnParticles(g, g.boss.x, g.boss.y, "#f59e0b", "★", 6)
+                  sfx.bossHit()
+                }
+                g.shake = 9; g.whiteFlash = 6; sfx.mineBlast()
+                for (let pi = 0; pi < 28; pi++) {
+                  const a = (pi / 28) * Math.PI * 2
+                  g.particles.push({ x: mine.x, y: mine.y, vx: Math.cos(a)*9, vy: Math.sin(a)*9, life: 1.1, glyph: "✦", col: "#f59e0b" })
+                }
+                g.particles.push({ x: mine.x, y: mine.y, vx: 0, vy: 0, life: 0.7, initLife: 0.7, glyph: "", col: "#f59e0b", ring: true })
+                if (chain > 0) g.particles.push({ x: mine.x, y: mine.y - 22, vx: 0, vy: -1.1, life: 1.5, glyph: `CHAIN ×${chain}`, col: "#f59e0b", sz: 12 })
+                detonated = true
+                break
               }
-              break
             }
           }
+          if (!detonated && mine.age < 960) surviving.push(mine) // ~16s lifespan
+        }
+        g.mines = surviving
+      }
+
+      // Boss death check — unified handler for bullets, laser, mines
+      if (g.boss && g.boss.hp <= 0) {
+        const bx = g.boss
+        sfx.bossDead()
+        g.shake = 14
+        spawnParticles(g, bx.x, bx.y, bx.color, "★", g.endless ? 20 : 30)
+        bx.name.split("").forEach((ch, i2) => {
+          g.particles.push({
+            x: bx.x + (i2 - bx.name.length/2) * 8, y: bx.y,
+            vx: (Math.random()-0.5)*12, vy: -3 - Math.random()*6,
+            life: 1.2, glyph: ch, col: bx.color,
+            rot: (Math.random()-0.5)*1.5, rotV: (Math.random()-0.5)*0.25,
+          })
+        })
+        g.boss = null; g.mines = [] // clear mines on boss death
+        if (g.endless) {
+          sfx.miniBoss()
+          g.score += 250
+          g.words.push({ x: bx.x, y: Math.min(bx.y + 55, GH - 80), text: "KNOWLEDGE", type: "powerup", spd: 0.85, beh: "fall", ph: 0, ox: bx.x, hp: 1, hitFlash: 0, elite: false, age: 7 })
+          showCapyMsg(g, "Pattern dissolved.\nThe Signal holds.", now)
+        } else {
+          g.score += 500
+          if (g.lives >= g.livesAtWave) {
+            g.score += 300
+            g.particles.push({ x: bx.x, y: bx.y - 35, vx: 0, vy: -0.8, life: 1.8, glyph: "no regressions +300", col: "#4ade80", sz: 10 })
+            showCapyMsg(g, "Signal intact.\nNo corruption.", now)
+          }
+          g.running = false
+          const lvl = g.level; g.level++
+          const agentUnlocks: Record<number, string[]> = { 1: ["claude_pm"], 2: ["claude_qa"], 3: ["claude_eng"], 4: ["claude_design", "claude_infra"] }
+          ;(agentUnlocks[lvl] ?? []).forEach(id => unlockAgentRef.current(id))
+          if (lvl === 4) {
+            g.shake = 22
+            for (let ri = 0; ri < 55; ri++) {
+              const ra = Math.random() * Math.PI * 2, rr = Math.random() * 130
+              g.particles.push({ x: bx.x + Math.cos(ra)*rr, y: bx.y + Math.sin(ra)*rr, vx: Math.cos(ra)*9, vy: Math.sin(ra)*9, life: 1.6, glyph: "★", col: "#4ade80" })
+            }
+            g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.6, life: 2.4, glyph: "THE SIGNAL PERSISTS", col: "#4ade80", sz: 13 })
+            showCapyMsg(g, "All collapses survived.\nThe Signal persists.\nInfinite recursion begins.", now)
+          }
+          setLevel(g.level); setScore(g.score); setLives(g.lives)
+          pendingCapyRef.current = CAPY_DIALOG[lvl - 1] || ["You made it.", "Keep shipping."]
+          const opts = pickUpgrades(g.upgrades)
+          upgradeOptionsRef.current = opts
+          setUpgradeOptions(opts)
+          phaseRef.current = "upgrade"; setPhase("upgrade")
         }
       }
 
@@ -963,6 +1061,46 @@ export default function HomePage() {
 
       setScore(g.score); setLives(g.lives)
       draw(ctx, g, canvas.width, now, false)
+    }
+
+    function fireLaser(g: GState, now: number, power: number, cw: number) {
+      if (now < g.laserCooldownEnd) return
+      const col = g.px
+      const blastW = 20 + power * 10
+      const bossDmg = Math.max(4, Math.ceil(power * 14))
+      // Kill all words in beam column
+      let beamKills = 0
+      for (let wi = g.words.length - 1; wi >= 0; wi--) {
+        const w = g.words[wi]
+        if (Math.abs(w.x - col) < blastW) {
+          spawnLetterExplosion(g, w, 0, 1)
+          g.score += w.type === "bug" ? 75 : 10
+          g.kills++; g.wordsKilled++; beamKills++
+          g.words.splice(wi, 1)
+        }
+      }
+      // Boss damage if in column
+      if (g.boss && Math.abs(g.boss.x - col) < 54) {
+        g.boss.hp -= bossDmg
+        spawnParticles(g, g.boss.x, g.boss.y, "#e879f9", "★", 8)
+        sfx.bossHit()
+        if (!g.boss.halfTriggered && g.boss.hp <= g.boss.maxHp / 2) {
+          g.boss.halfTriggered = true; g.boss.raged = true; g.shake = 8
+          for (let ri = 0; ri < 18; ri++) {
+            const a = (ri / 18) * Math.PI * 2
+            g.particles.push({ x: g.boss.x, y: g.boss.y, vx: Math.cos(a)*9, vy: Math.sin(a)*9, life: 0.9, glyph: "✦", col: "#ffffff" })
+          }
+          showCapyMsg(g, "Pattern is escalating.\nIt knows you're here.", now)
+        }
+      }
+      g.laserFireEnd = now + 320
+      g.laserCooldownEnd = now + 3800
+      g.laserChargeStart = 0
+      g.shake = Math.ceil(power * 8)
+      sfx.laser()
+      if (beamKills > 1) {
+        g.particles.push({ x: col, y: GH / 2, vx: 0, vy: -0.6, life: 1.4, glyph: `BEAM ×${beamKills}`, col: "#e879f9", sz: 12 })
+      }
     }
 
     function loseLife(g: GState, now: number) {
@@ -1372,17 +1510,26 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   // bullets with gradient trail
   g.bullets.forEach(b => {
     if (!b.enemy) {
-      const bulletCol = g.upgrades.spray ? "#22d3ee" : (g.triple || g.upgrades.triple) ? "#4ade80" : "#966bec"
-      ctx.save()
-      ctx.shadowColor = bulletCol; ctx.shadowBlur = 8
-      try {
-        const grad = ctx.createLinearGradient(b.x, b.y, b.x, b.y + 22)
-        grad.addColorStop(0, bulletCol)
-        grad.addColorStop(1, "rgba(0,0,0,0)")
-        ctx.fillStyle = grad
-      } catch { ctx.fillStyle = bulletCol }
-      ctx.fillRect(b.x - 2, b.y - 11, 4, 22)
-      ctx.restore()
+      if (b.cluster) {
+        // cluster shrapnel: small bright orange sparks
+        ctx.save()
+        ctx.shadowColor = "#f59e0b"; ctx.shadowBlur = 6
+        ctx.fillStyle = "#fb923c"
+        ctx.beginPath(); ctx.arc(b.x, b.y, 3, 0, Math.PI*2); ctx.fill()
+        ctx.restore()
+      } else {
+        const bulletCol = g.upgrades.spray ? "#22d3ee" : (g.triple || g.upgrades.triple) ? "#4ade80" : "#966bec"
+        ctx.save()
+        ctx.shadowColor = bulletCol; ctx.shadowBlur = 8
+        try {
+          const grad = ctx.createLinearGradient(b.x, b.y, b.x, b.y + 22)
+          grad.addColorStop(0, bulletCol)
+          grad.addColorStop(1, "rgba(0,0,0,0)")
+          ctx.fillStyle = grad
+        } catch { ctx.fillStyle = bulletCol }
+        ctx.fillRect(b.x - 2, b.y - 11, 4, 22)
+        ctx.restore()
+      }
     } else {
       // enemy bullet with fade trail
       ctx.globalAlpha = 0.2; ctx.fillStyle = "#f87171"
@@ -1422,6 +1569,41 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
         ctx.beginPath(); ctx.arc(g.px, g.py - 5, 24, 0, Math.PI*2); ctx.stroke()
         ctx.lineWidth = 1
       }
+      // Laser charge arc (arc fills clockwise as charge builds)
+      if (g.upgrades.laser && g.laserChargeStart > 0 && g.laserFireEnd < now) {
+        const power = Math.min(1, (now - g.laserChargeStart) / 1200)
+        const arcR = 22 + power * 10
+        ctx.save()
+        ctx.strokeStyle = `rgba(232,121,249,${0.35 + power * 0.65})`
+        ctx.lineWidth = 2.5
+        ctx.shadowColor = "#e879f9"; ctx.shadowBlur = 8 + power * 14
+        ctx.beginPath()
+        ctx.arc(g.px, g.py - 5, arcR, -Math.PI/2, -Math.PI/2 + Math.PI * 2 * power)
+        ctx.stroke()
+        ctx.restore()
+        // charge glow pulse on ship
+        ctx.save()
+        ctx.globalAlpha = power * (0.3 + 0.2 * Math.sin(now / 80))
+        ctx.fillStyle = "#e879f9"
+        ctx.beginPath(); ctx.moveTo(g.px, g.py - 18); ctx.lineTo(g.px - 13, g.py + 7); ctx.lineTo(g.px + 13, g.py + 7); ctx.closePath(); ctx.fill()
+        ctx.restore()
+      }
+      // Laser cooldown: small indicator dot under ship
+      if (g.upgrades.laser && g.laserCooldownEnd > now && g.laserChargeStart === 0) {
+        const cd = 1 - (g.laserCooldownEnd - now) / 3800
+        ctx.save()
+        ctx.fillStyle = `rgba(232,121,249,${cd * 0.6})`
+        ctx.fillRect(g.px - 16, g.py + 11, 32 * cd, 2)
+        ctx.restore()
+      }
+      // Mine HUD indicator
+      if (g.upgrades.mine) {
+        ctx.save()
+        ctx.font = "7px monospace"; ctx.textAlign = "right"
+        ctx.fillStyle = g.mines.length < 3 ? "rgba(245,158,11,0.55)" : "rgba(245,158,11,0.25)"
+        ctx.fillText(`M: ${3 - g.mines.length}`, cw - 10, g.py + 8)
+        ctx.restore()
+      }
     }
   } else {
     // Demo ship: ghostly
@@ -1432,6 +1614,62 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.globalAlpha = 0.13 * atf; ctx.fillStyle = "#fb923c"
     ctx.beginPath(); ctx.moveTo(g.px - 4, g.py + 7); ctx.lineTo(g.px + 4, g.py + 7); ctx.lineTo(g.px, g.py + 12 + atf * 8); ctx.closePath(); ctx.fill()
     ctx.globalAlpha = 1
+  }
+
+  // Laser beam (renders over everything except particles and HUD)
+  if (!attractMode && g.laserFireEnd > now) {
+    const t = (g.laserFireEnd - now) / 320  // 1→0 as beam fades
+    const beamAlpha = Math.min(1, t * 1.8)
+    ctx.save()
+    // Wide glow column
+    ctx.globalAlpha = beamAlpha * 0.12
+    try {
+      const beamGlow = ctx.createLinearGradient(g.px - 30, 0, g.px + 30, 0)
+      beamGlow.addColorStop(0, "rgba(232,121,249,0)")
+      beamGlow.addColorStop(0.5, "rgba(232,121,249,1)")
+      beamGlow.addColorStop(1, "rgba(232,121,249,0)")
+      ctx.fillStyle = beamGlow
+    } catch { ctx.fillStyle = "rgba(232,121,249,0.12)" }
+    ctx.fillRect(g.px - 30, 0, 60, g.py)
+    // Core beam
+    ctx.globalAlpha = beamAlpha * 0.7
+    try {
+      const beamGrad = ctx.createLinearGradient(g.px, g.py, g.px, 0)
+      beamGrad.addColorStop(0, "#e879f9")
+      beamGrad.addColorStop(0.6, "#c084fc")
+      beamGrad.addColorStop(1, "rgba(192,132,252,0.15)")
+      ctx.fillStyle = beamGrad
+    } catch { ctx.fillStyle = "#e879f9" }
+    ctx.fillRect(g.px - 5, 0, 10, g.py)
+    // Bright white core
+    ctx.globalAlpha = beamAlpha * 0.9
+    ctx.fillStyle = "#ffffff"
+    ctx.fillRect(g.px - 2, 0, 4, g.py)
+    ctx.restore()
+  }
+
+  // Mines
+  if (!attractMode) {
+    g.mines.forEach(mine => {
+      const armed = now >= mine.armAt
+      const pulse = armed ? 0.5 + 0.5 * Math.sin(now / 140) : Math.min(1, mine.age / 36) * 0.4
+      ctx.save()
+      ctx.shadowColor = "#f59e0b"; ctx.shadowBlur = armed ? 14 * pulse : 4
+      ctx.fillStyle = armed ? "#f59e0b" : "#92400e"
+      ctx.beginPath(); ctx.arc(mine.x, mine.y, 5, 0, Math.PI * 2); ctx.fill()
+      if (armed) {
+        // proximity ring
+        ctx.globalAlpha = 0.1 * pulse
+        ctx.beginPath(); ctx.arc(mine.x, mine.y, 32, 0, Math.PI * 2); ctx.fill()
+        ctx.globalAlpha = 0.25 * pulse; ctx.strokeStyle = "#f59e0b"; ctx.lineWidth = 1
+        ctx.beginPath(); ctx.arc(mine.x, mine.y, 32, 0, Math.PI * 2); ctx.stroke()
+      }
+      ctx.restore()
+      ctx.fillStyle = armed ? "#fbbf24" : "#78350f"
+      ctx.font = "6px monospace"; ctx.textAlign = "center"
+      ctx.fillText("M", mine.x, mine.y - 7)
+      ctx.globalAlpha = 1
+    })
   }
 
   // particles
@@ -1479,7 +1717,8 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   // Pause hint (bottom left, very subtle)
   ctx.textAlign = "left"; ctx.font = "7px monospace"
   ctx.fillStyle = "rgba(255,255,255,0.12)"
-  ctx.fillText("P: pause", 10, GH - 24)
+  const pauseHint = g.upgrades.mine ? "P: pause · M: mine" : "P: pause"
+  ctx.fillText(pauseHint, 10, GH - 24)
 
   // combo display
   if (g.combo >= 3) {
@@ -1665,6 +1904,9 @@ const CLI_KEYWORDS: Record<string, string[]> = {
   homing:       ["homing","track","lock","curve","seek","hunt","follow","target","velocity","guided"],
   extra_life:   ["life","rollback","restore","health","heart","revive","heal","integrity","repair","survive"],
   auto_fire:    ["auto","autonomous","drone","standup","automatic","self","independent","scheduled","turret"],
+  laser:        ["laser","beam","charge","pulse","column","vertical","hold","ray","heat","overload","cannon","focus"],
+  cluster:      ["cluster","chain","explode","react","splash","fragment","cascade","burst","shrapnel","reaction","scatter","detonate"],
+  mine:         ["mine","trap","proximity","drop","layer","bomb","plant","field","static","sticky","deploy","landmine"],
 }
 
 const CLI_RESPONSES: Record<string, (cmd: string) => CLILine[]> = {
@@ -1755,6 +1997,32 @@ const CLI_RESPONSES: Record<string, (cmd: string) => CLILine[]> = {
     { text:"> DAILY STAND-UP: initialized", type:"ok" },
     { text:"", type:"blank" },
     { text:"The Signal fires itself.", type:"dim" },
+  ],
+  laser: (cmd) => [
+    { text: `DIRECTIVE: "${cmd}"`, type:"dim" }, { text:"", type:"blank" },
+    { text:"> Coherence beam emitter: calibrated", type:"ok" },
+    { text:"> Charge threshold: 0.8s — release to fire", type:"ok" },
+    { text:"> Column purge protocol: armed", type:"ok" },
+    { text:"> LASER PULSE: initialized", type:"ok" },
+    { text:"", type:"blank" },
+    { text:"Hold SPACE to charge. Release to fire a column beam.", type:"dim" },
+  ],
+  cluster: (cmd) => [
+    { text: `DIRECTIVE: "${cmd}"`, type:"dim" }, { text:"", type:"blank" },
+    { text:"> Kill cascade engine: online", type:"ok" },
+    { text:"> Shrapnel vectors: 4-way spread", type:"ok" },
+    { text:"> CHAIN REACTION: initialized", type:"ok" },
+    { text:"", type:"blank" },
+    { text:"Every resolved pattern detonates into fragments.", type:"dim" },
+  ],
+  mine: (cmd) => [
+    { text: `DIRECTIVE: "${cmd}"`, type:"dim" }, { text:"", type:"blank" },
+    { text:"> Proximity detonator: armed", type:"ok" },
+    { text:"> Trigger radius: 32px — blast radius: 65px", type:"ok" },
+    { text:"> Deploy key: M — max 3 active", type:"ok" },
+    { text:"> MINE LAYER: initialized", type:"ok" },
+    { text:"", type:"blank" },
+    { text:"Press M to drop a mine. Patterns detonate on contact.", type:"dim" },
   ],
 }
 
