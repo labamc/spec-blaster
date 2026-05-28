@@ -27,7 +27,7 @@ const STORY_WORDS = [
   "pain point","feature flag","tech debt","grooming","sprint planning","parking lot",
   "alignment","action items","offline","EOD","TBD","two-pizza team",
 ]
-const POWERUP_WORDS = ["KNOWLEDGE", "FLAG", "ENGAGE", "TIMEBOX"]
+const POWERUP_WORDS = ["KNOWLEDGE", "FLAG", "ENGAGE", "TIMEBOX", "REBASE", "HOTFIX"]
 const SDLC_PHASES = ["DISCOVER", "DEFINE", "DESIGN", "DELIVER"]
 const BG_CHARS = ["·","∅","→","←","⊗","△","□","◇","/","\\","{}","()","//","=>","??","##","@@"]
 
@@ -932,7 +932,7 @@ export default function HomePage() {
                 <p style={{ color:"#966bec", fontSize:"1.1rem", fontWeight:600, marginBottom:"0.3rem", letterSpacing:"0.1em" }}>SPEC BLASTER</p>
                 <p style={{ color:"#a09fa2", fontSize:"0.8rem", marginBottom:"1.5rem" }}>Shoot the vague specs. Survive the SDLC.</p>
                 <div style={{ display:"flex", flexDirection:"column", gap:"0.4rem", marginBottom:"1.75rem", textAlign:"left" }}>
-                  {[["#fdba74","bugs","vague language · +75pts"],["#7dd3fc","stories","user requirements · +10pts"],["#4ade80","powerups","KNOWLEDGE · FLAG · ENGAGE · TIMEBOX"]].map(([col,label,desc]) => (
+                  {[["#fdba74","bugs","vague language · +75pts"],["#7dd3fc","stories","user requirements · +10pts"],["#4ade80","powerups","KNOWLEDGE · FLAG · ENGAGE · REBASE · HOTFIX"]].map(([col,label,desc]) => (
                     <div key={label} style={{ display:"flex", alignItems:"center", gap:"0.6rem", fontSize:"0.78rem", color:"#d8d7d8" }}>
                       <span style={{ width:8, height:8, borderRadius:"50%", background:col, display:"inline-block", flexShrink:0 }} />
                       {label} — <span style={{ color:"#a09fa2" }}>{desc}</span>
@@ -1031,6 +1031,27 @@ function applyPowerup(g: GState, word: Word, now: number) {
   } else if (text === "FLAG")    { g.shield = true; g.shieldEnd = now + 6000 }
   else if (text === "ENGAGE")    { g.triple = true; g.tripleEnd = now + 8000 }
   else if (text === "TIMEBOX")   { g.fast   = true; g.fastEnd   = now + 5000 }
+  else if (text === "REBASE") {
+    const removed = g.bullets.filter(b => b.enemy).length
+    g.bullets = g.bullets.filter(b => !b.enemy)
+    g.shake = 7; g.whiteFlash = 6
+    for (let ri = 0; ri < 18; ri++) {
+      const a = (ri / 18) * Math.PI * 2
+      g.particles.push({ x: g.W/2, y: GH/2, vx: Math.cos(a)*9, vy: Math.sin(a)*9, life: 0.7, glyph: "✕", col: "#f87171" })
+    }
+    showCapyMsg(g, removed > 0 ? `Rebased.\n${removed} bullet${removed !== 1 ? "s" : ""} cleared.` : "Rebased.\nClean slate.", now)
+  }
+  else if (text === "HOTFIX") {
+    if (g.lives < MAX_LIVES) {
+      g.lives++; g.whiteFlash = 7
+      g.particles.push({ x: g.px, y: g.py - 26, vx: 0, vy: -1.2, life: 1.5, glyph: "♥ +1", col: "#f87171", sz: 13 })
+      showCapyMsg(g, "Hotfix deployed.\n+1 life.", now)
+    } else {
+      g.score += 200
+      g.particles.push({ x: g.px, y: g.py - 26, vx: 0, vy: -1.2, life: 1.5, glyph: "+200 pts", col: "#facc15", sz: 12 })
+      showCapyMsg(g, "Max lives.\n+200 pts.", now)
+    }
+  }
 }
 
 function spawnParticles(g: GState, x: number, y: number, col: string, glyph: string, n: number) {
