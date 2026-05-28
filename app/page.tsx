@@ -613,6 +613,8 @@ export default function HomePage() {
         g.particles = g.particles.filter(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.14; p.life -= 0.022; return p.life > 0 })
         g.bg.forEach(b => { b.y += b.vy * 0.5; if (b.y > GH + 10) { b.y = -10; b.x = Math.random() * g.W } })
         if (g.whiteFlash > 0) g.whiteFlash--
+        if (g.redFlash > 0) g.redFlash--
+        if (g.shake > 0) g.shake--
         draw(ctx, g, canvas.width, now, false)
         if (now >= g.sectorClearAt) {
           g.sectorClearAt = 0; g.running = false
@@ -3416,16 +3418,25 @@ function CapyScreen({ text, lineNum, totalLines, level, onAdvance }: {
     return () => { clearTimeout(t); skipRef.current = true }
   }, [text, lineNum]) // lineNum ensures reset even if same text repeats
 
-  function handleClick() {
+  function handleAdvance() {
     if (!done) { skipRef.current = true; setDisplayed(text); setDone(true) }
     else onAdvance()
   }
+
+  // SPACE / ENTER / click all advance
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); handleAdvance() }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [done]) // eslint-disable-line
 
   const nextBoss  = level <= 4 ? BOSSES[level - 1] : null
   const isFinale  = level > 4
 
   return (
-    <div onClick={handleClick}
+    <div onClick={handleAdvance}
       style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center",
         background:"rgba(8,8,15,0.97)", cursor:"pointer", zIndex:10 }}>
       <div style={{ maxWidth:"380px", width:"100%", padding:"1.5rem", textAlign:"center" }}>
