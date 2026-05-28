@@ -34,7 +34,9 @@ const STORY_WORDS = [
   "can we revisit","per my last email","let's sync","circling back","added to backlog",
   "out of scope","draft PR","WIP","needs design","open question",
 ]
-const POWERUP_WORDS = ["CLARITY", "ANCHOR", "AMPLIFY", "TIMEBOX", "REBASE", "HOTFIX", "REFACTOR", "KNOWLEDGE"]
+const POWERUP_WORDS = ["CLARITY", "ANCHOR", "AMPLIFY", "TIMEBOX", "REBASE", "HOTFIX", "REFACTOR", "KNOWLEDGE", "DEPLOY", "RETROSPECTIVE"]
+// Bug words that split into fragments on death (level 3+ or endless)
+const SPLIT_WORDS = new Set(["scope creep","hallucinated output","undefined behavior","silent failure","breaking change","premature optimization"])
 const SDLC_PHASES = ["DISCOVER", "DEFINE", "DESIGN", "DELIVER"]
 // Sector-specific word accent pools — each sector has thematic vocabulary
 const SECTOR_ACCENT_WORDS: string[][] = [
@@ -306,6 +308,7 @@ interface GState {
   laserChargeStart: number; laserFireEnd: number; laserCooldownEnd: number
   mines: Mine[]; lastMine: number; dropMine: boolean
   trail: Array<{x: number; y: number}>
+  retroEnd: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -337,6 +340,7 @@ function initState(W: number): GState {
     laserChargeStart: 0, laserFireEnd: 0, laserCooldownEnd: 0,
     mines: [], lastMine: 0, dropMine: false,
     trail: [],
+    retroEnd: 0,
   }
 }
 
@@ -736,9 +740,10 @@ export default function HomePage() {
           if (roll < 0.14)      { type = "bug";     text = BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)] }
           else if (roll < 0.21) { type = "powerup"; text = POWERUP_WORDS[Math.floor(Math.random() * POWERUP_WORDS.length)] }
           else {
-            // 35% chance of sector-specific accent word in story mode (not endless)
             const accentPool = !g.endless ? SECTOR_ACCENT_WORDS[g.level - 1] : null
-            if (accentPool && Math.random() < 0.35) {
+            // Pre-boss buildup: force sector accent words in the last 4 slots before boss
+            const nearBossThreshold = !g.endless && !g.boss && g.wordsKilled >= WORDS_TO_BOSS - 4
+            if (accentPool && (nearBossThreshold || Math.random() < 0.35)) {
               text = accentPool[Math.floor(Math.random() * accentPool.length)]
             } else {
               text = STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)]
@@ -1184,17 +1189,20 @@ export default function HomePage() {
         })
       }
 
+      // RETROSPECTIVE slow multiplier — slows all word movement
+      const retroMul = g.retroEnd > 0 && now < g.retroEnd ? 0.28 : 1
+
       g.words = g.words.filter(w => {
-        w.y += w.spd; w.age++
+        w.y += w.spd * retroMul; w.age++
         if (w.hitFlash > 0) w.hitFlash--
         if (w.beh === "charge") {
           const dx = g.px - w.x
-          w.x += Math.sign(dx) * Math.min(Math.abs(dx) * 0.04, 2.2)
+          w.x += Math.sign(dx) * Math.min(Math.abs(dx) * 0.04, 2.2) * retroMul
         } else if (w.beh === "zigzag") {
-          w.ph += 0.07; w.x += Math.sin(w.ph) * 2.8
+          w.ph += 0.07 * retroMul; w.x += Math.sin(w.ph) * 2.8 * retroMul
           w.x = Math.max(30, Math.min(g.W - 30, w.x))
         } else if (w.beh === "sine") {
-          w.ph += 0.035
+          w.ph += 0.035 * retroMul
           w.x = Math.max(30, Math.min(g.W - 30, w.ox + Math.sin(w.ph) * 95))
         }
         if (w.y > GH + 20) {
@@ -1312,7 +1320,24 @@ export default function HomePage() {
                 g.bullets.push({ x: w.x, y: w.y, vx: Math.cos(ang+jitter)*8, vy: Math.sin(ang+jitter)*8, cluster: true })
               })
             }
+            // Split words: specific bug phrases fragment into two on death (level 3+ or endless)
+            const canSplit = !isClusterShot && w.type === "bug" && (g.level >= 3 || g.endless) && SPLIT_WORDS.has(w.text)
             g.words.splice(j, 1)
+            if (canSplit) {
+              const parts = w.text.split(" ").filter(Boolean)
+              const frag1 = parts.slice(0, Math.ceil(parts.length / 2)).join(" ")
+              const frag2 = parts.slice(Math.ceil(parts.length / 2)).join(" ")
+              const fragSpd = w.spd * 1.35
+              if (frag1) {
+                const ox1 = Math.max(30, w.x - 22)
+                g.words.push({ x: ox1, y: w.y, text: frag1, type: "bug", spd: fragSpd, beh: "zigzag", ph: 0, ox: ox1, hp: 1, hitFlash: 0, elite: false, age: 7 })
+              }
+              if (frag2) {
+                const ox2 = Math.min(g.W - 30, w.x + 22)
+                g.words.push({ x: ox2, y: w.y, text: frag2, type: "bug", spd: fragSpd, beh: "zigzag", ph: Math.PI, ox: ox2, hp: 1, hitFlash: 0, elite: false, age: 7 })
+              }
+              g.particles.push({ x: w.x, y: w.y - 10, vx: 0, vy: -0.9, life: 1.1, glyph: "SPLIT", col: "#fdba74", sz: 9 })
+            }
             if (g.upgrades.piercing) { break } else { continue outer }
           }
         }
@@ -1650,7 +1675,7 @@ export default function HomePage() {
                   {([
                     ["#fdba74","CORRUPTION","corrupted intent · +75pts · primary target"],
                     ["#7dd3fc","NOISE","ghost directives · +10pts · clear them all"],
-                    ["#4ade80","ARTIFACTS","CLARITY · ANCHOR · REBASE · HOTFIX · KNOWLEDGE"],
+                    ["#4ade80","ARTIFACTS","CLARITY · ANCHOR · REBASE · DEPLOY · RETROSPECTIVE + more"],
                   ] as const).map(([col,label,desc]) => (
                     <div key={label} style={{ display:"flex", alignItems:"center", gap:"0.6rem", fontSize:"0.72rem" }}>
                       <span style={{ width:7, height:7, borderRadius:"50%", background:col, display:"inline-block", flexShrink:0 }} />
@@ -1860,6 +1885,39 @@ function applyPowerup(g: GState, word: Word, now: number) {
       g.particles.push({ x: g.W/2, y: GH/2, vx: Math.cos(a)*10, vy: Math.sin(a)*10, life: 0.8, glyph: "◇", col: "#4ade80" })
     }
   }
+  else if (text === "DEPLOY") {
+    // Purge all enemy bullets on screen + score per bullet destroyed
+    const purged = g.bullets.filter(b => b.enemy).length
+    g.bullets = g.bullets.filter(b => !b.enemy)
+    g.shake = 8; g.whiteFlash = 8
+    const pts = purged * 15
+    if (pts > 0) g.score += pts
+    for (let di = 0; di < Math.min(purged, 20); di++) {
+      g.particles.push({
+        x: 30 + Math.random() * (g.W - 60), y: 50 + Math.random() * (GH - 100),
+        vx: (Math.random()-0.5)*8, vy: (Math.random()-0.5)*8 - 2,
+        life: 0.9, glyph: "★", col: "#22d3ee",
+      })
+    }
+    g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.9, life: 1.8,
+      glyph: purged > 0 ? `DEPLOYED · +${pts}` : "DEPLOYED", col: "#22d3ee", sz: 13 })
+    showCapyMsg(g, purged > 0
+      ? `DEPLOY.\n${purged} hostile${purged !== 1 ? "s" : ""} purged.\nCarrier space: clear.`
+      : "DEPLOY.\nCarrier already clean.", now)
+  }
+  else if (text === "RETROSPECTIVE") {
+    // Slow all word movement to 28% for 8 seconds
+    g.retroEnd = now + 8000; g.whiteFlash = 5
+    // Brief ripple effect
+    for (let ri = 0; ri < 16; ri++) {
+      const a = (ri / 16) * Math.PI * 2
+      g.particles.push({ x: g.W/2, y: GH/2, vx: Math.cos(a)*7, vy: Math.sin(a)*7,
+        life: 1.0, glyph: ri % 2 === 0 ? "◇" : "·", col: "#7dd3fc" })
+    }
+    g.particles.push({ x: g.W/2, y: GH/2 - 16, vx: 0, vy: -0.7, life: 1.9,
+      glyph: "RETROSPECTIVE", col: "#7dd3fc", sz: 12 })
+    showCapyMsg(g, "Retrospective.\nAll patterns slowed.\nUse the time well.", now)
+  }
 }
 
 function spawnParticles(g: GState, x: number, y: number, col: string, glyph: string, n: number) {
@@ -1936,6 +1994,13 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   if (g.whiteFlash > 0) {
     ctx.globalAlpha = g.whiteFlash * 0.035; ctx.fillStyle = "#ffffff"
     ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1; g.whiteFlash--
+  }
+  // RETROSPECTIVE: subtle time-freeze blue wash
+  if (!attractMode && g.retroEnd > 0 && now < g.retroEnd) {
+    const retroFade = Math.min(1, (g.retroEnd - now) / 1200)
+    ctx.globalAlpha = 0.06 * retroFade
+    ctx.fillStyle = "#7dd3fc"; ctx.fillRect(0, 0, cw, GH)
+    ctx.globalAlpha = 1
   }
 
   // vignette — intensifies with boss presence, turns deep purple-black for THE VOID
@@ -2533,9 +2598,15 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   ctx.textAlign = "right"; ctx.fillStyle = "#f87171"; ctx.font = "12px monospace"
   ctx.fillText("♥".repeat(g.lives) + "♡".repeat(Math.max(0, MAX_LIVES - g.lives)), cw - 10, 20)
   let pwY = 36; ctx.font = "8px monospace"; ctx.textAlign = "right"
-  if (g.shield)                      { ctx.fillStyle = "#4ade80"; ctx.fillText("SHIELD",  cw-10, pwY); pwY += 12 }
-  if (g.triple || g.upgrades.triple) { ctx.fillStyle = "#4ade80"; ctx.fillText("ENGAGE",  cw-10, pwY); pwY += 12 }
-  if (g.fast)                        { ctx.fillStyle = "#4ade80"; ctx.fillText("TIMEBOX", cw-10, pwY); pwY += 12 }
+  if (g.shield)                         { ctx.fillStyle = "#4ade80"; ctx.fillText("SHIELD",  cw-10, pwY); pwY += 12 }
+  if (g.triple || g.upgrades.triple)    { ctx.fillStyle = "#4ade80"; ctx.fillText("ENGAGE",  cw-10, pwY); pwY += 12 }
+  if (g.fast)                           { ctx.fillStyle = "#4ade80"; ctx.fillText("TIMEBOX", cw-10, pwY); pwY += 12 }
+  if (g.retroEnd > 0 && now < g.retroEnd) {
+    const retroSecs = Math.ceil((g.retroEnd - now) / 1000)
+    const retroPulse = 0.6 + 0.4 * Math.abs(Math.sin(now / 250))
+    ctx.fillStyle = `rgba(125,211,252,${retroPulse})`
+    ctx.fillText(`RETRO ${retroSecs}s`, cw-10, pwY); pwY += 12
+  }
   if (g.upgrades.shield_regen && !g.shield && g.shieldRegenAt > 0) {
     const secs = Math.ceil(Math.max(0, g.shieldRegenAt - now) / 1000)
     ctx.fillStyle = "rgba(74,222,128,0.35)"; ctx.font = "7px monospace"; ctx.textAlign = "right"
