@@ -816,7 +816,8 @@ export default function HomePage() {
       }
 
       // spawn words (not during boss warning)
-      if (!g.bossWarn && (!g.boss || g.endless)) {
+      // Pause background word rain while any boss is active — boss fight is the focus
+      if (!g.bossWarn && !g.boss) {
         // Pre-boss surge: last 3 kills before boss, modest 20% faster spawn
         const preBossSurge = !g.endless && !g.boss && g.wordsKilled >= WORDS_TO_BOSS - 3
         // Spawn interval: sector 1 ~1300ms, sector 4 ~820ms. Endless scales more gently.
@@ -866,8 +867,8 @@ export default function HomePage() {
         }
       }
 
-      // endless buzzword storm every 1500 pts
-      if (g.endless && g.score > 0) {
+      // endless buzzword storm every 2000 pts — NOT during boss fights
+      if (g.endless && g.score > 0 && !g.boss) {
         const stormAt = Math.floor(g.score / 2000) * 2000
         if (stormAt > g.lastStorm) {
           g.lastStorm = stormAt; g.shake = 6
@@ -1115,6 +1116,13 @@ export default function HomePage() {
           const phase = isVoid ? 6 : 5
           g.boss = { x: g.W/2, y: 70, hp, maxHp: hp, name: mb.name, color: mb.color, dir: 1, t: 0, phase, raged: false, halfTriggered: false }
           g.waveAnn = { text: mb.name, t: 0 }
+          // Clear the board — sweep words below midpoint into score particles so boss fight is readable
+          const swept = g.words.filter(w => w.y > GH * 0.45)
+          swept.forEach(w => {
+            g.score += w.type === "bug" ? 20 : 5
+            spawnParticles(g, w.x, w.y, w.type === "bug" ? "#fb923c" : "#7dd3fc", "↑", 2)
+          })
+          g.words = g.words.filter(w => w.y <= GH * 0.45)
           g.shake = isVoid ? 14 : 8; sfx.warning()
           const miniBossCapy: Record<string, string> = {
             "SCOPE SPECTRE":   "SCOPE SPECTRE.\nIt feeds on undefined requirements.\nKeep the signal tight.",
@@ -1257,8 +1265,8 @@ export default function HomePage() {
           g.bullets.push({ x: b.x + 55, y: b.y + 28, vy: 5, enemy: true })
           spawnParticles(g, b.x, b.y, "#f87171", "▮", 4)
         }
-        // The Dependency: spawns new enemy words every 160 frames
-        if (b.name === "THE DEPENDENCY" && b.t > 0 && b.t % 160 === 0) {
+        // The Dependency: spawns new enemy words every 160 frames (respects word cap)
+        if (b.name === "THE DEPENDENCY" && b.t > 0 && b.t % 160 === 0 && g.words.length < 10) {
           const dx = 40 + Math.random() * (g.W - 80)
           const deps = ["legacy code","vendor lock","npm audit","circular dep","peer dep","semver range"]
           const depText = deps[Math.floor(Math.random() * deps.length)]
