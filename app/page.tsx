@@ -41,6 +41,11 @@ const CAPY_PLAY_COMMENTS = [
   "Zigzag words track\nyour position.",
   "What's your\ndefinition of done?",
   "Scope creep\nis a moving target.",
+  "That was either skill\nor luck.",
+  "Stack the upgrades.",
+  "Endless mode is real.\nFour bosses away.",
+  "That word was\non the roadmap.",
+  "You can't scope-creep\nyour way out of this.",
 ]
 
 // ── Upgrades ───────────────────────────────────────────────────────────────
@@ -156,6 +161,7 @@ interface GState {
   bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null; maxCombo: number; lastStorm: number
   paused: boolean; lastMilestone: number; livesAtWave: number; py: number; storyStreak: number
   lastLifeRegen: number; lastAutoFire: number; firstKill: boolean
+  redFlash: number; whiteFlash: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -181,6 +187,7 @@ function initState(W: number): GState {
     bossWarn: null, mouseX: -1, waveAnn: null, maxCombo: 1, lastStorm: 0,
     paused: false, lastMilestone: 0, livesAtWave: MAX_LIVES, py: PLAYER_Y, storyStreak: 0,
     lastLifeRegen: 0, lastAutoFire: 0, firstKill: false,
+    redFlash: 0, whiteFlash: 0,
   }
 }
 
@@ -562,6 +569,13 @@ export default function HomePage() {
         }
         g.shake = 8
         sfx.warning()
+        const bossCapy: Record<string, string> = {
+          "THE BACKLOG":     "The backlog\narrives.",
+          "SPRINT ZERO":     "Sprint Zero.\nHold the line.",
+          "THE INTEGRATION": "Integration day.\nSurvive.",
+          "THE RELEASE":     "Release day.\nThis is it.",
+        }
+        showCapyMsg(g, bossCapy[bd.name] ?? "Boss incoming.", now)
       }
 
       // boss AI
@@ -691,7 +705,7 @@ export default function HomePage() {
             spawnLetterExplosion(g, w, pts, g.combo)
             // clutch kill: word within 50px of bottom
             if (w.y > GH - 50 && w.type !== "powerup") {
-              g.score += 25
+              g.score += 25; g.whiteFlash = 5
               g.particles.push({ x: w.x, y: w.y - 18, vx: 0, vy: -1.3, life: 1.4, glyph: "CLUTCH +25", col: "#facc15", sz: 12 })
               showCapyMsg(g, "Clutch.", now)
             }
@@ -804,7 +818,7 @@ export default function HomePage() {
     }
 
     function loseLife(g: GState, now: number) {
-      g.lives--; g.shake = 7; setLives(g.lives); sfx.hit()
+      g.lives--; g.shake = 7; g.redFlash = 9; setLives(g.lives); sfx.hit()
       g.invuln = true; g.invulnEnd = now + 1600
       const hitLines = [
         "Scope creep found\na gap in your spec.",
@@ -927,7 +941,7 @@ function applyPowerup(g: GState, word: Word, now: number) {
   if (text === "KNOWLEDGE") {
     g.words.forEach(w => spawnLetterExplosion(g, w, 0, 1))
     g.score += g.words.length * 8
-    g.shake = 10
+    g.shake = 10; g.whiteFlash = 9
     g.words = []
     for (let i = 0; i < 20; i++) {
       const a = (i / 20) * Math.PI * 2
@@ -993,6 +1007,16 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     const tintCol = g.endless ? "#4ade80" : BOSSES[Math.min(g.level - 1, 3)].color
     ctx.globalAlpha = 0.04; ctx.fillStyle = tintCol
     ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1
+  }
+
+  // screen flash overlays (hit = red, clutch/powerup = white)
+  if (g.redFlash > 0) {
+    ctx.globalAlpha = g.redFlash * 0.022; ctx.fillStyle = "#f87171"
+    ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1; g.redFlash--
+  }
+  if (g.whiteFlash > 0) {
+    ctx.globalAlpha = g.whiteFlash * 0.035; ctx.fillStyle = "#ffffff"
+    ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1; g.whiteFlash--
   }
 
   // vignette
@@ -1267,6 +1291,8 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   ctx.fillStyle = "#966bec"; ctx.fillText(g.score.toLocaleString(), 10, 20)
   ctx.fillStyle = "rgba(255,255,255,0.4)"
   ctx.fillText(g.endless ? "ENDLESS" : `LVL ${g.level}`, 10, 36)
+  ctx.fillStyle = "rgba(255,255,255,0.18)"; ctx.font = "7px monospace"
+  ctx.fillText(`${g.kills} kills`, 10, 60)
   // wave progress bar
   if (!g.boss && !g.endless && !g.bossWarn) {
     const wPct = Math.min(1, g.wordsKilled / WORDS_TO_BOSS)
