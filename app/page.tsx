@@ -3726,96 +3726,83 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
     setSubmitting(false)
   }
 
+  // What to do next hint
+  const nextHint = endless
+    ? endlessDepth && endlessDepth >= 9
+      ? `Depth ${endlessDepth} — beyond the void. How much further can you go?`
+      : endlessDepth && endlessDepth >= 5
+        ? `Depth ${endlessDepth} reached. The signal gets harder every wave.`
+        : `You hit depth ${endlessDepth ?? 1} in endless mode. Push deeper.`
+    : level >= 4
+      ? "Clear sector 4 to unlock endless mode — the real run starts there."
+      : level >= 3
+        ? `Sector ${level} down. Pick up upgrades between waves — they stack hard.`
+        : "Between sectors you'll get upgrade choices. Pick them wisely."
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onRestart() }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onRestart])
+
   return (
-    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(13,13,20,0.97)", zIndex:10 }}>
-      <div style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"2rem", maxWidth:"340px", width:"100%", textAlign:"center" }}>
-        <div style={{ fontSize:"2.25rem", marginBottom:"0.6rem" }}>🦫</div>
-        {endless && endlessDepth && endlessDepth >= 9 ? (
-          <>
-            <p style={{ color:"#dc2626", fontWeight:700, fontSize:"1rem", margin:"0 0 0.1rem", fontFamily:"monospace", letterSpacing:"0.06em" }}>
-              THE RECURSION CLAIMED YOU
-            </p>
-            <p style={{ color:"rgba(168,85,247,0.75)", fontSize:"0.62rem", margin:"0 0 0.2rem", fontFamily:"monospace", letterSpacing:"0.08em" }}>
-              depth {endlessDepth} · beyond the void
-            </p>
-          </>
-        ) : endless && endlessDepth && endlessDepth >= 5 ? (
-          <>
-            <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.1rem" }}>SIGNAL LOST</p>
-            <p style={{ color:"rgba(168,85,247,0.7)", fontSize:"0.62rem", margin:"0 0 0.2rem", fontFamily:"monospace", letterSpacing:"0.07em" }}>
-              depth {endlessDepth} · you reached the void
-            </p>
-          </>
-        ) : (
-          <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.2rem" }}>SIGNAL LOST</p>
-        )}
-        <p style={{ color:"#966bec", fontSize:"1.75rem", fontWeight:700, margin:"0 0 0.3rem", fontFamily:"monospace" }}>{score.toLocaleString()}</p>
-        {isNewPB && <p style={{ color:"#facc15", fontSize:"0.72rem", margin:"0 0 0.2rem", fontFamily:"monospace", letterSpacing:"0.08em" }}>★ NEW PERSONAL BEST</p>}
-        {isNewDepthPB && <p style={{ color:"rgba(168,85,247,0.85)", fontSize:"0.68rem", margin:"0 0 0.8rem", fontFamily:"monospace", letterSpacing:"0.07em" }}>∅ NEW DEPTH RECORD · {endlessDepth}</p>}
-        {!isNewPB && !isNewDepthPB && <div style={{ marginBottom:"0.8rem" }} />}
-        <div style={{ display:"grid", gridTemplateColumns: endless ? "1fr 1fr 1fr 1fr 1fr" : "1fr 1fr 1fr 1fr", gap:"0.4rem", marginBottom:"1.25rem" }}>
-          {[
-            endless ? ["DEPTH", endlessDepth ?? "—"] : ["SECTOR", level],
-            ["PATTERNS", kills],
+    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(10,10,18,0.97)", zIndex:10 }}>
+      <div style={{ background:"#15151e", border:"1px solid rgba(150,107,236,0.22)", borderRadius:"8px", padding:"1.6rem 1.4rem", maxWidth:"310px", width:"calc(100% - 2rem)", textAlign:"center" }}>
+
+        {/* Status */}
+        <p style={{ color:"#f87171", fontWeight:700, fontSize:"0.7rem", margin:"0 0 0.5rem", fontFamily:"monospace", letterSpacing:"0.14em" }}>
+          {endless && endlessDepth && endlessDepth >= 9 ? "THE RECURSION CLAIMED YOU" : "SIGNAL LOST"}
+        </p>
+
+        {/* Score */}
+        <p style={{ color:"#966bec", fontSize:"2.4rem", fontWeight:700, margin:"0 0 0.2rem", fontFamily:"monospace", lineHeight:1 }}>
+          {score.toLocaleString()}
+        </p>
+        {(isNewPB || isNewDepthPB) ? (
+          <p style={{ color:"#facc15", fontSize:"0.65rem", margin:"0 0 1rem", fontFamily:"monospace", letterSpacing:"0.1em" }}>
+            {isNewDepthPB ? `∅ DEPTH RECORD · ${endlessDepth}` : "★ PERSONAL BEST"}
+          </p>
+        ) : <div style={{ marginBottom:"1rem" }} />}
+
+        {/* Stats */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.45rem", marginBottom:"1.1rem" }}>
+          {([
+            [endless ? "DEPTH" : "SECTOR", endless ? (endlessDepth ?? 1) : level],
+            ["KILLS", kills],
             ["CHAIN", `${maxCombo}×`],
-            ["ACC", accuracy > 0 ? `${accuracy}%` : "—"],
-            ...(endless ? [["UPGRADES", upgradeCount]] : []),
-          ].map(([label, val], idx) => {
-            const isDepthCell = endless && idx === 0
-            const voidDepth = isDepthCell && typeof endlessDepth === "number" && endlessDepth >= 5
-            return (
-              <div key={label as string} style={{
-                background: voidDepth ? "rgba(109,40,217,0.12)" : "rgba(255,255,255,0.04)",
-                border: voidDepth ? "1px solid rgba(168,85,247,0.25)" : "1px solid transparent",
-                borderRadius:"4px", padding:"0.4rem 0.3rem",
-              }}>
-                <p style={{ color: voidDepth ? "rgba(168,85,247,0.65)" : "#a09fa2", fontSize:"0.6rem", margin:"0 0 0.15rem", fontFamily:"monospace" }}>{label}</p>
-                <p style={{ color: voidDepth ? "#c084fc" : "#d8d7d8", fontSize:"0.9rem", fontWeight:600, margin:0, fontFamily:"monospace" }}>{val}</p>
-              </div>
-            )
-          })}
+          ] as [string, string|number][]).map(([label, val]) => (
+            <div key={label} style={{ background:"rgba(255,255,255,0.04)", borderRadius:"5px", padding:"0.5rem 0.25rem" }}>
+              <p style={{ color:"#d4d3d7", fontSize:"1rem", fontWeight:700, margin:"0 0 0.1rem", fontFamily:"monospace" }}>{val}</p>
+              <p style={{ color:"rgba(160,159,162,0.5)", fontSize:"0.56rem", margin:0, fontFamily:"monospace", letterSpacing:"0.07em" }}>{label}</p>
+            </div>
+          ))}
         </div>
-        {!endless && upgradeCount > 0 && (
-          <p style={{ color:"rgba(150,107,236,0.6)", fontSize:"0.68rem", margin:"0 0 0.4rem", fontFamily:"monospace" }}>
-            {upgradeCount} upgrade{upgradeCount !== 1 ? "s" : ""} compiled
+
+        {/* What to do next */}
+        <div style={{ background:"rgba(150,107,236,0.07)", border:"1px solid rgba(150,107,236,0.18)", borderRadius:"5px", padding:"0.55rem 0.8rem", marginBottom:"1.2rem" }}>
+          <p style={{ color:"rgba(196,181,253,0.8)", fontSize:"0.68rem", margin:0, fontFamily:"monospace", lineHeight:1.55 }}>
+            {nextHint}
           </p>
-        )}
-        {accuracy > 0 && shotsFired >= 5 && (
-          <p style={{
-            color: accuracy >= 85 ? "rgba(74,222,128,0.7)" : accuracy >= 70 ? "rgba(125,211,252,0.6)" : "rgba(160,159,162,0.5)",
-            fontSize:"0.62rem", margin:"0 0 0.55rem", fontFamily:"monospace", letterSpacing:"0.08em",
-          }}>
-            {accuracy >= 85 ? "◈ PRECISION CARRIER" : accuracy >= 70 ? "◈ CLEAN SIGNAL" : accuracy >= 50 ? "◈ SIGNAL STABLE" : "◈ SIGNAL DEGRADED"}
-          </p>
-        )}
-        {rank !== null && (
-          <p style={{ color:"rgba(253,186,116,0.65)", fontSize:"0.67rem", margin:"0 0 0.9rem", fontFamily:"monospace" }}>
-            {rank.pct >= 90 ? "★ " : ""}{`top ${Math.max(1, 100 - rank.pct)}% of ${rank.total} runs`}
-          </p>
-        )}
-        {!submitted ? (
-          <>
-            <input value={handle} onChange={e => setHandle(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && submit()}
-              placeholder="your handle" maxLength={20}
-              style={{ display:"block", margin:"0 auto 0.75rem", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:"4px", color:"#f5f5f5", fontSize:"0.85rem", padding:"0.5rem 0.75rem", width:"200px", outline:"none", textAlign:"center" }}
-            />
-            <button onClick={submit} disabled={!handle.trim() || submitting}
-              style={{ background:"#966bec", color:"#fff", border:"none", borderRadius:"4px", padding:"0.5rem 1.5rem", fontWeight:500, cursor:handle.trim()?"pointer":"default", opacity:handle.trim()?1:0.4, marginBottom:"1rem", fontSize:"0.85rem" }}>
-              {submitting ? "saving..." : "Submit score"}
-            </button>
-          </>
-        ) : (
-          <p style={{ color:"#4ade80", fontSize:"0.85rem", margin:"0 0 1rem" }}>Score saved 🦫</p>
-        )}
-        <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"1rem", display:"flex", gap:"0.6rem", justifyContent:"center", flexWrap:"wrap" }}>
-          <button onClick={onRestart} style={{ background:"transparent", border:"1px solid #4c4c51", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"#d8d7d8", cursor:"pointer", fontSize:"0.8rem" }}>Play again</button>
-          <button onClick={onShowStack} style={{ background:"transparent", border:"1px solid rgba(150,107,236,0.3)", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"rgba(150,107,236,0.8)", cursor:"pointer", fontSize:"0.8rem", fontFamily:"monospace" }}>
-            THE SIGNAL{unlockedAgents.length > 0 && <span style={{ marginLeft:"0.35rem", color:"#4ade80", fontSize:"0.7rem" }}>{unlockedAgents.length}</span>}
-          </button>
-          <a href="/leaderboard" style={{ border:"1px solid rgba(255,255,255,0.08)", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"#a09fa2", textDecoration:"none", fontSize:"0.8rem" }}>Leaderboard</a>
-          {score > 0 && <button onClick={share} style={{ background:"transparent", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"#a09fa2", cursor:"pointer", fontSize:"0.8rem" }}>{copied ? "Copied ✓" : "Share"}</button>}
         </div>
+
+        {/* Primary CTA */}
+        <button onClick={onRestart}
+          style={{ display:"block", width:"100%", background:"rgba(150,107,236,0.9)", border:"none", borderRadius:"6px", padding:"0.75rem", color:"#fff", fontSize:"0.85rem", fontWeight:700, cursor:"pointer", marginBottom:"0.55rem", letterSpacing:"0.08em", fontFamily:"monospace" }}>
+          PLAY AGAIN  <span style={{ opacity:0.55, fontSize:"0.62rem" }}>ENTER</span>
+        </button>
+
+        {/* Secondary — crew */}
+        <button onClick={onShowStack}
+          style={{ display:"block", width:"100%", background:"transparent", border:"1px solid rgba(150,107,236,0.22)", borderRadius:"6px", padding:"0.55rem", color:"rgba(196,181,253,0.65)", fontSize:"0.72rem", cursor:"pointer", fontFamily:"monospace", letterSpacing:"0.06em" }}>
+          THE SIGNAL
+          {unlockedAgents.length > 0
+            ? <span style={{ marginLeft:"0.45rem", color:"#4ade80", fontSize:"0.62rem" }}>{unlockedAgents.length} deployed</span>
+            : <span style={{ marginLeft:"0.45rem", opacity:0.45, fontSize:"0.62rem" }}>crew</span>
+          }
+        </button>
+
       </div>
     </div>
   )
