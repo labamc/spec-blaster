@@ -373,7 +373,7 @@ export default function HomePage() {
     })
     canvas.addEventListener("mousedown", () => G.current.keys.add(" "))
     canvas.addEventListener("mouseup",   () => G.current.keys.delete(" "))
-    canvas.addEventListener("mouseleave", () => G.current.keys.delete(" "))
+    canvas.addEventListener("mouseleave", () => { G.current.keys.delete(" "); G.current.mouseX = -1 })
 
     // Touch controls
     canvas.addEventListener("touchmove", (e) => {
