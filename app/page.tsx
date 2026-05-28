@@ -294,7 +294,7 @@ const sfx = {
 // ── Types ──────────────────────────────────────────────────────────────────
 type Behavior = "fall" | "charge" | "zigzag" | "sine"
 interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean; age: number; regenBoss?: boolean }
-interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean; cluster?: boolean; col?: string }
+interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean; cluster?: boolean; col?: string; bounce?: boolean; drift?: number; splitAt?: number }
 interface Mine      { x: number; y: number; age: number; armAt: number }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
@@ -1087,6 +1087,28 @@ export default function HomePage() {
           g.particles.push({ x: b.x, y: b.y - 22, vx: 0, vy: -0.8, life: 1.4, glyph: "SHOCKWAVE", col: "#4ade80", sz: 9 })
           showCapyMsg(g, "Collapse shockwave.\nThe Signal bends but holds.", now)
         }
+        // ── Sector boss signatures ──────────────────────────────────────────
+        // THE RECURSION: bouncing loop bullet every 200 frames — it ricochets off walls
+        if (b.name === "THE RECURSION" && b.t > 0 && b.t % 200 === 0) {
+          const initVx = (Math.random() > 0.5 ? 3.5 : -3.5)
+          g.bullets.push({ x: b.x, y: b.y + 28, vx: initVx, vy: 3.2, enemy: true, bounce: true })
+          g.particles.push({ x: b.x, y: b.y - 18, vx: 0, vy: -0.8, life: 1.2, glyph: "LOOP", col: "#f87171", sz: 8 })
+          showCapyMsg(g, "Recursion loop.\nIt bounces back.", now)
+        }
+        // THE DRIFT: drifting bullets that accelerate sideways — ever harder to dodge
+        if (b.name === "THE DRIFT" && b.t > 0 && b.t % 190 === 0) {
+          const driftDir = b.x < g.W / 2 ? 0.055 : -0.055
+          for (const ox of [-18, 0, 18])
+            g.bullets.push({ x: b.x + ox, y: b.y + 28, vx: driftDir * 8, vy: 3.5, enemy: true, drift: driftDir })
+          g.particles.push({ x: b.x, y: b.y - 18, vx: 0, vy: -0.8, life: 1.2, glyph: "DRIFT SURGE", col: "#fb923c", sz: 8 })
+        }
+        // THE FRAGMENT: splitting bullet — aimed shot that forks at mid-screen
+        if (b.name === "THE FRAGMENT" && b.t > 0 && b.t % 170 === 0) {
+          const dx = g.px - b.x, dy = g.py - b.y, dist = Math.sqrt(dx * dx + dy * dy)
+          g.bullets.push({ x: b.x, y: b.y + 28, vx: (dx / dist) * 4.5, vy: (dy / dist) * 4.5, enemy: true, splitAt: GH * 0.52 })
+          g.particles.push({ x: b.x, y: b.y - 18, vx: 0, vy: -0.8, life: 1.2, glyph: "FRAGMENT", col: "#facc15", sz: 8 })
+          showCapyMsg(g, "Fragment splits.\nWatch the fork.", now)
+        }
         // The Roadmap: periodically spawns healing words
         if (b.name === "THE ROADMAP" && b.t % 140 === 0) {
           const rx = 40 + Math.random() * (g.W - 80)
@@ -1192,9 +1214,27 @@ export default function HomePage() {
       g.bullets = g.bullets.filter(b => {
         b.y += b.vy ?? (b.enemy ? 4 : -9)
         if (b.vx) b.x += b.vx
+        // THE RECURSION: wall-bouncing bullets
+        if (b.bounce && b.enemy) {
+          if (b.x < 8 || b.x > g.W - 8) { b.vx = -(b.vx ?? 0); b.x = Math.max(8, Math.min(g.W - 8, b.x)) }
+        }
+        // THE DRIFT: bullets accelerate sideways over time
+        if (b.drift && b.enemy) b.vx = (b.vx ?? 0) + b.drift
         if (b.cluster) return b.y < GH + 10 && b.y > -10 && b.x > -10 && b.x < g.W + 10
         return b.enemy ? b.y < GH + 10 : b.y > -10
       })
+      // THE FRAGMENT: bullets that split at a target Y position
+      const splitSpawn: Bullet[] = []
+      g.bullets = g.bullets.filter(b => {
+        if (b.splitAt && b.y >= b.splitAt && b.enemy) {
+          for (const sx of [-1, 1])
+            splitSpawn.push({ x: b.x, y: b.y, vx: sx * 3.2, vy: (b.vy ?? 4) * 0.85, enemy: true, col: b.col })
+          g.particles.push({ x: b.x, y: b.y, vx: 0, vy: 0, life: 0.3, initLife: 0.3, glyph: "", col: b.col ?? "#facc15", ring: true })
+          return false
+        }
+        return true
+      })
+      if (splitSpawn.length) g.bullets.push(...splitSpawn)
 
       // move words (with behaviors)
       // homing bullets
