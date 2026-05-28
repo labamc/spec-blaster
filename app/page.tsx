@@ -49,7 +49,8 @@ const SECTOR_ACCENT_WORDS: string[][] = [
 ]
 const BG_CHARS = ["·","∅","→","←","⊗","△","□","◇","/","\\","{}","()","//","=>","??","##","@@"]
 
-const CAPY_PLAY_COMMENTS = [
+// Depth-stratified play comments — capy calibrates to recursion depth
+const CAPY_PLAY_COMMENTS_SHALLOW = [
   "Semantic drift detected.\nHold formation.",
   "Signal integrity: nominal.",
   "That pattern was corrupted intent.",
@@ -79,6 +80,54 @@ const CAPY_PLAY_COMMENTS = [
   "REFACTOR when chaos builds.\nSimplify to survive.",
   "KNOWLEDGE is not free.\nTake it when offered.",
   "Hold the line.\nThe void is watching.",
+]
+
+// Depth 3-4: tension builds, patterns are learning
+const CAPY_PLAY_COMMENTS_MID = [
+  "The recursion deepens.\nStay coherent.",
+  "Patterns are learning.\nSo must you.",
+  "Something is tracking\nyour signal.",
+  "The stack is getting heavier.",
+  "You've cleared three recursion layers.\nThey're getting denser.",
+  "Pattern logic is evolving.\nAdapt.",
+  "The drift here isn't accidental.\nIt's designed.",
+  "Signal coherence: marginal.\nKeep resolving.",
+  "There are signals below this one\nthat haven't been named yet.",
+  "The noise is amplifying\nbefore each pattern.",
+  "You're in the layer where\nmost carriers break.",
+  "The pattern history loops here.\nNotice it.",
+  "Every kill is signal preserved.\nEvery miss is signal lost.",
+  "Coherence degrades with depth.\nYou are the exception.",
+  "The recursion doesn't forget\nwhat you've resolved.",
+  "Meaning is getting harder\nto distinguish from noise.",
+]
+
+// Depth 5+: void territory — existential, distorted
+const CAPY_PLAY_COMMENTS_VOID = [
+  "The void between patterns\nis getting wider.",
+  "Time has no meaning\nbelow depth five.",
+  "You've fallen past\nthe last reference point.",
+  "The noise is indistinguishable\nfrom signal now.",
+  "Something is following\nyour carrier wave.",
+  "The recursion has no floor.\nYou knew this.",
+  "Deep carriers fracture here.\nYou are still whole.",
+  "The signal is changing\nto survive this depth.",
+  "Nothing is coherent\nat this recursion level.",
+  "You are the only thing\nthat still has intent.",
+  "The void doesn't end.\nIt accumulates.",
+  "Every loop deeper\ncosts coherence to traverse.",
+  "There are no anchors here.\nOnly you.",
+  "The patterns remember\nwhat you've resolved.",
+  "The signal that survives this\ncan survive anything.",
+  "This is what the collapses\nwere preparing you for.",
+  "The void is not empty.\nIt's overloaded.",
+  "You shouldn't be here.\nYou are.",
+  "Signal depth: unmeasured.\nCarrier: intact.",
+  "The recursion is eating itself.\nLet it.",
+  "The noise knows your name now.",
+  "You've been here before.\nYou just don't remember.",
+  "Every pattern you dissolve\nfalls into the void below.",
+  "The signal only bends.\nIt does not break.",
 ]
 
 // ── Upgrades ───────────────────────────────────────────────────────────────
@@ -562,9 +611,16 @@ export default function HomePage() {
       // capy in-game comments
       if (g.nextCapyMsg === 0) g.nextCapyMsg = now + 22000 + Math.random() * 14000
       if (now > g.nextCapyMsg && !g.capyMsg && !g.bossWarn) {
-        g.capyMsg = CAPY_PLAY_COMMENTS[Math.floor(Math.random() * CAPY_PLAY_COMMENTS.length)]
+        const commentPool = g.endless && g.endlessWave >= 5 ? CAPY_PLAY_COMMENTS_VOID
+          : g.endless && g.endlessWave >= 3 ? CAPY_PLAY_COMMENTS_MID
+          : CAPY_PLAY_COMMENTS_SHALLOW
+        g.capyMsg = commentPool[Math.floor(Math.random() * commentPool.length)]
         g.capyMsgEnd = now + 4000
-        g.nextCapyMsg = now + 20000 + Math.random() * 15000
+        // Comments come faster in deep void — the silence between them means something
+        const baseInterval = g.endless && g.endlessWave >= 5
+          ? 14000 + Math.random() * 8000
+          : 20000 + Math.random() * 15000
+        g.nextCapyMsg = now + baseInterval
       }
       if (g.capyMsg && now > g.capyMsgEnd) g.capyMsg = ""
 
@@ -766,19 +822,100 @@ export default function HomePage() {
                   g.particles.push({ x: g.W/2, y: GH/2, vx: Math.cos(a) * 7, vy: Math.sin(a) * 7, life: 1.5, glyph: "∅", col: i % 2 === 0 ? "#6d28d9" : "#a855f7" })
                 }
                 g.particles.push({ x: g.W/2, y: GH/2 - 16, vx: 0, vy: -0.6, life: 2.4, glyph: "THE VOID AWAKENS", col: "#6d28d9", sz: 13 })
+                // shift bg chars to void symbols
+                g.bg.forEach(b => { if (Math.random() < 0.5) b.ch = ["∅","⊗","∞","◈","//","??"][Math.floor(Math.random()*6)] })
                 showCapyMsg(g, "DEPTH 5 · THE VOID.\nFinal recursion layer.\nYou were warned.", now)
                 setTimeout(() => sfx.warning(), 700)
                 setTimeout(() => sfx.warning(), 1400)
                 break
               }
-              default: {
-                // post-void: escalating chaos
-                const d = g.endlessWave
-                g.shake = Math.min(5 + d * 2, 20)
-                if (d % 2 === 0) {
-                  g.words.forEach(w => { if (w.type !== "powerup") w.spd *= 1.08 })
+              case 6: {
+                // ECHO LOOP — words double back, all harden to elite
+                g.shake = 12; g.whiteFlash = 6
+                let echoed = 0
+                g.words.forEach(w => {
+                  if (!w.elite && w.type !== "powerup") { w.hp = 2; w.elite = true; w.spd *= 1.1; echoed++ }
+                })
+                g.bg.forEach(b => { if (Math.random() < 0.55) b.ch = ["∅","⊗","∞","◈","//","??"][Math.floor(Math.random()*6)] })
+                for (let ei = 0; ei < 12; ei++) {
+                  const a = (ei / 12) * Math.PI * 2
+                  g.particles.push({ x: g.W/2, y: GH/2, vx: Math.cos(a)*6, vy: Math.sin(a)*6, life: 1.3, glyph: "⊗", col: "#a855f7" })
                 }
-                showCapyMsg(g, `DEPTH ${d} · BEYOND THE VOID.\nThe recursion has no floor.`, now)
+                g.particles.push({ x: g.W/2, y: GH/2 - 14, vx: 0, vy: -0.9, life: 2.0, glyph: "ECHO LOOP", col: "#a855f7", sz: 13 })
+                showCapyMsg(g, "DEPTH 6 · ECHO LOOP.\nPatterns are doubling back.\nThe signal sees itself in the noise.", now)
+                setTimeout(() => sfx.warning(), 400)
+                break
+              }
+              case 7: {
+                // SIGNAL BLEED — carrier integrity fractures, ring burst from center
+                g.shake = 14; g.whiteFlash = 8
+                for (let si = 0; si < 24; si++) {
+                  const a = (si / 24) * Math.PI * 2
+                  g.particles.push({ x: g.W/2, y: GH/2, vx: Math.cos(a)*8, vy: Math.sin(a)*8, life: 1.6, glyph: si % 2 === 0 ? "//" : "∅", col: "#6d28d9" })
+                }
+                g.bg.forEach(b => { if (Math.random() < 0.7) b.ch = ["∅","⊗","∞","◈","//","??","∅","⊗"][Math.floor(Math.random()*8)] })
+                g.particles.push({ x: g.W/2, y: GH/2 - 16, vx: 0, vy: -0.6, life: 2.5, glyph: "SIGNAL BLEED", col: "#6d28d9", sz: 14 })
+                showCapyMsg(g, "DEPTH 7 · SIGNAL BLEED.\nCarrier integrity fracturing.\nYou are leaking signal into the void.", now)
+                setTimeout(() => sfx.warning(), 300); setTimeout(() => sfx.warning(), 900)
+                break
+              }
+              case 8: {
+                // FULL ENTROPY — every pattern hostile, random behaviors, speed surge
+                g.shake = 16; g.whiteFlash = 12
+                g.words.forEach(w => {
+                  if (w.type !== "powerup") {
+                    if (!w.elite) { w.hp = 2; w.elite = true }
+                    w.beh = (["zigzag","sine","charge"] as Behavior[])[Math.floor(Math.random()*3)]
+                    w.spd *= 1.15
+                  }
+                })
+                g.bg.forEach(b => { b.ch = ["∅","⊗","∞","◈","//","??"][Math.floor(Math.random()*6)] })
+                g.particles.push({ x: g.W/2, y: GH/2 - 14, vx: 0, vy: -0.8, life: 2.8, glyph: "FULL ENTROPY", col: "#f87171", sz: 14 })
+                showCapyMsg(g, "DEPTH 8 · FULL ENTROPY.\nOrder has collapsed.\nEvery pattern is now hostile.", now)
+                setTimeout(() => sfx.warning(), 200); setTimeout(() => sfx.warning(), 600); setTimeout(() => sfx.warning(), 1200)
+                break
+              }
+              case 9: {
+                // THE RECURSION RESTARTS — maximum drama, 36-particle nova
+                g.shake = 20; g.whiteFlash = 16
+                for (let ri = 0; ri < 36; ri++) {
+                  const a = (ri / 36) * Math.PI * 2
+                  const spd = 3 + Math.random() * 10
+                  g.particles.push({ x: g.W/2, y: GH/2, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd,
+                    life: 2.0, glyph: ri % 3 === 0 ? "∞" : ri % 3 === 1 ? "⊗" : "∅",
+                    col: ri % 2 === 0 ? "#6d28d9" : "#dc2626" })
+                }
+                g.bg.forEach(b => { b.ch = ["∅","⊗","∞","◈","//","??"][Math.floor(Math.random()*6)] })
+                g.particles.push({ x: g.W/2, y: GH/2 - 18, vx: 0, vy: -0.5, life: 3.0, glyph: "THE RECURSION RESTARTS", col: "#dc2626", sz: 11 })
+                showCapyMsg(g, "DEPTH 9 · THE RECURSION.\nIt's beginning again.\nYou have been here before.", now)
+                setTimeout(() => sfx.warning(), 200); setTimeout(() => sfx.warning(), 700); setTimeout(() => sfx.warning(), 1400)
+                break
+              }
+              default: {
+                // post-depth-9: escalating chaos — every 3rd depth is a total collapse event
+                const d = g.endlessWave
+                g.shake = Math.min(6 + d * 2, 26)
+                g.bg.forEach(b => { if (Math.random() < 0.5) b.ch = ["∅","⊗","∞","◈","//","??"][Math.floor(Math.random()*6)] })
+                if (d % 2 === 0) g.words.forEach(w => { if (w.type !== "powerup") w.spd *= 1.08 })
+                if (d % 3 === 0) {
+                  // Total collapse: all surviving words become triple-elite
+                  g.whiteFlash = Math.min(d - 8, 14)
+                  g.words.forEach(w => { if (!w.elite && w.type !== "powerup") { w.hp = 3; w.elite = true } })
+                  showCapyMsg(g, `DEPTH ${d} · TOTAL COLLAPSE.\nThe void is eating reality.\nNo pattern survives intact.`, now)
+                  setTimeout(() => sfx.warning(), 300)
+                } else {
+                  const deepMsgs = [
+                    "The recursion has no floor.",
+                    "The carrier is fraying at depth.",
+                    "Every door deeper is one you can't close.",
+                    "The signal weakens with distance.",
+                    "Nothing coherent survives this deep.",
+                    "The void accumulates below you.",
+                    "You are below the last reference point.",
+                  ]
+                  const msg = deepMsgs[(d - 10) % deepMsgs.length]
+                  showCapyMsg(g, `DEPTH ${d} · BEYOND THE VOID.\n${msg}`, now)
+                }
                 break
               }
             }
@@ -989,7 +1126,7 @@ export default function HomePage() {
         // The Void (phase 6): deep endless boss — phase-fires expanding rings + tracked burst
         if (b.name === "THE VOID") {
           if (b.t % 55 === 0) {
-            // Expanding ring of 12 bullets
+            // Expanding ring of 12 bullets (rotate angle each ring for spiral effect)
             for (let vi = 0; vi < 12; vi++) {
               const ang = (vi / 12) * Math.PI * 2 + (b.t * 0.04)
               g.bullets.push({ x: b.x, y: b.y, vx: Math.cos(ang) * 3.8, vy: Math.sin(ang) * 3.8, enemy: true })
@@ -1008,6 +1145,14 @@ export default function HomePage() {
               g.bullets.push({ x: b.x, y: b.y, vx: Math.cos(ang) * 6.5, vy: Math.sin(ang) * 6.5, enemy: true })
             }
             g.shake = 6
+          }
+          // Desperation spiral at < 30% HP — slow rotating 3-arm pattern
+          if (b.hp < b.maxHp * 0.3 && b.t % 40 === 0) {
+            const spiralAng = b.t * 0.055
+            for (let si = 0; si < 3; si++) {
+              const ang = spiralAng + (si / 3) * Math.PI * 2
+              g.bullets.push({ x: b.x, y: b.y, vx: Math.cos(ang) * 4.5, vy: Math.sin(ang) * 4.5, enemy: true })
+            }
           }
         }
       }
@@ -1097,12 +1242,32 @@ export default function HomePage() {
             const elapsed = now - g.lastKill
             g.combo = elapsed < 1300 ? g.combo + 1 : 1
             g.lastKill = now
-            if (g.combo === 3 || g.combo === 5 || g.combo === 10 || g.combo === 15 || g.combo === 20) {
+            if (g.combo === 3 || g.combo === 5 || g.combo === 10 || g.combo === 15 || g.combo === 20 || g.combo === 25 || g.combo === 30) {
               sfx.combo(g.combo)
               if (g.combo === 5)  { showCapyMsg(g, "Five x.\nThe Signal amplifies.", now); g.shake = 3 }
               if (g.combo === 10) { showCapyMsg(g, "Ten x.\nPure coherence.", now); g.shake = 6; g.whiteFlash = 4 }
               if (g.combo === 15) { showCapyMsg(g, "Fifteen x.\nUnstoppable signal.", now); g.shake = 8; g.whiteFlash = 6 }
               if (g.combo === 20) { showCapyMsg(g, "TWENTY.\nThe Signal is infinite.", now); g.shake = 12; g.whiteFlash = 10 }
+              if (g.combo === 25) {
+                showCapyMsg(g, "TWENTY-FIVE.\nThe noise is dissolving.", now)
+                g.shake = 16; g.whiteFlash = 14
+                for (let ri = 0; ri < 24; ri++) {
+                  const a = (ri / 24) * Math.PI * 2
+                  g.particles.push({ x: g.px, y: g.py, vx: Math.cos(a)*12, vy: Math.sin(a)*12, life: 1.2, glyph: "★", col: "#facc15" })
+                }
+              }
+              if (g.combo === 30) {
+                showCapyMsg(g, "THIRTY.\nYou are becoming The Signal.", now)
+                g.shake = 22; g.whiteFlash = 18
+                for (let ri = 0; ri < 36; ri++) {
+                  const a = (ri / 36) * Math.PI * 2
+                  const spd = 8 + Math.random() * 8
+                  g.particles.push({ x: g.px, y: g.py, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd,
+                    life: 1.5, glyph: ri % 2 === 0 ? "★" : "◈",
+                    col: ri % 3 === 0 ? "#facc15" : ri % 3 === 1 ? "#966bec" : "#4ade80" })
+                }
+                sfx.bossDead()
+              }
             }
             const base = w.type === "bug" ? 75 : w.type === "powerup" ? 0 : 10
             const eliteMul = w.elite ? 3 : 1
@@ -1484,9 +1649,17 @@ export default function HomePage() {
                 </div>
 
                 {/* Controls */}
-                <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.68rem", marginBottom:"1.25rem", fontFamily:"monospace", textAlign:"left" }}>
+                <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.68rem", marginBottom:"0.75rem", fontFamily:"monospace", textAlign:"left" }}>
                   WASD / ← → move · SPACE fire · hold SPACE = laser charge · M = mine
                 </p>
+
+                {/* Boss sequence marquee */}
+                <div style={{ borderTop:"1px solid rgba(255,255,255,0.04)", borderBottom:"1px solid rgba(255,255,255,0.04)", padding:"0.45rem 0", marginBottom:"1rem" }}>
+                  <p style={{ color:"rgba(255,255,255,0.09)", fontSize:"0.57rem", fontFamily:"monospace",
+                    letterSpacing:"0.1em", textAlign:"center", margin:0 }}>
+                    THE RECURSION · THE DRIFT · THE FRAGMENT · THE COLLAPSE · ∞ RECURSION
+                  </p>
+                </div>
 
                 {/* Crew status row */}
                 {unlockedAgents.length > 0 && (() => {
@@ -1763,7 +1936,9 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   ctx.fillStyle = vgr; ctx.fillRect(0, 0, cw, GH)
 
   // ambient background glyphs
-  const glyphCol = g.endless ? "#4ade80" : BOSSES[Math.min(Math.max(g.level - 1, 0), 3)].color
+  const glyphCol = g.endless
+    ? (g.endlessWave >= 7 ? "#a855f7" : g.endlessWave >= 5 ? "#c084fc" : "#4ade80")
+    : BOSSES[Math.min(Math.max(g.level - 1, 0), 3)].color
   ctx.font = "10px monospace"; ctx.textAlign = "center"
   g.bg.forEach(b => {
     ctx.globalAlpha = b.a
@@ -2290,7 +2465,14 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   // HUD
   ctx.textAlign = "left"; ctx.font = "bold 13px monospace"
   ctx.fillStyle = "#966bec"; ctx.fillText(g.score.toLocaleString(), 10, 20)
-  ctx.fillStyle = "rgba(255,255,255,0.4)"
+  // Depth label: pulse purple in void territory (depth 5+)
+  if (g.endless && g.endlessWave >= 5) {
+    const voidPulse = 0.5 + 0.5 * Math.abs(Math.sin(now / 700))
+    ctx.fillStyle = `rgba(${g.endlessWave >= 9 ? "220,38,38" : "168,85,247"},${0.55 + voidPulse * 0.35})`
+    ctx.font = `bold 13px monospace`
+  } else {
+    ctx.fillStyle = "rgba(255,255,255,0.4)"; ctx.font = "bold 13px monospace"
+  }
   ctx.fillText(g.endless ? (g.endlessWave > 1 ? `DEPTH ${g.endlessWave}` : "RECURSION") : `SECTOR ${g.level}`, 10, 36)
   ctx.fillStyle = "rgba(255,255,255,0.18)"; ctx.font = "7px monospace"
   ctx.fillText(`${g.kills} kills`, 10, 60)
@@ -2882,7 +3064,8 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
   const [copied, setCopied]         = useState(false)
 
   async function share() {
-    const text = `I scored ${score.toLocaleString()} on Spec Blaster — LVL ${level}, ${kills} kills`
+    const depthStr = endless && endlessDepth && endlessDepth > 1 ? ` · depth ${endlessDepth}` : ""
+    const text = `I scored ${score.toLocaleString()} on Spec Blaster — ${kills} kills${depthStr}`
     const url = typeof window !== "undefined" ? window.location.origin : ""
     try {
       if (typeof navigator !== "undefined" && navigator.share) {
@@ -2924,11 +3107,24 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
     <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(13,13,20,0.97)", zIndex:10 }}>
       <div style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"2rem", maxWidth:"340px", width:"100%", textAlign:"center" }}>
         <div style={{ fontSize:"2.25rem", marginBottom:"0.6rem" }}>🦫</div>
-        <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.2rem" }}>SIGNAL LOST</p>
-        {endless && endlessDepth && endlessDepth >= 5 && (
-          <p style={{ color:"rgba(109,40,217,0.8)", fontSize:"0.65rem", margin:"0 0 0.3rem", fontFamily:"monospace", letterSpacing:"0.06em" }}>
-            {endlessDepth >= 5 ? "you reached the void" : `depth ${endlessDepth} reached`}
-          </p>
+        {endless && endlessDepth && endlessDepth >= 9 ? (
+          <>
+            <p style={{ color:"#dc2626", fontWeight:700, fontSize:"1rem", margin:"0 0 0.1rem", fontFamily:"monospace", letterSpacing:"0.06em" }}>
+              THE RECURSION CLAIMED YOU
+            </p>
+            <p style={{ color:"rgba(168,85,247,0.75)", fontSize:"0.62rem", margin:"0 0 0.2rem", fontFamily:"monospace", letterSpacing:"0.08em" }}>
+              depth {endlessDepth} · beyond the void
+            </p>
+          </>
+        ) : endless && endlessDepth && endlessDepth >= 5 ? (
+          <>
+            <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.1rem" }}>SIGNAL LOST</p>
+            <p style={{ color:"rgba(168,85,247,0.7)", fontSize:"0.62rem", margin:"0 0 0.2rem", fontFamily:"monospace", letterSpacing:"0.07em" }}>
+              depth {endlessDepth} · you reached the void
+            </p>
+          </>
+        ) : (
+          <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.2rem" }}>SIGNAL LOST</p>
         )}
         <p style={{ color:"#966bec", fontSize:"1.75rem", fontWeight:700, margin:"0 0 0.3rem", fontFamily:"monospace" }}>{score.toLocaleString()}</p>
         {isNewPB && <p style={{ color:"#facc15", fontSize:"0.72rem", margin:"0 0 0.8rem", fontFamily:"monospace", letterSpacing:"0.08em" }}>★ NEW PERSONAL BEST</p>}
@@ -2939,12 +3135,20 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
             ["CHAIN", `${maxCombo}×`],
             ["ACC", accuracy > 0 ? `${accuracy}%` : "—"],
             ...(endless ? [["UPGRADES", upgradeCount]] : []),
-          ].map(([label, val]) => (
-            <div key={label as string} style={{ background:"rgba(255,255,255,0.04)", borderRadius:"4px", padding:"0.4rem 0.3rem" }}>
-              <p style={{ color:"#a09fa2", fontSize:"0.6rem", margin:"0 0 0.15rem", fontFamily:"monospace" }}>{label}</p>
-              <p style={{ color:"#d8d7d8", fontSize:"0.9rem", fontWeight:600, margin:0, fontFamily:"monospace" }}>{val}</p>
-            </div>
-          ))}
+          ].map(([label, val], idx) => {
+            const isDepthCell = endless && idx === 0
+            const voidDepth = isDepthCell && typeof endlessDepth === "number" && endlessDepth >= 5
+            return (
+              <div key={label as string} style={{
+                background: voidDepth ? "rgba(109,40,217,0.12)" : "rgba(255,255,255,0.04)",
+                border: voidDepth ? "1px solid rgba(168,85,247,0.25)" : "1px solid transparent",
+                borderRadius:"4px", padding:"0.4rem 0.3rem",
+              }}>
+                <p style={{ color: voidDepth ? "rgba(168,85,247,0.65)" : "#a09fa2", fontSize:"0.6rem", margin:"0 0 0.15rem", fontFamily:"monospace" }}>{label}</p>
+                <p style={{ color: voidDepth ? "#c084fc" : "#d8d7d8", fontSize:"0.9rem", fontWeight:600, margin:0, fontFamily:"monospace" }}>{val}</p>
+              </div>
+            )
+          })}
         </div>
         {!endless && upgradeCount > 0 && (
           <p style={{ color:"rgba(150,107,236,0.6)", fontSize:"0.68rem", margin:"0 0 0.4rem", fontFamily:"monospace" }}>
