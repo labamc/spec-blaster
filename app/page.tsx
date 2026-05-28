@@ -361,8 +361,9 @@ export default function HomePage() {
   const upgradeOptionsRef                   = useRef<UpgradeDef[]>([])
   const upgradePickRef                      = useRef<((id: string) => void) | null>(null)
   const [topEntry, setTopEntry]             = useState<{handle: string; score: number} | null>(null)
-  const [personalBest, setPersonalBest]     = useState(0)
-  const [isTouchDevice, setIsTouchDevice]   = useState(false)
+  const [personalBest, setPersonalBest]         = useState(0)
+  const [personalDepthBest, setPersonalDepthBest] = useState(0)
+  const [isTouchDevice, setIsTouchDevice]         = useState(false)
   const [unlockedAgents, setUnlockedAgents] = useState<string[]>([])
   const [selectedAgents, setSelectedAgents] = useState<string[]>([])
   const [showAgentModule, setShowAgentModule] = useState(false)
@@ -375,6 +376,7 @@ export default function HomePage() {
       if (s) setTopEntry({ handle: s.handle, score: s.score })
     }).catch(() => {})
     try { setPersonalBest(parseInt(localStorage.getItem("sb_pb") || "0")) } catch {}
+    try { setPersonalDepthBest(parseInt(localStorage.getItem("sb_depth_pb") || "0")) } catch {}
     try {
       const saved = localStorage.getItem("sb_agents")
       if (saved) {
@@ -1600,6 +1602,16 @@ export default function HomePage() {
           const pb = parseInt(localStorage.getItem("sb_pb") || "0")
           if (g.score > pb) { localStorage.setItem("sb_pb", String(g.score)); setPersonalBest(g.score) }
         } catch {}
+        // Save depth PB for endless runs
+        if (g.endless && g.endlessWave > 0) {
+          try {
+            const dpb = parseInt(localStorage.getItem("sb_depth_pb") || "0")
+            if (g.endlessWave > dpb) {
+              localStorage.setItem("sb_depth_pb", String(g.endlessWave))
+              setPersonalDepthBest(g.endlessWave)
+            }
+          } catch {}
+        }
         phaseRef.current = "over"; setPhase("over")
       }
     }
@@ -1702,8 +1714,8 @@ export default function HomePage() {
                 </div>
 
                 {/* Scores */}
-                {(topEntry || personalBest > 0) && (
-                  <div style={{ display:"flex", gap:"1.25rem", justifyContent:"center", flexWrap:"wrap",
+                {(topEntry || personalBest > 0 || personalDepthBest > 0) && (
+                  <div style={{ display:"flex", gap:"1rem", justifyContent:"center", flexWrap:"wrap",
                     borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:"0.75rem" }}>
                     {topEntry && (
                       <p style={{ color:"rgba(253,186,116,0.65)", fontSize:"0.65rem", fontFamily:"monospace", margin:0 }}>
@@ -1713,6 +1725,11 @@ export default function HomePage() {
                     {personalBest > 0 && (
                       <p style={{ color:"rgba(150,107,236,0.55)", fontSize:"0.65rem", fontFamily:"monospace", margin:0 }}>
                         PB · {personalBest.toLocaleString()}
+                      </p>
+                    )}
+                    {personalDepthBest >= 2 && (
+                      <p style={{ color: personalDepthBest >= 5 ? "rgba(168,85,247,0.55)" : "rgba(74,222,128,0.45)", fontSize:"0.65rem", fontFamily:"monospace", margin:0 }}>
+                        DEPTH · {personalDepthBest}{personalDepthBest >= 9 ? " ∞" : personalDepthBest >= 5 ? " ∅" : ""}
                       </p>
                     )}
                   </div>
@@ -1733,7 +1750,7 @@ export default function HomePage() {
 
           {phase === "upgrade" && <CLIScreen options={upgradeOptions} onPick={onUpgradePick} score={score} kills={G.current.kills} onReroll={() => pickUpgrades(G.current.upgrades)} />}
 
-          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} onRestart={startGame} unlockedAgents={unlockedAgents} onShowStack={() => setShowAgentModule(true)} endless={G.current.endless} endlessDepth={G.current.endlessWave} />}
+          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} onRestart={startGame} unlockedAgents={unlockedAgents} onShowStack={() => setShowAgentModule(true)} endless={G.current.endless} endlessDepth={G.current.endlessWave} prevDepthBest={personalDepthBest} />}
 
           {showAgentModule && (
             <AgentModule unlocked={unlockedAgents} selected={selectedAgents}
@@ -2462,6 +2479,16 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     }
   }
 
+  // Boss global HP bar — thin strip at the very top of canvas during boss fights
+  if (g.boss) {
+    const bHpPct = g.boss.hp / g.boss.maxHp
+    const bBarCol = bHpPct > 0.5 ? g.boss.color : bHpPct > 0.25 ? "#facc15" : "#f87171"
+    ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.fillRect(0, 0, cw, 4)
+    ctx.save(); ctx.shadowColor = bBarCol; ctx.shadowBlur = 5
+    ctx.fillStyle = bBarCol; ctx.fillRect(0, 0, cw * Math.max(0, bHpPct), 4)
+    ctx.restore()
+  }
+
   // HUD
   ctx.textAlign = "left"; ctx.font = "bold 13px monospace"
   ctx.fillStyle = "#966bec"; ctx.fillText(g.score.toLocaleString(), 10, 20)
@@ -2512,7 +2539,14 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   if (g.upgrades.shield_regen && !g.shield && g.shieldRegenAt > 0) {
     const secs = Math.ceil(Math.max(0, g.shieldRegenAt - now) / 1000)
     ctx.fillStyle = "rgba(74,222,128,0.35)"; ctx.font = "7px monospace"; ctx.textAlign = "right"
-    ctx.fillText(`↺ ${secs}s`, cw - 10, pwY)
+    ctx.fillText(`↺ ${secs}s`, cw - 10, pwY); pwY += 10
+  }
+  // story streak — shows when player is clearing story words in sequence
+  if (g.storyStreak >= 2) {
+    const streakPulse = g.storyStreak >= 3 ? 0.35 + 0.2 * Math.abs(Math.sin(now / 380)) : 0.28
+    ctx.fillStyle = `rgba(125,211,252,${streakPulse})`
+    ctx.font = "7px monospace"; ctx.textAlign = "right"
+    ctx.fillText(`◈ ${g.storyStreak} defined`, cw - 10, pwY)
   }
 
   // Active permanent upgrades list
@@ -3053,8 +3087,9 @@ function CapyScreen({ text, lineNum, totalLines, level, onAdvance }: {
   )
 }
 
-function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isNewPB, onRestart, unlockedAgents, onShowStack, endless, endlessDepth }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; shotsFired: number; isNewPB: boolean; onRestart: () => void; unlockedAgents: string[]; onShowStack: () => void; endless?: boolean; endlessDepth?: number }) {
+function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isNewPB, onRestart, unlockedAgents, onShowStack, endless, endlessDepth, prevDepthBest }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; shotsFired: number; isNewPB: boolean; onRestart: () => void; unlockedAgents: string[]; onShowStack: () => void; endless?: boolean; endlessDepth?: number; prevDepthBest?: number }) {
   const accuracy = shotsFired > 0 ? Math.round((kills / shotsFired) * 100) : 0
+  const isNewDepthPB = endless && endlessDepth != null && prevDepthBest != null && endlessDepth > prevDepthBest && endlessDepth >= 2
   const [handle, setHandle] = useState(() => {
     try { return localStorage.getItem("sb_handle") ?? "" } catch { return "" }
   })
@@ -3127,7 +3162,9 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
           <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.2rem" }}>SIGNAL LOST</p>
         )}
         <p style={{ color:"#966bec", fontSize:"1.75rem", fontWeight:700, margin:"0 0 0.3rem", fontFamily:"monospace" }}>{score.toLocaleString()}</p>
-        {isNewPB && <p style={{ color:"#facc15", fontSize:"0.72rem", margin:"0 0 0.8rem", fontFamily:"monospace", letterSpacing:"0.08em" }}>★ NEW PERSONAL BEST</p>}
+        {isNewPB && <p style={{ color:"#facc15", fontSize:"0.72rem", margin:"0 0 0.2rem", fontFamily:"monospace", letterSpacing:"0.08em" }}>★ NEW PERSONAL BEST</p>}
+        {isNewDepthPB && <p style={{ color:"rgba(168,85,247,0.85)", fontSize:"0.68rem", margin:"0 0 0.8rem", fontFamily:"monospace", letterSpacing:"0.07em" }}>∅ NEW DEPTH RECORD · {endlessDepth}</p>}
+        {!isNewPB && !isNewDepthPB && <div style={{ marginBottom:"0.8rem" }} />}
         <div style={{ display:"grid", gridTemplateColumns: endless ? "1fr 1fr 1fr 1fr 1fr" : "1fr 1fr 1fr 1fr", gap:"0.4rem", marginBottom:"1.25rem" }}>
           {[
             endless ? ["DEPTH", endlessDepth ?? "—"] : ["SECTOR", level],
