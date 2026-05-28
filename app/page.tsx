@@ -351,11 +351,6 @@ export default function HomePage() {
       if ([" ","ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) e.preventDefault()
       if (e.type === "keydown") {
         G.current.keys.add(e.key)
-        if (phaseRef.current === "upgrade" && ["1","2","3"].includes(e.key)) {
-          const idx = parseInt(e.key) - 1
-          const opt = upgradeOptionsRef.current[idx]
-          if (opt) upgradePickRef.current?.(opt.id)
-        }
         if ((e.key === "p" || e.key === "P" || e.key === "Escape") && phaseRef.current === "playing" && G.current.running) {
           G.current.paused = !G.current.paused
         }
@@ -1071,7 +1066,7 @@ export default function HomePage() {
             </Overlay>
           )}
 
-          {phase === "upgrade" && <UpgradeScreen options={upgradeOptions} onPick={onUpgradePick} />}
+          {phase === "upgrade" && <CLIScreen options={upgradeOptions} onPick={onUpgradePick} score={score} kills={G.current.kills} />}
 
           {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} onRestart={startGame} unlockedAgents={unlockedAgents} onShowStack={() => setShowAgentModule(true)} />}
 
@@ -1654,25 +1649,298 @@ function Overlay({ children, onClick, dim }: { children: React.ReactNode; onClic
   )
 }
 
-function UpgradeScreen({ options, onPick }: { options: UpgradeDef[]; onPick: (id: string) => void }) {
+// ── CLI Compile Terminal ───────────────────────────────────────────────────
+type CLILineType = "sys" | "ok" | "cmd" | "dim" | "blank"
+interface CLILine { text: string; type: CLILineType }
+
+const CLI_KEYWORDS: Record<string, string[]> = {
+  fire_rate:    ["fire","fast","rapid","speed","rate","quick","burst","output","cycle","frequency","cadence"],
+  word_slow:    ["slow","freeze","drift","inhibit","decel","reduce","noise","velocity","word","creep","dampen"],
+  score_mul:    ["score","value","points","multiplier","stake","approval","weight","boost","amplify","earn"],
+  triple:       ["triple","three","parallel","multi","fork","branch","trident","3"],
+  spray:        ["spray","spread","arc","scatter","wide","burst","cannon","fragmentation","shotgun","swarm","disperse"],
+  piercing:     ["pierce","anchor","through","penetrate","context","chain","pass","bore"],
+  shield_regen: ["shield","firewall","regen","defense","protect","auto","repair","wall","barrier","recharge"],
+  code_review:  ["review","boss","damage","double","heavy","power","strength","analysis","2x","focus"],
+  homing:       ["homing","track","lock","curve","seek","hunt","follow","target","velocity","guided"],
+  extra_life:   ["life","rollback","restore","health","heart","revive","heal","integrity","repair","survive"],
+  auto_fire:    ["auto","autonomous","drone","standup","automatic","self","independent","scheduled","turret"],
+}
+
+const CLI_RESPONSES: Record<string, (cmd: string) => CLILine[]> = {
+  fire_rate: (cmd) => [
+    { text: `DIRECTIVE: "${cmd}"`, type:"dim" }, { text:"", type:"blank" },
+    { text:"> Output oscillation: recalibrated", type:"ok" },
+    { text:"> Fire interval: compressed 15%", type:"ok" },
+    { text:"> QA CADENCE: initialized", type:"ok" },
+    { text:"", type:"blank" },
+    { text:"The Signal outputs faster. Pattern pressure increasing.", type:"dim" },
+  ],
+  word_slow: (cmd) => [
+    { text: `DIRECTIVE: "${cmd}"`, type:"dim" }, { text:"", type:"blank" },
+    { text:"> Drift coefficient: reduced", type:"ok" },
+    { text:"> Semantic velocity: clamped", type:"ok" },
+    { text:"> SCOPE FREEZE: deployed", type:"ok" },
+    { text:"", type:"blank" },
+    { text:"Noise falls slower. More time to resolve each pattern.", type:"dim" },
+  ],
+  score_mul: (cmd) => [
+    { text: `DIRECTIVE: "${cmd}"`, type:"dim" }, { text:"", type:"blank" },
+    { text:"> Value attribution engine: online", type:"ok" },
+    { text:"> Resolution coefficient: +20%", type:"ok" },
+    { text:"> STAKEHOLDER APPROVAL: granted", type:"ok" },
+    { text:"", type:"blank" },
+    { text:"Each resolved pattern carries more weight.", type:"dim" },
+  ],
+  triple: (cmd) => [
+    { text: `DIRECTIVE: "${cmd}"`, type:"dim" }, { text:"", type:"blank" },
+    { text:"> Output geometry: tripled", type:"ok" },
+    { text:"> Parallel fire vectors: loaded", type:"ok" },
+    { text:"> TRIPLE OUTPUT: initialized", type:"ok" },
+    { text:"", type:"blank" },
+    { text:"The Signal fires three at once.", type:"dim" },
+  ],
+  spray: (cmd) => [
+    { text: `DIRECTIVE: "${cmd}"`, type:"dim" }, { text:"", type:"blank" },
+    { text:"> Dispersion geometry: 5-vector arc", type:"ok" },
+    { text:"> Spread calibration: maximum", type:"ok" },
+    { text:"> SPRAY & PRAY: initialized", type:"ok" },
+    { text:"", type:"blank" },
+    { text:"Autonomous fragmentation pattern active.", type:"dim" },
+  ],
+  piercing: (cmd) => [
+    { text: `DIRECTIVE: "${cmd}"`, type:"dim" }, { text:"", type:"blank" },
+    { text:"> Bullet coherence: sustained through targets", type:"ok" },
+    { text:"> Semantic penetration: enabled", type:"ok" },
+    { text:"> CONTEXT ANCHOR: deployed", type:"ok" },
+    { text:"", type:"blank" },
+    { text:"The Signal passes through noise without stopping.", type:"dim" },
+  ],
+  shield_regen: (cmd) => [
+    { text: `DIRECTIVE: "${cmd}"`, type:"dim" }, { text:"", type:"blank" },
+    { text:"> Autonomous defense protocol: loaded", type:"ok" },
+    { text:"> Firewall regeneration: every 25 seconds", type:"ok" },
+    { text:"> AUTO FIREWALL: initialized", type:"ok" },
+    { text:"", type:"blank" },
+    { text:"The Signal defends itself.", type:"dim" },
+  ],
+  code_review: (cmd) => [
+    { text: `DIRECTIVE: "${cmd}"`, type:"dim" }, { text:"", type:"blank" },
+    { text:"> Collapse pattern analysis: active", type:"ok" },
+    { text:"> Damage coefficient vs large patterns: 2×", type:"ok" },
+    { text:"> CODE REVIEW: initialized", type:"ok" },
+    { text:"", type:"blank" },
+    { text:"Heavy collapses take double damage.", type:"dim" },
+  ],
+  homing: (cmd) => [
+    { text: `DIRECTIVE: "${cmd}"`, type:"dim" }, { text:"", type:"blank" },
+    { text:"> Target acquisition system: online", type:"ok" },
+    { text:"> Ballistic curve computation: enabled", type:"ok" },
+    { text:"> SPRINT VELOCITY: initialized", type:"ok" },
+    { text:"", type:"blank" },
+    { text:"Rounds curve toward semantic noise.", type:"dim" },
+  ],
+  extra_life: (cmd) => [
+    { text: `DIRECTIVE: "${cmd}"`, type:"dim" }, { text:"", type:"blank" },
+    { text:"> Integrity snapshot: restored", type:"ok" },
+    { text:"> Signal carrier health: +1", type:"ok" },
+    { text:"> ROLLBACK: executed", type:"ok" },
+    { text:"", type:"blank" },
+    { text:"The Signal continues.", type:"dim" },
+  ],
+  auto_fire: (cmd) => [
+    { text: `DIRECTIVE: "${cmd}"`, type:"dim" }, { text:"", type:"blank" },
+    { text:"> Autonomous targeting protocol: online", type:"ok" },
+    { text:"> Self-directed fire interval: 3 seconds", type:"ok" },
+    { text:"> DAILY STAND-UP: initialized", type:"ok" },
+    { text:"", type:"blank" },
+    { text:"The Signal fires itself.", type:"dim" },
+  ],
+}
+
+function matchUpgrade(cmd: string, options: UpgradeDef[]): UpgradeDef {
+  const lower = cmd.toLowerCase()
+  let best = options[0], bestScore = -1
+  options.forEach(opt => {
+    const score = (CLI_KEYWORDS[opt.id] ?? []).reduce((s, kw) => s + (lower.includes(kw) ? 1 : 0), 0)
+    if (score > bestScore) { bestScore = score; best = opt }
+  })
+  return best
+}
+
+function CLIScreen({ options, onPick, score, kills }: {
+  options: UpgradeDef[]; onPick: (id: string) => void; score: number; kills: number
+}) {
+  const tokens = Math.floor(score / 6) + kills * 3
+  const [lines, setLines] = useState<CLILine[]>([])
+  const [input, setInput] = useState("")
+  const [phase, setPhase] = useState<"boot"|"ready"|"parsing"|"done">("boot")
+  const inputRef = useRef<HTMLInputElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const phaseRef = useRef<"boot"|"ready"|"parsing"|"done">("boot")
+  phaseRef.current = phase
+
+  // Auto-scroll
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior:"smooth" }) }, [lines])
+
+  // Boot sequence
+  useEffect(() => {
+    const boot: CLILine[] = [
+      { text:"SIGNAL://runtime stabilized", type:"sys" },
+      { text:`TOKENS AVAILABLE: ${tokens.toLocaleString()}`, type:"dim" },
+      { text:"", type:"blank" },
+      { text:"SIGNAL://compile directive ready", type:"sys" },
+      { text:"Describe what you want to build.", type:"dim" },
+      { text:"", type:"blank" },
+    ]
+    let i = 0
+    const tick = () => {
+      if (i < boot.length) { setLines(prev => [...prev, boot[i++]]); setTimeout(tick, 90) }
+      else { setPhase("ready"); setTimeout(() => inputRef.current?.focus(), 60) }
+    }
+    setTimeout(tick, 250)
+  }, []) // eslint-disable-line
+
+  // Idle hint after 7 seconds
+  useEffect(() => {
+    if (phase !== "ready") return
+    const t = setTimeout(() => {
+      setLines(prev => [...prev,
+        { text:"SIGNAL://idle — syntax cache available", type:"sys" },
+        { text:options.map((o, i) => `[${i+1}] ${o.name}`).join("  ·  "), type:"dim" },
+        { text:"or describe freely", type:"dim" },
+        { text:"", type:"blank" },
+      ])
+    }, 7000)
+    return () => clearTimeout(t)
+  }, [phase, options])
+
+  function compileDirect(upgrade: UpgradeDef, label: string) {
+    setLines(prev => [...prev, { text:`> ${label}`, type:"cmd" }])
+    setInput("")
+    setPhase("parsing")
+    setTimeout(() => {
+      setLines(prev => [...prev,
+        { text:"", type:"blank" },
+        { text:`SIGNAL://direct compile — ${upgrade.name}`, type:"sys" },
+        { text:`> ${upgrade.desc}`, type:"ok" },
+        { text:"", type:"blank" },
+        { text:`SIGNAL://compile complete — ${upgrade.name}`, type:"sys" },
+      ])
+      setPhase("done")
+      setTimeout(() => onPick(upgrade.id), 700)
+    }, 380)
+  }
+
+  function compileFromText(cmd: string) {
+    const matched = matchUpgrade(cmd, options)
+    setLines(prev => [...prev, { text:`> ${cmd}`, type:"cmd" }])
+    setInput("")
+    setPhase("parsing")
+
+    setTimeout(() => {
+      setLines(prev => [...prev,
+        { text:"", type:"blank" },
+        { text:"SIGNAL://analyzing directive...", type:"sys" },
+      ])
+      const resp = CLI_RESPONSES[matched.id]?.(cmd) ?? [
+        { text: `DIRECTIVE: "${cmd}"`, type:"dim" as CLILineType }, { text:"", type:"blank" as CLILineType },
+        { text:`> Parsing non-standard input...`, type:"ok" as CLILineType },
+        { text:`> Best match: ${matched.name}`, type:"ok" as CLILineType },
+        { text:"", type:"blank" as CLILineType },
+        { text:`${matched.name}: initialized`, type:"dim" as CLILineType },
+      ]
+      resp.forEach((line, i) => {
+        setTimeout(() => setLines(prev => [...prev, line]), 500 + i * 85)
+      })
+      const totalMs = 500 + resp.length * 85 + 550
+      setTimeout(() => {
+        setLines(prev => [...prev,
+          { text:"", type:"blank" },
+          { text:`SIGNAL://compile complete — ${matched.name}`, type:"sys" },
+        ])
+        setPhase("done")
+        setTimeout(() => onPick(matched.id), 750)
+      }, totalMs)
+    }, 280)
+  }
+
+  function handleSubmit() {
+    if (!input.trim() || phaseRef.current !== "ready") return
+    const cmd = input.trim()
+    // help command
+    if (cmd.toLowerCase() === "help" || cmd === "?") {
+      setLines(prev => [...prev,
+        { text:`> ${cmd}`, type:"cmd" },
+        { text:"", type:"blank" },
+        { text:"AVAILABLE COMPILE TARGETS:", type:"sys" },
+        ...options.map((o, i) => ({ text:`  [${i+1}]  ${o.name.padEnd(24)}${o.desc}`, type:"dim" as CLILineType })),
+        { text:"", type:"blank" },
+      ])
+      setInput(""); return
+    }
+    // direct number
+    if (["1","2","3"].includes(cmd)) {
+      const opt = options[parseInt(cmd) - 1]
+      if (opt) { compileDirect(opt, cmd); return }
+    }
+    compileFromText(cmd)
+  }
+
+  // 1/2/3 keyboard shortcuts (only when input not focused)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (phaseRef.current !== "ready") return
+      if (["1","2","3"].includes(e.key) && document.activeElement !== inputRef.current) {
+        const opt = options[parseInt(e.key) - 1]
+        if (opt) compileDirect(opt, e.key)
+      }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [options]) // eslint-disable-line
+
+  const col = (t: CLILineType) => t === "sys" ? "#966bec" : t === "ok" ? "#4ade80" : t === "cmd" ? "rgba(255,255,255,0.88)" : "rgba(255,255,255,0.0)"
+
   return (
-    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(13,13,20,0.97)", zIndex:10 }}>
-      <div style={{ width:"100%", maxWidth:"580px", padding:"1.5rem" }}>
-        <p style={{ textAlign:"center", color:"#a09fa2", fontSize:"0.72rem", fontFamily:"monospace", marginBottom:"1.25rem", letterSpacing:"0.12em" }}>CHOOSE UPGRADE</p>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.75rem" }}>
-          {options.map((u, i) => (
-            <button key={u.id} onClick={() => onPick(u.id)}
-              style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"1.25rem 1rem", textAlign:"left", cursor:"pointer", display:"block", width:"100%", position:"relative" }}
-              onMouseEnter={e => (e.currentTarget.style.borderColor = "rgba(150,107,236,0.45)")}
-              onMouseLeave={e => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.07)")}
-            >
-              <span style={{ position:"absolute", top:6, right:8, color:"rgba(255,255,255,0.2)", fontSize:"0.65rem", fontFamily:"monospace" }}>{i+1}</span>
-              <p style={{ color:"#966bec", fontWeight:600, fontSize:"0.875rem", marginBottom:"0.4rem" }}>{u.name}</p>
-              <p style={{ color:"#a09fa2", fontSize:"0.75rem", lineHeight:1.55 }}>{u.desc}</p>
-            </button>
-          ))}
-        </div>
-        <p style={{ textAlign:"center", color:"rgba(255,255,255,0.15)", fontSize:"0.65rem", fontFamily:"monospace", marginTop:"1rem" }}>press 1 · 2 · 3 to select</p>
+    <div style={{ position:"absolute", inset:0, background:"#08080f", zIndex:10, display:"flex", flexDirection:"column", fontFamily:"monospace" }}>
+      {/* Header bar */}
+      <div style={{ borderBottom:"1px solid rgba(150,107,236,0.14)", padding:"0.55rem 1.5rem", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+        <span style={{ color:"rgba(150,107,236,0.7)", fontSize:"0.65rem", letterSpacing:"0.18em" }}>THE SIGNAL · COMPILE TERMINAL</span>
+        <span style={{ color:"rgba(74,222,128,0.5)", fontSize:"0.62rem" }}>TOKENS: {tokens.toLocaleString()}</span>
+      </div>
+      {/* Terminal output */}
+      <div style={{ flex:1, overflowY:"auto", padding:"1rem 1.5rem 0.5rem" }}>
+        {lines.map((l, i) => (
+          <div key={i} style={{
+            color: l.type === "dim" ? "rgba(255,255,255,0.38)" : col(l.type),
+            fontSize:"0.8rem", lineHeight:"1.8",
+            minHeight: l.type === "blank" ? "0.6rem" : undefined,
+            fontStyle: l.type === "dim" ? "normal" : undefined,
+          }}>{l.text}</div>
+        ))}
+        {phase === "parsing" && (
+          <div style={{ color:"#966bec", fontSize:"0.8rem", lineHeight:"1.8" }}>▋</div>
+        )}
+        <div ref={scrollRef} />
+      </div>
+      {/* Input */}
+      <div style={{ borderTop:"1px solid rgba(255,255,255,0.055)", padding:"0.65rem 1.5rem 1rem", display:"flex", gap:"0.55rem", alignItems:"center", flexShrink:0 }}>
+        <span style={{ color: phase === "ready" ? "#966bec" : "rgba(150,107,236,0.3)", fontSize:"0.85rem" }}>{">"}</span>
+        <input
+          ref={inputRef}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") handleSubmit() }}
+          disabled={phase !== "ready"}
+          autoFocus
+          placeholder={phase === "ready" ? "describe what to build…" : ""}
+          style={{
+            flex:1, background:"transparent", border:"none", outline:"none",
+            color:"rgba(255,255,255,0.88)", fontFamily:"monospace", fontSize:"0.82rem",
+            caretColor:"#966bec", opacity: phase === "ready" ? 1 : 0,
+          }}
+        />
       </div>
     </div>
   )
