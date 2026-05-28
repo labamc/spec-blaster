@@ -1923,115 +1923,99 @@ export default function HomePage() {
         <div ref={wrapRef} style={{ position:"relative", width:"100%", borderRadius:"6px", overflow:"hidden", border:"1px solid rgba(255,255,255,0.08)" }}>
 
           {phase === "attract" && (
-            <Overlay onClick={startGame} dim={0.88}>
-              <div style={{ background:"#0d0d16", border:"1px solid rgba(150,107,236,0.35)", borderRadius:"8px", padding:"1.2rem 1.4rem", maxWidth:"360px", width:"calc(100% - 2rem)", boxShadow:"0 0 32px rgba(150,107,236,0.15)" }}>
+            <Overlay onClick={startGame} dim={0.92}>
+              <div style={{
+                background:"#0c0c16", border:"1px solid rgba(150,107,236,0.28)",
+                borderRadius:"10px", padding:"1.6rem 1.5rem",
+                maxWidth:"300px", width:"calc(100% - 2rem)",
+                boxShadow:"0 0 40px rgba(100,60,200,0.18)",
+                display:"flex", flexDirection:"column", gap:"0",
+              }}>
 
-                {/* Title */}
-                <div style={{ marginBottom:"1rem" }}>
-                  <p style={{ color:"#c4b5fd", fontSize:"1.25rem", fontWeight:700, letterSpacing:"0.16em", margin:"0 0 0.25rem", fontFamily:"monospace" }}>SPEC BLASTER</p>
-                  <AttractTagline />
+                {/* ── Title ── */}
+                <div style={{ textAlign:"center", marginBottom:"1.4rem" }}>
+                  <p style={{ color:"#c4b5fd", fontSize:"1.3rem", fontWeight:700, letterSpacing:"0.2em", margin:"0 0 0.3rem", fontFamily:"monospace" }}>SPEC BLASTER</p>
+                  <p style={{ color:"rgba(196,181,253,0.5)", fontSize:"0.65rem", margin:0, fontFamily:"monospace", letterSpacing:"0.04em" }}>Navigate semantic collapse. Protect The Signal.</p>
                 </div>
 
-                {/* What to shoot */}
-                <div style={{ marginBottom:"0.9rem", background:"rgba(255,255,255,0.03)", borderRadius:"5px", padding:"0.6rem 0.75rem", border:"1px solid rgba(255,255,255,0.06)" }}>
-                  {([
-                    { col:"#fb923c", label:"CORRUPTION", tag:"+75 pts", desc:"primary threat" },
-                    { col:"#7dd3fc", label:"NOISE",      tag:"+10 pts", desc:"ghost directives" },
-                    { col:"#4ade80", label:"ARTIFACTS",  tag:"POWER-UP", desc:"CLARITY · ANCHOR · REBASE + more" },
-                  ]).map(({ col, label, tag, desc }) => (
-                    <div key={label} style={{ display:"flex", alignItems:"baseline", gap:"0.5rem", marginBottom:"0.3rem" }}>
-                      <span style={{ width:7, height:7, borderRadius:"2px", background:col, display:"inline-block", flexShrink:0, position:"relative", top:"1px" }} />
-                      <span style={{ color:col, fontFamily:"monospace", fontSize:"0.68rem", fontWeight:700, flexShrink:0 }}>{label}</span>
-                      <span style={{ color:"rgba(255,255,255,0.3)", fontFamily:"monospace", fontSize:"0.58rem", flexShrink:0 }}>{tag}</span>
-                      <span style={{ color:"rgba(255,255,255,0.38)", fontSize:"0.62rem", minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{desc}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Controls */}
-                <div style={{ display:"flex", flexWrap:"wrap", gap:"0.25rem 0.9rem", marginBottom:"0.9rem" }}>
-                  {[["WASD","move"],["SPACE","shoot"],["hold SPACE","laser"],["M","mine"]].map(([k,v]) => (
-                    <span key={k} style={{ fontSize:"0.62rem", fontFamily:"monospace", whiteSpace:"nowrap" }}>
-                      <span style={{ color:"rgba(150,107,236,0.9)" }}>{k}</span>
-                      <span style={{ color:"rgba(255,255,255,0.3)" }}> {v}</span>
-                    </span>
-                  ))}
-                </div>
-
-                {/* Sectors — compact single line */}
-                <div style={{ display:"flex", alignItems:"center", gap:"0.2rem", flexWrap:"wrap", marginBottom:"0.9rem", fontSize:"0.58rem", fontFamily:"monospace" }}>
-                  {["RECURSION","DRIFT","FRAGMENT","COLLAPSE"].map((s, i) => (
-                    <span key={s}>
-                      <span style={{ color:"rgba(255,255,255,0.38)" }}>{s}</span>
-                      <span style={{ color:"rgba(255,255,255,0.12)", margin:"0 0.2rem" }}>→</span>
-                    </span>
-                  ))}
-                  <span style={{ color:"rgba(168,85,247,0.85)" }}>∞ ENDLESS</span>
-                </div>
-
-                {/* Crew — only show if unlocked */}
-                {unlockedAgents.length > 0 && (() => {
-                  const deployed = [...AGENT_DEFS, ...MERC_AGENTS].filter(a => selectedAgents.includes(a.id) && unlockedAgents.includes(a.id))
-                  return (
-                    <div style={{ marginBottom:"0.9rem", borderTop:"1px solid rgba(255,255,255,0.07)", paddingTop:"0.7rem" }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:"0.4rem", marginBottom:"0.4rem" }}>
-                        <span style={{ color:"rgba(255,255,255,0.45)", fontSize:"0.58rem", fontFamily:"monospace", letterSpacing:"0.14em" }}>CREW</span>
-                        <div style={{ flex:1, height:"1px", background:"rgba(255,255,255,0.06)" }} />
-                        <button onClick={e => { e.stopPropagation(); setShowAgentModule(true) }}
-                          style={{ background:"none", border:"none", cursor:"pointer", color:"rgba(150,107,236,0.7)", fontSize:"0.58rem", fontFamily:"monospace", padding:0 }}>
-                          manage →
-                        </button>
-                      </div>
-                      <div style={{ display:"flex", flexWrap:"wrap", gap:"0.3rem" }}>
-                        {deployed.length > 0 ? deployed.map(a => {
-                          const upLv = agentUpgrades[a.id] ?? 0
-                          return (
-                            <span key={a.id} style={{
-                              background:"rgba(74,222,128,0.07)", border:"1px solid rgba(74,222,128,0.25)",
-                              borderRadius:"3px", padding:"0.15rem 0.45rem",
-                              color:"rgba(74,222,128,0.8)", fontSize:"0.6rem", fontFamily:"monospace",
-                            }}>
-                              {agentNames[a.id] ?? a.name}{upLv > 0 ? <span style={{ opacity:0.5 }}> lv{upLv+1}</span> : ""}
-                            </span>
-                          )
-                        }) : (
-                          <span style={{ color:"rgba(248,113,113,0.6)", fontSize:"0.6rem", fontFamily:"monospace" }}>no crew active</span>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })()}
-
-                {/* CTA */}
+                {/* ── PLAY button ── */}
                 <button onClick={startGame} style={{
-                  width:"100%", background:"#7c3aed", color:"#fff", border:"none", borderRadius:"5px",
-                  padding:"0.6rem", fontSize:"0.85rem", fontWeight:700, letterSpacing:"0.1em",
-                  cursor:"pointer", fontFamily:"monospace", marginBottom:"0.6rem",
-                  boxShadow:"0 0 18px rgba(124,58,237,0.4)",
+                  width:"100%", background:"linear-gradient(135deg,#7c3aed,#6d28d9)",
+                  color:"#fff", border:"none", borderRadius:"7px",
+                  padding:"0.85rem", fontSize:"0.9rem", fontWeight:700,
+                  letterSpacing:"0.13em", cursor:"pointer", fontFamily:"monospace",
+                  marginBottom:"1.1rem",
+                  boxShadow:"0 0 28px rgba(124,58,237,0.5)",
                 }}>
                   LAUNCH MISSION
                 </button>
 
-                {/* Scores */}
-                {(topEntry || personalBest > 0 || personalDepthBest > 0) && (
-                  <div style={{ display:"flex", gap:"0.75rem", justifyContent:"center", flexWrap:"wrap" }}>
-                    {topEntry && (
-                      <span style={{ color:"rgba(253,186,116,0.7)", fontSize:"0.6rem", fontFamily:"monospace" }}>
-                        🏆 {topEntry.handle} · {topEntry.score.toLocaleString()}
-                      </span>
-                    )}
+                {/* ── Crew ── */}
+                {(() => {
+                  const deployed = [...AGENT_DEFS, ...MERC_AGENTS].filter(a => selectedAgents.includes(a.id) && unlockedAgents.includes(a.id))
+                  return (
+                    <div style={{ marginBottom:"1rem" }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:"0.5rem", marginBottom:"0.45rem" }}>
+                        <span style={{ color:"rgba(196,181,253,0.65)", fontSize:"0.6rem", fontFamily:"monospace", letterSpacing:"0.12em", fontWeight:600 }}>CREW</span>
+                        <div style={{ flex:1, height:"1px", background:"rgba(150,107,236,0.15)" }} />
+                        <button onClick={e => { e.stopPropagation(); setShowAgentModule(true) }}
+                          style={{ background:"none", border:"none", cursor:"pointer", color:"rgba(150,107,236,0.8)", fontSize:"0.6rem", fontFamily:"monospace", padding:0 }}>
+                          manage →
+                        </button>
+                      </div>
+                      {unlockedAgents.length === 0 ? (
+                        <p style={{ color:"rgba(160,159,162,0.55)", fontSize:"0.62rem", fontFamily:"monospace", margin:0 }}>
+                          No agents yet — survive sector 1 to recruit crew.
+                        </p>
+                      ) : deployed.length === 0 ? (
+                        <p style={{ color:"rgba(248,113,113,0.65)", fontSize:"0.62rem", fontFamily:"monospace", margin:0 }}>
+                          No crew active — tap manage to assign agents.
+                        </p>
+                      ) : (
+                        <div style={{ display:"flex", flexWrap:"wrap", gap:"0.3rem" }}>
+                          {deployed.map(a => {
+                            const upLv = agentUpgrades[a.id] ?? 0
+                            return (
+                              <span key={a.id} style={{
+                                background:"rgba(74,222,128,0.09)", border:"1px solid rgba(74,222,128,0.32)",
+                                borderRadius:"4px", padding:"0.2rem 0.5rem",
+                                color:"rgba(74,222,128,0.92)", fontSize:"0.62rem", fontFamily:"monospace",
+                              }}>
+                                {agentNames[a.id] ?? a.name}
+                                {upLv > 0 && <span style={{ color:"rgba(74,222,128,0.45)", fontSize:"0.55rem" }}> lv{upLv+1}</span>}
+                              </span>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+
+                {/* ── Controls ── */}
+                <p style={{ color:"rgba(160,159,162,0.55)", fontSize:"0.58rem", fontFamily:"monospace", margin:"0 0 0.9rem", textAlign:"center", lineHeight:1.6 }}>
+                  <span style={{ color:"rgba(150,107,236,0.8)" }}>WASD</span> move&nbsp;&nbsp;
+                  <span style={{ color:"rgba(150,107,236,0.8)" }}>SPACE</span> shoot&nbsp;&nbsp;
+                  <span style={{ color:"rgba(150,107,236,0.8)" }}>hold</span> laser&nbsp;&nbsp;
+                  <span style={{ color:"rgba(150,107,236,0.8)" }}>M</span> mine
+                </p>
+
+                {/* ── Personal bests ── */}
+                {(personalBest > 0 || personalDepthBest >= 2) && (
+                  <div style={{ display:"flex", gap:"1rem", justifyContent:"center", borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"0.7rem" }}>
                     {personalBest > 0 && (
-                      <span style={{ color:"rgba(196,181,253,0.7)", fontSize:"0.6rem", fontFamily:"monospace" }}>
+                      <span style={{ color:"rgba(196,181,253,0.65)", fontSize:"0.6rem", fontFamily:"monospace" }}>
                         PB · {personalBest.toLocaleString()}
                       </span>
                     )}
                     {personalDepthBest >= 2 && (
-                      <p style={{ color: personalDepthBest >= 5 ? "rgba(168,85,247,0.75)" : "rgba(74,222,128,0.6)", fontSize:"0.65rem", fontFamily:"monospace", margin:0 }}>
-                        DEPTH · {personalDepthBest}{personalDepthBest >= 9 ? " ∞" : personalDepthBest >= 5 ? " ∅" : ""}
-                      </p>
+                      <span style={{ color: personalDepthBest >= 5 ? "rgba(168,85,247,0.7)" : "rgba(74,222,128,0.65)", fontSize:"0.6rem", fontFamily:"monospace" }}>
+                        DEPTH · {personalDepthBest}{personalDepthBest >= 9 ? " ∞" : ""}
+                      </span>
                     )}
                   </div>
                 )}
+
               </div>
             </Overlay>
           )}
