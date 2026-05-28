@@ -128,6 +128,7 @@ interface GState {
   combo: number; lastKill: number; shake: number
   capyMsg: string; capyMsgEnd: number; nextCapyMsg: number
   bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null; maxCombo: number; lastStorm: number
+  paused: boolean; lastMilestone: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -151,6 +152,7 @@ function initState(W: number): GState {
     combo: 1, lastKill: 0, shake: 0,
     capyMsg: "", capyMsgEnd: 0, nextCapyMsg: 0,
     bossWarn: null, mouseX: -1, waveAnn: null, maxCombo: 1, lastStorm: 0,
+    paused: false, lastMilestone: 0,
   }
 }
 
@@ -255,6 +257,9 @@ export default function HomePage() {
           const opt = upgradeOptionsRef.current[idx]
           if (opt) upgradePickRef.current?.(opt.id)
         }
+        if ((e.key === "p" || e.key === "P" || e.key === "Escape") && phaseRef.current === "playing" && G.current.running) {
+          G.current.paused = !G.current.paused
+        }
       } else {
         G.current.keys.delete(e.key)
       }
@@ -313,6 +318,11 @@ export default function HomePage() {
       }
 
       if (!g.running) return
+
+      if (g.paused) {
+        drawPaused(ctx, g, canvas.width, now)
+        return
+      }
 
       const spd = g.fast && now < g.fastEnd ? 8 : 5
 
@@ -637,6 +647,16 @@ export default function HomePage() {
         }
       }
 
+      // score milestones
+      const milestones = [500, 1000, 2500, 5000, 10000, 20000]
+      for (const m of milestones) {
+        if (g.score >= m && g.lastMilestone < m) {
+          g.lastMilestone = m
+          g.particles.push({ x: canvas.width/2, y: GH/2 + 20, vx: 0, vy: -0.7, life: 1.6, glyph: `${m.toLocaleString()} pts`, col: "#facc15", sz: 14 })
+          g.shake = 3
+        }
+      }
+
       setScore(g.score); setLives(g.lives)
       draw(ctx, g, canvas.width, now, false)
     }
@@ -914,6 +934,9 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(b.x - 42, b.y + 4, 84, 7)
     ctx.fillStyle = hpPct > 0.5 ? "#4ade80" : hpPct > 0.25 ? "#facc15" : "#f87171"
     ctx.fillRect(b.x - 42, b.y + 4, 84 * hpPct, 7)
+    // segment markers at 25%, 50%, 75%
+    ctx.fillStyle = "rgba(0,0,0,0.5)"
+    for (const pct of [0.25, 0.5, 0.75]) ctx.fillRect(b.x - 42 + 84 * pct - 0.5, b.y + 4, 1, 7)
   }
 
   // boss warning animation
@@ -1090,6 +1113,18 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   ctx.globalAlpha = 1
 
   if (shook) ctx.restore()
+}
+
+function drawPaused(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number) {
+  draw(ctx, g, cw, now, false)
+  ctx.globalAlpha = 0.55
+  ctx.fillStyle = "#0d0d14"
+  ctx.fillRect(0, 0, cw, GH)
+  ctx.globalAlpha = 1
+  ctx.fillStyle = "#966bec"; ctx.font = "bold 18px monospace"; ctx.textAlign = "center"
+  ctx.fillText("PAUSED", cw/2, GH/2 - 8)
+  ctx.fillStyle = "rgba(255,255,255,0.3)"; ctx.font = "9px monospace"
+  ctx.fillText("press P or ESC to resume", cw/2, GH/2 + 12)
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
