@@ -7,7 +7,7 @@ const GW = 600
 const GH = 420
 const PLAYER_Y = GH - 50
 const MAX_LIVES = 3
-const WORDS_TO_BOSS = 14
+const WORDS_TO_BOSS = 18
 
 const BUG_WORDS = [
   "seamlessly","real-time","automatically","zero latency","scalable","robust",
@@ -421,16 +421,6 @@ export default function HomePage() {
     g.waveAnn = { text: `SECTOR 1 · ${BOSSES[0].name}`, t: 0 }
     g.livesAtWave = MAX_LIVES
     startDrone()
-    // Seed initial burst — player has targets immediately, no waiting
-    const W2 = g.W
-    for (let bi = 0; bi < 4; bi++) {
-      const ox = 60 + Math.random() * (W2 - 120)
-      const typ = Math.random() < 0.35 ? "bug" : "story"
-      const wtext = typ === "bug"
-        ? BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)]
-        : STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)]
-      g.words.push({ x: ox, y: -18 - bi * 38, text: wtext, type: typ as Word["type"], spd: 1.7 + Math.random() * 0.3, beh: "fall", ph: 0, ox, hp: 1, hitFlash: 0, elite: false, age: 0 })
-    }
     setScore(0); setLevel(1); setLives(MAX_LIVES)
     phaseRef.current = "playing"
     setPhase("playing")
@@ -482,19 +472,6 @@ export default function HomePage() {
         g.endlessWave = 1
         g.lastMiniAt = 0
         g.lastStorm = 0
-      }
-      // Seed a fresh initial burst so the new sector starts with immediate action
-      const W3 = g.W
-      for (let bi = 0; bi < 3; bi++) {
-        const ox3 = 60 + Math.random() * (W3 - 120)
-        const typ3 = Math.random() < 0.35 ? "bug" : "story"
-        const wt3 = typ3 === "bug"
-          ? BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)]
-          : STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)]
-        const slowFactor3 = Math.pow(0.85, g.upgrades.word_slow ?? 0)
-        const designMul3 = g.activeAgents.includes("claude_design") ? 0.88 : 1
-        const spd3 = (1.6 + g.level * 0.3) * slowFactor3 * designMul3
-        g.words.push({ x: ox3, y: -18 - bi * 40, text: wt3, type: typ3 as Word["type"], spd: spd3, beh: "fall", ph: 0, ox: ox3, hp: 1, hitFlash: 0, elite: false, age: 0 })
       }
       // Wave announcement
       if (g.level <= 4) {
@@ -807,11 +784,11 @@ export default function HomePage() {
 
       // spawn words (not during boss warning)
       if (!g.bossWarn && (!g.boss || g.endless)) {
-        // Pre-boss surge: last 4 kills before boss, spawn rate spikes 45% for crescendo
-        const preBossSurge = !g.endless && !g.boss && g.wordsKilled >= WORDS_TO_BOSS - 4
-        // Much faster spawn rate — sector 1 at ~750ms (was 1420ms), sector 4 at ~350ms
-        const baseInterval = Math.max(260, 960 - g.level * 130 - (g.endless ? Math.floor(g.score / 500) * 35 : 0))
-        const interval = preBossSurge ? Math.floor(baseInterval * 0.55) : baseInterval
+        // Pre-boss surge: last 3 kills before boss, modest 20% faster spawn
+        const preBossSurge = !g.endless && !g.boss && g.wordsKilled >= WORDS_TO_BOSS - 3
+        // Spawn interval: sector 1 ~1300ms, sector 4 ~820ms. Endless scales with score.
+        const baseInterval = Math.max(340, 1500 - g.level * 170 - (g.endless ? Math.floor(g.score / 600) * 30 : 0))
+        const interval = preBossSurge ? Math.floor(baseInterval * 0.8) : baseInterval
         if (now - g.lastWord > interval) {
           g.lastWord = now
           const roll = Math.random()
@@ -830,17 +807,17 @@ export default function HomePage() {
           }
           const slowFactor = Math.pow(0.85, g.upgrades.word_slow ?? 0)
           const designMul = g.activeAgents.includes("claude_design") ? 0.88 : 1
-          // Higher base speed — sector 1 at 1.9 (was 1.55), sector 4 at 2.82 (was 2.3)
-          const spd2 = (1.6 + g.level * 0.3 + (g.endless ? Math.floor(g.score / 700) * 0.14 : 0)) * slowFactor * designMul
+          // Speed: sector 1 ~1.55, sector 4 ~2.2, endless scales up gently
+          const spd2 = (1.3 + g.level * 0.22 + (g.endless ? Math.floor(g.score / 800) * 0.1 : 0)) * slowFactor * designMul
           const br = Math.random()
           let beh: Behavior = "fall"
           if (type !== "powerup") {
-            if      (g.level >= 3 && br < 0.20) beh = "sine"
-            else if (g.level >= 2 && br < 0.30) beh = "zigzag"
-            else if (br < 0.18) beh = "charge"   // sector 1 gets 18% charge variety
-            // Pre-boss surge: force chaotic behaviors for dramatic buildup
-            if (preBossSurge && beh === "fall" && g.level >= 1) {
-              beh = br < 0.5 ? "charge" : "zigzag"
+            if      (g.level >= 4 && br < 0.20) beh = "sine"
+            else if (g.level >= 3 && br < 0.30) beh = "zigzag"
+            else if (g.level >= 2 && br < 0.35) beh = "charge"
+            // Pre-boss surge: slightly more aggressive behavior in last 3 kills
+            if (preBossSurge && beh === "fall" && g.level >= 2) {
+              beh = "charge"
             }
           }
           const ox = 30 + Math.random() * (g.W - 60)
@@ -850,33 +827,7 @@ export default function HomePage() {
         }
       }
 
-      // Mid-sector momentum spikes (sector mode only) — at kill 4 and 9, spawn burst of aggressive words
-      if (!g.endless && !g.boss && !g.bossWarn) {
-        const msThreshold = g.wordsKilled >= 4 && g.wordsKilled < 6 ? 4 : g.wordsKilled >= 9 && g.wordsKilled < WORDS_TO_BOSS - 4 ? 9 : -1
-        if (msThreshold > 0 && g.lastMsWave !== msThreshold) {
-          g.lastMsWave = msThreshold
-          const slowFactor = Math.pow(0.85, g.upgrades.word_slow ?? 0)
-          const designMul = g.activeAgents.includes("claude_design") ? 0.88 : 1
-          const burstSpd = (1.9 + g.level * 0.3) * slowFactor * designMul
-          const burstCount = 2 + g.level  // 3 in s1, 4 in s2, 5 in s3, 6 in s4
-          for (let bi = 0; bi < burstCount; bi++) {
-            const ox = 40 + Math.random() * (g.W - 80)
-            const beh: Behavior = ["charge","zigzag","charge","fall"][Math.floor(Math.random() * 4)] as Behavior
-            const tp: Word["type"] = Math.random() < 0.45 ? "bug" : "story"
-            const txt = tp === "bug"
-              ? BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)]
-              : STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)]
-            g.words.push({ x: ox, y: -18 - bi * 32, text: txt, type: tp, spd: burstSpd, beh, ph: Math.random() * Math.PI * 2, ox, hp: 1, hitFlash: 0, elite: false, age: 0 })
-          }
-          g.shake = 4 + g.level
-          if (msThreshold === 9) {
-            const bossName = BOSSES[Math.min(g.level - 1, 3)].name
-            showCapyMsg(g, `Pattern density rising.\n${bossName} is close.`, now)
-          }
-        }
-      }
-
-      // endless buzzword storm every 1500 pts (was 2000 — more frequent chaos)
+      // endless buzzword storm every 1500 pts
       if (g.endless && g.score > 0) {
         const stormAt = Math.floor(g.score / 1500) * 1500
         if (stormAt > g.lastStorm) {
