@@ -260,7 +260,14 @@ function droneVol(vol: number) {
 
 const sfx = {
   shoot:    () => tone(880, 0.07, 0.15),
+  // Bug kill: crunchy sawtooth + harmonic — satisfying "crunch"
+  killBug:  (combo = 1) => {
+    tone(440 + combo * 28, 0.07, 0.2, "sawtooth")
+    setTimeout(() => tone(660 + combo * 38, 0.05, 0.14, "square"), 35)
+  },
+  // Story kill: clean square wave ping
   kill:     (combo = 1) => tone(1100 + combo * 60, 0.09, 0.18 + combo * 0.02),
+  split:    () => { tone(780, 0.05, 0.14, "triangle"); setTimeout(() => tone(580, 0.05, 0.12, "triangle"), 55) },
   bossHit:  () => tone(440, 0.12, 0.25),
   bossDead: () => {
     tone(523, 0.15, 0.4); setTimeout(() => tone(659, 0.15, 0.4), 130)
@@ -278,6 +285,10 @@ const sfx = {
   laser:    () => { tone(1800, 0.04, 0.15, "sawtooth"); setTimeout(() => tone(2400, 0.18, 0.28, "sawtooth"), 50); setTimeout(() => tone(900, 0.4, 0.35, "square"), 100) },
   mineDrop: () => { tone(180, 0.07, 0.15); setTimeout(() => tone(120, 0.09, 0.12), 80) },
   mineBlast:() => { tone(90, 0.4, 0.45, "sawtooth"); setTimeout(() => tone(70, 0.45, 0.35, "sawtooth"), 70); setTimeout(() => tone(440, 0.2, 0.25), 120) },
+  // DEPLOY: punchy, outward — hostile sweep cleared
+  deploy:   () => { tone(240, 0.06, 0.3, "square"); setTimeout(() => tone(480, 0.1, 0.35, "square"), 60); setTimeout(() => tone(960, 0.14, 0.3), 130) },
+  // RETROSPECTIVE: slow descending bell — time stretching
+  retro:    () => { tone(1200, 0.3, 0.2, "triangle"); setTimeout(() => tone(900, 0.4, 0.18, "triangle"), 180); setTimeout(() => tone(600, 0.55, 0.15, "triangle"), 380) },
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -1311,7 +1322,7 @@ export default function HomePage() {
               g.particles.push({ x: w.x, y: w.y - 18, vx: 0, vy: -1.3, life: 1.4, glyph: "CLUTCH +25", col: "#facc15", sz: 12 })
               showCapyMsg(g, "Close range.\nSignal holds.", now)
             }
-            sfx.kill(g.combo)
+            if (w.type === "bug") sfx.killBug(g.combo); else if (w.type !== "powerup") sfx.kill(g.combo)
             // cluster shrapnel: 4 bullets fan upward, don't chain
             if (g.upgrades.cluster && !isClusterShot && w.type !== "powerup") {
               const spread = [Math.PI*1.25, Math.PI*1.6, Math.PI*1.85, Math.PI*2.1]
@@ -1337,6 +1348,7 @@ export default function HomePage() {
                 g.words.push({ x: ox2, y: w.y, text: frag2, type: "bug", spd: fragSpd, beh: "zigzag", ph: Math.PI, ox: ox2, hp: 1, hitFlash: 0, elite: false, age: 7 })
               }
               g.particles.push({ x: w.x, y: w.y - 10, vx: 0, vy: -0.9, life: 1.1, glyph: "SPLIT", col: "#fdba74", sz: 9 })
+              sfx.split()
             }
             if (g.upgrades.piercing) { break } else { continue outer }
           }
@@ -1901,6 +1913,7 @@ function applyPowerup(g: GState, word: Word, now: number) {
     }
     g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.9, life: 1.8,
       glyph: purged > 0 ? `DEPLOYED · +${pts}` : "DEPLOYED", col: "#22d3ee", sz: 13 })
+    sfx.deploy()
     showCapyMsg(g, purged > 0
       ? `DEPLOY.\n${purged} hostile${purged !== 1 ? "s" : ""} purged.\nCarrier space: clear.`
       : "DEPLOY.\nCarrier already clean.", now)
@@ -1916,6 +1929,7 @@ function applyPowerup(g: GState, word: Word, now: number) {
     }
     g.particles.push({ x: g.W/2, y: GH/2 - 16, vx: 0, vy: -0.7, life: 1.9,
       glyph: "RETROSPECTIVE", col: "#7dd3fc", sz: 12 })
+    sfx.retro()
     showCapyMsg(g, "Retrospective.\nAll patterns slowed.\nUse the time well.", now)
   }
 }
