@@ -128,7 +128,7 @@ interface GState {
   combo: number; lastKill: number; shake: number
   capyMsg: string; capyMsgEnd: number; nextCapyMsg: number
   bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null; maxCombo: number; lastStorm: number
-  paused: boolean; lastMilestone: number
+  paused: boolean; lastMilestone: number; livesAtWave: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -152,7 +152,7 @@ function initState(W: number): GState {
     combo: 1, lastKill: 0, shake: 0,
     capyMsg: "", capyMsgEnd: 0, nextCapyMsg: 0,
     bossWarn: null, mouseX: -1, waveAnn: null, maxCombo: 1, lastStorm: 0,
-    paused: false, lastMilestone: 0,
+    paused: false, lastMilestone: 0, livesAtWave: MAX_LIVES,
   }
 }
 
@@ -193,6 +193,8 @@ export default function HomePage() {
     const W = g.W
     Object.assign(g, initState(W))
     g.running = true
+    g.waveAnn = { text: `WAVE 1 · ${BOSSES[0].name}`, t: 0 }
+    g.livesAtWave = MAX_LIVES
     setScore(0); setLevel(1); setLives(MAX_LIVES)
     phaseRef.current = "playing"
     setPhase("playing")
@@ -221,6 +223,7 @@ export default function HomePage() {
       capyIdxRef.current = 0; setCapyIdx(0)
       const g = G.current
       g.running = true; g.bossSpawned = false; g.wordsKilled = 0
+      g.livesAtWave = g.lives
       // Wave announcement
       if (g.level <= 4) {
         g.waveAnn = { text: `WAVE ${g.level} · ${BOSSES[g.level-1]?.name ?? ""}`, t: 0 }
@@ -611,6 +614,11 @@ export default function HomePage() {
             if (bx.hp <= 0) {
               sfx.bossDead()
               g.score += 500; g.shake = 14
+              if (g.lives >= g.livesAtWave) {
+                g.score += 300
+                g.particles.push({ x: bx.x, y: bx.y - 35, vx: 0, vy: -0.8, life: 1.8, glyph: "no regressions +300", col: "#4ade80", sz: 10 })
+                showCapyMsg(g, "No regressions.", now)
+              }
               spawnParticles(g, bx.x, bx.y, bx.color, "★", 30)
               bx.name.split("").forEach((ch, i2) => {
                 g.particles.push({
@@ -863,7 +871,16 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.font = "8px monospace"; ctx.textAlign = "center"
     SDLC_PHASES.forEach((ph, i) => {
       const lx = jx + jw*(i/4) + jw/8
-      ctx.fillStyle = i < g.level || g.endless ? "#966bec" : "rgba(255,255,255,0.18)"
+      const isActive = !g.endless && i === g.level - 1
+      const isDone   = i < g.level - 1 || g.endless
+      if (isActive) {
+        const activePulse = 0.7 + 0.3 * Math.sin(now / 350)
+        ctx.fillStyle = `rgba(150,107,236,${activePulse})`
+        ctx.font = "bold 8px monospace"
+      } else {
+        ctx.fillStyle = isDone ? "rgba(150,107,236,0.5)" : "rgba(255,255,255,0.18)"
+        ctx.font = "8px monospace"
+      }
       ctx.fillText(ph, lx, jy - 3)
     })
   }
@@ -1033,6 +1050,11 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   }); ctx.globalAlpha = 1
 
   if (attractMode) { if (shook) ctx.restore(); return }
+
+  // Pause hint (bottom left, very subtle)
+  ctx.textAlign = "left"; ctx.font = "7px monospace"
+  ctx.fillStyle = "rgba(255,255,255,0.12)"
+  ctx.fillText("P: pause", 10, GH - 24)
 
   // combo display
   if (g.combo >= 3) {
