@@ -1313,9 +1313,15 @@ export default function HomePage() {
             if (w.type === "powerup") applyPowerup(g, w, now)
             if (!g.firstKill) { g.firstKill = true; showCapyMsg(g, "First pattern dissolved.\nThe Signal is live.", now) }
             spawnLetterExplosion(g, w, pts, g.combo)
-            // impact ring
+            // impact ring — powerup gets triple cascading rings
             const ringCol = w.type === "bug" ? "#fdba74" : w.type === "powerup" ? "#4ade80" : "#7dd3fc"
-            g.particles.push({ x: w.x, y: w.y, vx: 0, vy: 0, life: 0.65, initLife: 0.65, glyph: "", col: ringCol, ring: true })
+            if (w.type === "powerup") {
+              g.particles.push({ x: w.x, y: w.y, vx: 0, vy: 0, life: 0.65, initLife: 0.65, glyph: "", col: "#4ade80", ring: true })
+              g.particles.push({ x: w.x, y: w.y, vx: 0, vy: 0, life: 0.52, initLife: 0.52, glyph: "", col: "#86efac", ring: true })
+              g.particles.push({ x: w.x, y: w.y, vx: 0, vy: 0, life: 0.38, initLife: 0.38, glyph: "", col: "#bbf7d0", ring: true })
+            } else {
+              g.particles.push({ x: w.x, y: w.y, vx: 0, vy: 0, life: 0.65, initLife: 0.65, glyph: "", col: ringCol, ring: true })
+            }
             // clutch kill: word within 50px of bottom
             if (w.y > GH - 50 && w.type !== "powerup") {
               g.score += 25; g.whiteFlash = 5; sfx.clutch()
@@ -2017,6 +2023,28 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.globalAlpha = 1
   }
 
+  // Near-boss edge pulse — screen edges glow boss color in the final 2 kills before boss
+  if (!attractMode && !g.boss && !g.bossWarn && !g.endless) {
+    const remaining = WORDS_TO_BOSS - g.wordsKilled
+    if (remaining <= 2 && remaining > 0) {
+      const bossHex = BOSSES[Math.min(g.level - 1, 3)].color
+      const br = parseInt(bossHex.slice(1, 3), 16)
+      const bg2 = parseInt(bossHex.slice(3, 5), 16)
+      const bb = parseInt(bossHex.slice(5, 7), 16)
+      const edgeA = (0.25 + 0.2 * Math.abs(Math.sin(now / 180))) * (remaining === 1 ? 1 : 0.55)
+      try {
+        const eg = ctx.createLinearGradient(0, 0, 32, 0)
+        eg.addColorStop(0, `rgba(${br},${bg2},${bb},${edgeA})`)
+        eg.addColorStop(1, `rgba(${br},${bg2},${bb},0)`)
+        ctx.fillStyle = eg; ctx.fillRect(0, 0, 32, GH)
+        const eg2 = ctx.createLinearGradient(cw, 0, cw - 32, 0)
+        eg2.addColorStop(0, `rgba(${br},${bg2},${bb},${edgeA})`)
+        eg2.addColorStop(1, `rgba(${br},${bg2},${bb},0)`)
+        ctx.fillStyle = eg2; ctx.fillRect(cw - 32, 0, 32, GH)
+      } catch {}
+    }
+  }
+
   // vignette — intensifies with boss presence, turns deep purple-black for THE VOID
   const isVoidPresent = g.boss?.name === "THE VOID"
   const vignetteStr = isVoidPresent
@@ -2089,6 +2117,14 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     if (w.type === "powerup") {
       const pulse = 0.5 + 0.5 * Math.sin(now / 280)
       ctx.save(); ctx.shadowColor = "#4ade80"; ctx.shadowBlur = 10 * pulse
+      // spawn beam: thin vertical line descending from top to word (fades with age)
+      if (w.age < 55) {
+        const beamAlpha = Math.max(0, (1 - w.age / 55)) * (0.18 + 0.12 * pulse)
+        ctx.globalAlpha = beamAlpha * spawnAlpha
+        ctx.strokeStyle = "#4ade80"; ctx.lineWidth = 1
+        ctx.beginPath(); ctx.moveTo(w.x, 0); ctx.lineTo(w.x, w.y - 8); ctx.stroke()
+        ctx.globalAlpha = spawnAlpha
+      }
     }
     if (w.regenBoss) {
       const pulse = 0.3 + 0.7 * Math.abs(Math.sin(now / 300))
