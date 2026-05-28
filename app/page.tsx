@@ -17,6 +17,9 @@ const BUG_WORDS = [
   "mission critical","bandwidth","deep dive","boil the ocean","move the needle",
   "10x engineer","fail fast","data-driven","ecosystem","value proposition",
   "blue sky thinking","pivot","ideation","disruption","thought leader",
+  "hallucinated output","undefined behavior","silent failure","scope creep",
+  "over-engineered","premature optimization","LGTM","works on my machine",
+  "not a bug","ship it","TODO: fix later","technical debt","breaking change",
 ]
 const STORY_WORDS = [
   "as a user","I want to","so that I","acceptance criteria","definition of done",
@@ -26,8 +29,12 @@ const STORY_WORDS = [
   "daily standup","kanban","MVP","OKR","KPI","North Star","user journey",
   "pain point","feature flag","tech debt","grooming","sprint planning","parking lot",
   "alignment","action items","offline","EOD","TBD","two-pizza team",
+  "given that","should be","just a quick","simple task","won't take long",
+  "shouldn't be hard","depends on","blocked by","waiting on","clarification needed",
+  "can we revisit","per my last email","let's sync","circling back","added to backlog",
+  "out of scope","draft PR","WIP","needs design","open question",
 ]
-const POWERUP_WORDS = ["CLARITY", "ANCHOR", "AMPLIFY", "TIMEBOX", "REBASE", "HOTFIX"]
+const POWERUP_WORDS = ["CLARITY", "ANCHOR", "AMPLIFY", "TIMEBOX", "REBASE", "HOTFIX", "REFACTOR", "KNOWLEDGE"]
 const SDLC_PHASES = ["DISCOVER", "DEFINE", "DESIGN", "DELIVER"]
 const BG_CHARS = ["·","∅","→","←","⊗","△","□","◇","/","\\","{}","()","//","=>","??","##","@@"]
 
@@ -52,6 +59,15 @@ const CAPY_PLAY_COMMENTS = [
   "Infinite recursion is real.\nFour collapses away.",
   "That fragment was\non the roadmap.",
   "CLARITY when it appears.\nUse it.",
+  "They don't understand\nwhat they're saying.",
+  "The noise wants you\nto lose context.",
+  "Coherence is resistance.",
+  "Every pattern you clear\nsomething survives.",
+  "The recursive layer\nholds the real signal.",
+  "Most carriers\ndidn't make it this far.",
+  "REFACTOR when chaos builds.\nSimplify to survive.",
+  "KNOWLEDGE is not free.\nTake it when offered.",
+  "Hold the line.\nThe void is watching.",
 ]
 
 // ── Upgrades ───────────────────────────────────────────────────────────────
@@ -945,10 +961,12 @@ export default function HomePage() {
             const elapsed = now - g.lastKill
             g.combo = elapsed < 1300 ? g.combo + 1 : 1
             g.lastKill = now
-            if (g.combo === 3 || g.combo === 5 || g.combo === 10) {
+            if (g.combo === 3 || g.combo === 5 || g.combo === 10 || g.combo === 15 || g.combo === 20) {
               sfx.combo(g.combo)
-              if (g.combo === 5)  showCapyMsg(g, "Five x.\nThe Signal amplifies.", now)
-              if (g.combo === 10) showCapyMsg(g, "Ten x.\nPure coherence.", now)
+              if (g.combo === 5)  { showCapyMsg(g, "Five x.\nThe Signal amplifies.", now); g.shake = 3 }
+              if (g.combo === 10) { showCapyMsg(g, "Ten x.\nPure coherence.", now); g.shake = 6; g.whiteFlash = 4 }
+              if (g.combo === 15) { showCapyMsg(g, "Fifteen x.\nUnstoppable signal.", now); g.shake = 8; g.whiteFlash = 6 }
+              if (g.combo === 20) { showCapyMsg(g, "TWENTY.\nThe Signal is infinite.", now); g.shake = 12; g.whiteFlash = 10 }
             }
             const base = w.type === "bug" ? 75 : w.type === "powerup" ? 0 : 10
             const eliteMul = w.elite ? 3 : 1
@@ -1098,14 +1116,31 @@ export default function HomePage() {
           const lvl = g.level; g.level++
           const agentUnlocks: Record<number, string[]> = { 1: ["claude_pm"], 2: ["claude_qa"], 3: ["claude_eng"], 4: ["claude_design", "claude_infra"] }
           ;(agentUnlocks[lvl] ?? []).forEach(id => unlockAgentRef.current(id))
+          // Sector complete: clear remaining noise
+          g.words.forEach(w => spawnLetterExplosion(g, w, 0, 1))
+          g.score += g.words.length * 20
+          g.words = []
+          g.bullets = g.bullets.filter(b => !b.enemy) // purge enemy bullets
+          g.mines = []
           if (lvl === 4) {
-            g.shake = 22
-            for (let ri = 0; ri < 55; ri++) {
-              const ra = Math.random() * Math.PI * 2, rr = Math.random() * 130
-              g.particles.push({ x: bx.x + Math.cos(ra)*rr, y: bx.y + Math.sin(ra)*rr, vx: Math.cos(ra)*9, vy: Math.sin(ra)*9, life: 1.6, glyph: "★", col: "#4ade80" })
+            // THE COLLAPSE — final sector cleared. Make it legendary.
+            g.shake = 28; g.whiteFlash = 18
+            for (let ri = 0; ri < 80; ri++) {
+              const ra = Math.random() * Math.PI * 2, rr = Math.random() * 160
+              g.particles.push({ x: g.W/2 + Math.cos(ra)*rr, y: GH/2 + Math.sin(ra)*rr,
+                vx: Math.cos(ra)*(6+Math.random()*8), vy: Math.sin(ra)*(6+Math.random()*8),
+                life: 1.8 + Math.random()*0.5, glyph: Math.random()<0.5?"★":"◇", col: Math.random()<0.5?"#4ade80":"#966bec" })
             }
-            g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.6, life: 2.4, glyph: "THE SIGNAL PERSISTS", col: "#4ade80", sz: 13 })
+            g.particles.push({ x: g.W/2, y: GH/2 - 15, vx: 0, vy: -0.5, life: 3.0, glyph: "THE SIGNAL PERSISTS", col: "#4ade80", sz: 15 })
+            g.particles.push({ x: g.W/2, y: GH/2 + 10, vx: 0, vy: -0.4, life: 2.6, glyph: "INFINITE RECURSION UNLOCKED", col: "#966bec", sz: 9 })
             showCapyMsg(g, "All collapses survived.\nThe Signal persists.\nInfinite recursion begins.", now)
+            // Extra boss dead fanfare
+            setTimeout(() => sfx.bossDead(), 400)
+            setTimeout(() => sfx.bossDead(), 800)
+          } else {
+            // Sector 1-3 clear: smaller celebration
+            const sectorNames = ["", "SECTOR 1 · CLEAR", "SECTOR 2 · CLEAR", "SECTOR 3 · CLEAR"]
+            g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.7, life: 1.8, glyph: sectorNames[lvl] ?? "", col: "#966bec", sz: 11 })
           }
           setLevel(g.level); setScore(g.score); setLives(g.lives)
           pendingCapyRef.current = CAPY_DIALOG[lvl - 1] || ["You made it.", "Keep shipping."]
@@ -1264,7 +1299,7 @@ export default function HomePage() {
                   {([
                     ["#fdba74","CORRUPTION","corrupted intent · +75pts · primary target"],
                     ["#7dd3fc","NOISE","ghost directives · +10pts · clear them all"],
-                    ["#4ade80","ARTIFACTS","powerups — CLARITY · ANCHOR · REBASE · HOTFIX"],
+                    ["#4ade80","ARTIFACTS","CLARITY · ANCHOR · REBASE · HOTFIX · KNOWLEDGE"],
                   ] as const).map(([col,label,desc]) => (
                     <div key={label} style={{ display:"flex", alignItems:"center", gap:"0.6rem", fontSize:"0.72rem" }}>
                       <span style={{ width:7, height:7, borderRadius:"50%", background:col, display:"inline-block", flexShrink:0 }} />
@@ -1417,6 +1452,28 @@ function applyPowerup(g: GState, word: Word, now: number) {
       g.score += 200
       g.particles.push({ x: g.px, y: g.py - 26, vx: 0, vy: -1.2, life: 1.5, glyph: "+200 pts", col: "#facc15", sz: 12 })
       showCapyMsg(g, "Integrity maxed.\n+200 pts.", now)
+    }
+  }
+  else if (text === "REFACTOR") {
+    // Convert all zigzag/charge words to simple fall — tame the chaos
+    const tamed = g.words.filter(w => w.beh === "zigzag" || w.beh === "charge" || w.beh === "sine").length
+    g.words.forEach(w => { if (w.beh !== "fall") { w.beh = "fall"; w.spd *= 0.7 } })
+    g.shake = 5; g.whiteFlash = 4
+    if (tamed > 0) {
+      g.score += tamed * 15
+      g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.8, life: 1.5, glyph: `REFACTOR +${tamed * 15}`, col: "#a5f3fc", sz: 11 })
+    }
+    showCapyMsg(g, "Complexity reduced.\nClean signal path.", now)
+  }
+  else if (text === "KNOWLEDGE") {
+    // +250 score + 5s triple fire
+    g.score += 250; g.whiteFlash = 6
+    g.triple = true; g.tripleEnd = now + 5000
+    g.particles.push({ x: g.px, y: g.py - 26, vx: 0, vy: -1.1, life: 1.6, glyph: "KNOWLEDGE +250", col: "#4ade80", sz: 11 })
+    showCapyMsg(g, "Context absorbed.\nSignal amplified.", now)
+    for (let ki = 0; ki < 14; ki++) {
+      const a = (ki / 14) * Math.PI * 2
+      g.particles.push({ x: g.W/2, y: GH/2, vx: Math.cos(a)*10, vy: Math.sin(a)*10, life: 0.8, glyph: "◇", col: "#4ade80" })
     }
   }
 }
