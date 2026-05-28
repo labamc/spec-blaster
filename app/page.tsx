@@ -661,6 +661,16 @@ export default function HomePage() {
               })
               g.boss = null; g.running = false
               const lvl = g.level; g.level++
+              // Final boss: extra dramatic death
+              if (lvl === 4) {
+                g.shake = 22
+                for (let ri = 0; ri < 55; ri++) {
+                  const ra = Math.random() * Math.PI * 2, rr = Math.random() * 130
+                  g.particles.push({ x: bx.x + Math.cos(ra)*rr, y: bx.y + Math.sin(ra)*rr, vx: Math.cos(ra)*9, vy: Math.sin(ra)*9, life: 1.6, glyph: "★", col: "#4ade80" })
+                }
+                g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.6, life: 2.4, glyph: "SHIPPED TO PRODUCTION", col: "#4ade80", sz: 13 })
+                showCapyMsg(g, "Shipped.\nAll four bosses.\nProduction is live.", now)
+              }
               setLevel(g.level); setScore(g.score); setLives(g.lives)
               pendingCapyRef.current = CAPY_DIALOG[lvl - 1] || ["You made it.", "Keep shipping."]
               const opts = pickUpgrades(g.upgrades)
@@ -885,11 +895,19 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   ctx.fillStyle = "#0d0d14"
   ctx.fillRect(0, 0, cw, GH)
 
+  // level tint overlay (very subtle per-level color)
+  if (!attractMode) {
+    const tintCol = g.endless ? "#4ade80" : BOSSES[Math.min(g.level - 1, 3)].color
+    ctx.globalAlpha = 0.04; ctx.fillStyle = tintCol
+    ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1
+  }
+
   // ambient background glyphs
+  const glyphCol = g.endless ? "#4ade80" : BOSSES[Math.min(Math.max(g.level - 1, 0), 3)].color
   ctx.font = "10px monospace"; ctx.textAlign = "center"
   g.bg.forEach(b => {
     ctx.globalAlpha = b.a
-    ctx.fillStyle = "#966bec"
+    ctx.fillStyle = attractMode ? "#966bec" : glyphCol
     ctx.fillText(b.ch, b.x, b.y)
   }); ctx.globalAlpha = 1
 
@@ -1136,7 +1154,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   }
 
   // HUD
-  ctx.textAlign = "left"; ctx.font = "12px monospace"
+  ctx.textAlign = "left"; ctx.font = "bold 13px monospace"
   ctx.fillStyle = "#966bec"; ctx.fillText(g.score.toLocaleString(), 10, 20)
   ctx.fillStyle = "rgba(255,255,255,0.4)"
   ctx.fillText(g.endless ? "ENDLESS" : `LVL ${g.level}`, 10, 36)
