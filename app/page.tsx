@@ -54,6 +54,7 @@ const UPGRADES: UpgradeDef[] = [
   { id: "piercing",     name: "Context Anchor",       desc: "Bullets pierce through words.",           max: 1 },
   { id: "shield_regen", name: "Auto Firewall",        desc: "Shield recharges every 25 seconds.",      max: 1 },
   { id: "code_review",  name: "Code Review",          desc: "Your bullets deal 2× damage to bosses.",  max: 1 },
+  { id: "homing",       name: "Sprint Velocity",       desc: "Bullets gently curve toward words.",       max: 1 },
   { id: "extra_life",   name: "Rollback",             desc: "Restore +1 life immediately.",            max: 3,
     instant: (g) => { g.lives = Math.min(g.lives + 1, MAX_LIVES + 2) } },
 ]
@@ -135,7 +136,7 @@ const sfx = {
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Behavior = "fall" | "charge" | "zigzag" | "sine"
-interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean }
+interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean; age: number }
 interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
@@ -152,7 +153,7 @@ interface GState {
   combo: number; lastKill: number; shake: number
   capyMsg: string; capyMsgEnd: number; nextCapyMsg: number
   bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null; maxCombo: number; lastStorm: number
-  paused: boolean; lastMilestone: number; livesAtWave: number; py: number
+  paused: boolean; lastMilestone: number; livesAtWave: number; py: number; storyStreak: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -176,7 +177,7 @@ function initState(W: number): GState {
     combo: 1, lastKill: 0, shake: 0,
     capyMsg: "", capyMsgEnd: 0, nextCapyMsg: 0,
     bossWarn: null, mouseX: -1, waveAnn: null, maxCombo: 1, lastStorm: 0,
-    paused: false, lastMilestone: 0, livesAtWave: MAX_LIVES, py: PLAYER_Y,
+    paused: false, lastMilestone: 0, livesAtWave: MAX_LIVES, py: PLAYER_Y, storyStreak: 0,
   }
 }
 
@@ -337,7 +338,7 @@ export default function HomePage() {
           if (r < 0.25)      { type = "bug"; text = BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)] }
           else if (r < 0.32) { type = "powerup"; text = POWERUP_WORDS[Math.floor(Math.random() * POWERUP_WORDS.length)] }
           const ox = 40 + Math.random() * (g.W - 80)
-          g.words.push({ x: ox, y: -18, text, type, spd: 0.65 + Math.random() * 0.35, beh: "fall", ph: 0, ox, hp: 1, hitFlash: 0, elite: false })
+          g.words.push({ x: ox, y: -18, text, type, spd: 0.65 + Math.random() * 0.35, beh: "fall", ph: 0, ox, hp: 1, hitFlash: 0, elite: false, age: 0 })
         }
         g.words = g.words.filter(w => { w.y += w.spd; return w.y < GH + 20 })
         g.bg.forEach(b => { b.y += b.vy; if (b.y > GH + 10) { b.y = -10; b.x = Math.random() * g.W } })
@@ -455,7 +456,7 @@ export default function HomePage() {
           const ox = 30 + Math.random() * (g.W - 60)
           // Elite words in endless: 3 HP, worth 3× score, slightly slower
           const isElite = g.endless && type !== "powerup" && Math.random() < 0.12
-          g.words.push({ x: ox, y: -18, text, type, spd: spd2 * (isElite ? 0.7 : 1), beh, ph: Math.random() * Math.PI * 2, ox, hp: isElite ? 3 : 1, hitFlash: 0, elite: isElite })
+          g.words.push({ x: ox, y: -18, text, type, spd: spd2 * (isElite ? 0.7 : 1), beh, ph: Math.random() * Math.PI * 2, ox, hp: isElite ? 3 : 1, hitFlash: 0, elite: isElite, age: 0 })
         }
       }
 
@@ -472,7 +473,7 @@ export default function HomePage() {
               : STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)]
             const sox = 30 + Math.random() * (g.W - 60)
             const beh: Behavior = ["fall","charge","zigzag","sine"][Math.floor(Math.random()*4)] as Behavior
-            g.words.push({ x: sox, y: -18 - si * 22, text: stormText, type: Math.random() < 0.35 ? "bug" : "story", spd: stormSpd, beh, ph: Math.random() * Math.PI * 2, ox: sox, hp: 1, hitFlash: 0, elite: false })
+            g.words.push({ x: sox, y: -18 - si * 22, text: stormText, type: Math.random() < 0.35 ? "bug" : "story", spd: stormSpd, beh, ph: Math.random() * Math.PI * 2, ox: sox, hp: 1, hitFlash: 0, elite: false, age: 0 })
           }
           showCapyMsg(g, "Buzzword storm.", now)
           sfx.warning()
@@ -550,8 +551,18 @@ export default function HomePage() {
       })
 
       // move words (with behaviors)
+      // homing bullets
+      if (g.upgrades.homing) {
+        g.bullets.forEach(b => {
+          if (b.enemy || g.words.length === 0) return
+          let near: Word | null = null, minD = Infinity
+          g.words.forEach(w => { const d = Math.hypot(b.x - w.x, b.y - w.y); if (d < minD) { minD = d; near = w } })
+          if (near) b.vx = ((b.vx ?? 0) + (near!.x - b.x) * 0.009)
+        })
+      }
+
       g.words = g.words.filter(w => {
-        w.y += w.spd
+        w.y += w.spd; w.age++
         if (w.hitFlash > 0) w.hitFlash--
         if (w.beh === "charge") {
           const dx = g.px - w.x
@@ -614,6 +625,19 @@ export default function HomePage() {
             const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul)
             g.score += pts
             g.kills++; g.wordsKilled++
+            // story streak "definition of done" bonus
+            if (w.type === "story") {
+              g.storyStreak++
+              if (g.storyStreak === 3) {
+                g.score += 150
+                g.particles.push({ x: w.x, y: w.y - 20, vx: 0, vy: -0.9, life: 1.6, glyph: "definition of done +150", col: "#7dd3fc", sz: 10 })
+                showCapyMsg(g, "Definition of done.", now)
+              } else if (g.storyStreak > 3) {
+                g.score += 50
+              }
+            } else {
+              g.storyStreak = 0
+            }
             if (w.type === "powerup") applyPowerup(g, w, now)
             spawnLetterExplosion(g, w, pts, g.combo)
             sfx.kill(g.combo)
@@ -941,6 +965,9 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     const col = w.type === "bug" ? "#fdba74" : w.type === "powerup" ? "#4ade80" : "#7dd3fc"
     const flashRed = w.hitFlash > 0
 
+    const spawnAlpha = Math.min(1, w.age / 7)
+    ctx.globalAlpha = spawnAlpha
+
     if (w.type === "powerup") {
       const pulse = 0.5 + 0.5 * Math.sin(now / 280)
       ctx.save(); ctx.shadowColor = "#4ade80"; ctx.shadowBlur = 10 * pulse
@@ -981,6 +1008,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       ctx.fillStyle = "#f87171"; ctx.font = "7px monospace"
       ctx.fillText("▼", w.x, w.y + 10)
     }
+    ctx.globalAlpha = 1
   })
 
   // boss
