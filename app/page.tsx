@@ -486,17 +486,18 @@ export default function HomePage() {
       }
       if (g.capyMsg && now > g.capyMsgEnd) g.capyMsg = ""
 
-      // mouse player tracking
-      if (g.mouseX >= 0) {
-        const dx = g.mouseX - g.px
-        if (Math.abs(dx) > 4) g.px += Math.sign(dx) * Math.min(Math.abs(dx) * 0.12, 6)
-      }
-
-      // keyboard player movement
+      // keyboard player movement (takes priority — suppresses mouse tracking while held)
+      const movingByKey = g.keys.has("ArrowLeft") || g.keys.has("a") || g.keys.has("ArrowRight") || g.keys.has("d")
       if (g.keys.has("ArrowLeft")  || g.keys.has("a")) g.px = Math.max(20, g.px - spd)
       if (g.keys.has("ArrowRight") || g.keys.has("d")) g.px = Math.min(g.W - 20, g.px + spd)
       if (g.keys.has("ArrowUp")    || g.keys.has("w")) g.py = Math.max(PLAYER_Y - 50, g.py - spd)
       if (g.keys.has("ArrowDown")  || g.keys.has("s")) g.py = Math.min(PLAYER_Y + 18, g.py + spd)
+
+      // mouse tracking (only when no keyboard movement keys are held)
+      if (!movingByKey && g.mouseX >= 0) {
+        const dx = g.mouseX - g.px
+        if (Math.abs(dx) > 4) g.px += Math.sign(dx) * Math.min(Math.abs(dx) * 0.12, 6)
+      }
 
       // thruster particles when moving
       const moving = g.keys.has("ArrowLeft") || g.keys.has("a") || g.keys.has("ArrowRight") || g.keys.has("d")
