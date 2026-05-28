@@ -124,10 +124,35 @@ const MINI_BOSSES = [
 ]
 
 const CAPY_DIALOG = [
-  ["Recursion loop severed.", "The Signal holds.", "Drift patterns incoming.\nStay coherent."],
-  ["Drift contained.", "Semantic coherence: restored.", "The Fragment stirs.\nHold the signal."],
-  ["Fragment cluster: cleared.", "Signal integrity stable.", "One collapse remains.\nThis is it."],
-  ["SIGNAL PERSISTS.", "All four collapses survived.", "Infinite recursion unlocked.\nCarry the signal forward."],
+  // After Sector 1 — THE RECURSION cleared, entering DEFINE
+  [
+    "SECTOR 1 · CLEAR.\nThe first recursion loop severed.",
+    "You dissolved the undefined cycle.\nThe stack is clean.",
+    "The Signal holds.\nNext: THE DRIFT awaits in Sector 2.",
+    "Semantic drift is subtler than recursion.\nMeaning detaches slowly.\nYou won't always notice until it's too late.",
+  ],
+  // After Sector 2 — THE DRIFT cleared, entering DESIGN
+  [
+    "SECTOR 2 · CLEAR.\nDrift contained.",
+    "Meaning recoupled to intent.\nCoherence restored in the carrier.",
+    "The Fragment is next.\nA single idea, shattered into a thousand orphaned shards.",
+    "Every fragment thinks it's the whole story.\nNone of them are.\nOnly you carry the full context.",
+  ],
+  // After Sector 3 — THE FRAGMENT cleared, entering DELIVER
+  [
+    "SECTOR 3 · CLEAR.\nFragmentation event resolved.",
+    "The pieces cohere.\nThe signal is intact.",
+    "One collapse remains.\nTHE COLLAPSE — the moment everything unravels at once.",
+    "This is what the other sectors were preparing you for.\nFour collapses in one.\nThe Signal must survive all of them.",
+  ],
+  // After Sector 4 — THE COLLAPSE cleared, entering INFINITE RECURSION
+  [
+    "THE COLLAPSE · RESOLVED.",
+    "Four sectors.\nFour patterns of entropy.\nAll dissolved.",
+    "The Signal persists.",
+    "Most carriers didn't make it this far.\nYou are now in infinite recursion.\nEvery loop is deeper than the last.",
+    "There is no final sector.\nOnly signal.\nOnly entropy.\nOnly you.",
+  ],
 ]
 
 // ── AI Agents ──────────────────────────────────────────────────────────────
@@ -207,7 +232,7 @@ const sfx = {
 // ── Types ──────────────────────────────────────────────────────────────────
 type Behavior = "fall" | "charge" | "zigzag" | "sine"
 interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean; age: number; regenBoss?: boolean }
-interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean; cluster?: boolean }
+interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean; cluster?: boolean; col?: string }
 interface Mine      { x: number; y: number; age: number; armAt: number }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
@@ -790,17 +815,24 @@ export default function HomePage() {
         const charW = 18
         const nameW = bd.name.length * charW
         const cx = g.W / 2, cy = GH / 2
+        const isCollapse = bd.name === "THE COLLAPSE"
         g.bossWarn = {
           name: bd.name, color: bd.color, t: 0,
           letters: bd.name.split("").map((ch, i) => ({
             ch,
-            x: Math.random() * g.W,
-            y: Math.random() < 0.5 ? -30 - Math.random()*60 : GH + 30 + Math.random()*60,
+            // THE COLLAPSE: letters fly in from 4 corners for maximum drama
+            x: isCollapse
+              ? (i % 4 === 0 ? -40 : i % 4 === 1 ? g.W + 40 : i % 4 === 2 ? cx + (Math.random()-0.5)*80 : -40 + Math.random()*g.W)
+              : Math.random() * g.W,
+            y: isCollapse
+              ? (i % 3 === 0 ? -50 : i % 3 === 1 ? GH + 50 : Math.random() < 0.5 ? -50 : GH + 50)
+              : (Math.random() < 0.5 ? -30 - Math.random()*60 : GH + 30 + Math.random()*60),
             tx: cx - nameW/2 + i * charW + charW/2,
             ty: cy,
           })),
         }
-        g.shake = 8
+        g.shake = isCollapse ? 16 : 8
+        if (isCollapse) { g.whiteFlash = 8; setTimeout(() => sfx.warning(), 200) }
         sfx.warning()
         const bossCapy: Record<string, string> = {
           "THE RECURSION": "First collapse detected.\nA loop with no exit condition.\nSever it before it eats the stack.",
@@ -825,6 +857,7 @@ export default function HomePage() {
             : 30 + Math.floor(g.score / 800) * 3
           const phase = isVoid ? 6 : 5
           g.boss = { x: g.W/2, y: 70, hp, maxHp: hp, name: mb.name, color: mb.color, dir: 1, t: 0, phase, raged: false, halfTriggered: false }
+          g.waveAnn = { text: mb.name, t: 0 }
           g.shake = isVoid ? 14 : 8; sfx.warning()
           const miniBossCapy: Record<string, string> = {
             "SCOPE SPECTRE":   "SCOPE SPECTRE.\nIt feeds on undefined requirements.\nKeep the signal tight.",
@@ -977,6 +1010,12 @@ export default function HomePage() {
             g.shake = 6
           }
         }
+      }
+
+      // Stamp boss color on freshly spawned enemy bullets (no col = just spawned this frame)
+      if (g.boss) {
+        const bossCol = g.boss.color
+        g.bullets.forEach(bl => { if (bl.enemy && !bl.col) bl.col = bossCol })
       }
 
       // move bullets
@@ -1262,8 +1301,15 @@ export default function HomePage() {
             setTimeout(() => sfx.bossDead(), 400)
             setTimeout(() => sfx.bossDead(), 800)
           } else {
-            // Sector 1-3 clear: smaller celebration
+            // Sector 1-3 clear: celebration scaled by sector
             const sectorNames = ["", "SECTOR 1 · CLEAR", "SECTOR 2 · CLEAR", "SECTOR 3 · CLEAR"]
+            g.whiteFlash = 6 + lvl * 2; g.shake = 8 + lvl * 2
+            const clearCol = bx.color
+            for (let ci = 0; ci < 20 + lvl * 6; ci++) {
+              const a = Math.random() * Math.PI * 2
+              const spd = 3 + Math.random() * 6
+              g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, life: 1.2 + Math.random() * 0.4, glyph: ci % 2 === 0 ? "★" : "◇", col: ci % 3 === 0 ? "#966bec" : clearCol })
+            }
             g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.7, life: 1.8, glyph: sectorNames[lvl] ?? "", col: "#966bec", sz: 11 })
           }
           setLevel(g.level); setScore(g.score); setLives(g.lives)
@@ -1979,13 +2025,17 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
         ctx.restore()
       }
     } else {
-      // enemy bullet with fade trail
-      ctx.globalAlpha = 0.2; ctx.fillStyle = "#f87171"
+      // enemy bullet with fade trail — colored by boss that spawned it
+      const eCol = b.col ?? "#f87171"
+      ctx.save()
+      ctx.shadowColor = eCol; ctx.shadowBlur = 5
+      ctx.globalAlpha = 0.2; ctx.fillStyle = eCol
       ctx.beginPath(); ctx.arc(b.x, b.y - 8, 3, 0, Math.PI*2); ctx.fill()
       ctx.globalAlpha = 0.08
       ctx.beginPath(); ctx.arc(b.x, b.y - 16, 2, 0, Math.PI*2); ctx.fill()
-      ctx.globalAlpha = 1; ctx.fillStyle = "#f87171"
+      ctx.globalAlpha = 1; ctx.fillStyle = eCol
       ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2); ctx.fill()
+      ctx.restore()
     }
   })
 
@@ -2823,7 +2873,9 @@ function CapyScreen({ text, lineNum, totalLines, level, onAdvance }: {
 
 function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isNewPB, onRestart, unlockedAgents, onShowStack, endless, endlessDepth }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; shotsFired: number; isNewPB: boolean; onRestart: () => void; unlockedAgents: string[]; onShowStack: () => void; endless?: boolean; endlessDepth?: number }) {
   const accuracy = shotsFired > 0 ? Math.round((kills / shotsFired) * 100) : 0
-  const [handle, setHandle]         = useState("")
+  const [handle, setHandle] = useState(() => {
+    try { return localStorage.getItem("sb_handle") ?? "" } catch { return "" }
+  })
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted]   = useState(false)
   const [rank, setRank]             = useState<{ pct: number; total: number } | null>(null)
@@ -2855,11 +2907,13 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
 
   async function submit() {
     if (!handle.trim() || submitting) return
+    const h = handle.trim().slice(0, 20)
+    try { localStorage.setItem("sb_handle", h) } catch {}
     setSubmitting(true)
     try {
       await fetch("/api/leaderboard", {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ handle: handle.trim().slice(0,20), score, level, kills }),
+        body: JSON.stringify({ handle: h, score, level, kills }),
       })
       setSubmitted(true)
     } catch { setSubmitted(true) }
