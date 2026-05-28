@@ -115,7 +115,7 @@ interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"p
 interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
-interface Boss      { x: number; y: number; hp: number; maxHp: number; name: string; color: string; dir: number; t: number; phase: number }
+interface Boss      { x: number; y: number; hp: number; maxHp: number; name: string; color: string; dir: number; t: number; phase: number; raged: boolean; halfTriggered: boolean }
 interface BossWarn  { name: string; color: string; t: number; letters: Array<{ ch: string; x: number; y: number; tx: number; ty: number }> }
 interface WaveAnn   { text: string; t: number }
 interface GState {
@@ -127,7 +127,7 @@ interface GState {
   upgrades: Record<string, number>; shieldRegenAt: number
   combo: number; lastKill: number; shake: number
   capyMsg: string; capyMsgEnd: number; nextCapyMsg: number
-  bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null
+  bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null; maxCombo: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -150,7 +150,7 @@ function initState(W: number): GState {
     upgrades: {}, shieldRegenAt: 0,
     combo: 1, lastKill: 0, shake: 0,
     capyMsg: "", capyMsgEnd: 0, nextCapyMsg: 0,
-    bossWarn: null, mouseX: -1, waveAnn: null,
+    bossWarn: null, mouseX: -1, waveAnn: null, maxCombo: 1,
   }
 }
 
@@ -309,6 +309,7 @@ export default function HomePage() {
 
       // combo decay
       if (now - g.lastKill > 1300 && g.combo > 1) g.combo = 1
+      if (g.combo > g.maxCombo) g.maxCombo = g.combo
 
       // wave announce tick
       if (g.waveAnn) {
@@ -399,7 +400,7 @@ export default function HomePage() {
         })
         if (bw.t === 85) {
           const bd = BOSSES[g.level - 1]
-          g.boss = { x: g.W/2, y: 70, hp: bd.hp, maxHp: bd.hp, name: bd.name, color: bd.color, dir: 1, t: 0, phase: g.level }
+          g.boss = { x: g.W/2, y: 70, hp: bd.hp, maxHp: bd.hp, name: bd.name, color: bd.color, dir: 1, t: 0, phase: g.level, raged: false, halfTriggered: false }
           g.bossWarn = null
           g.shake = 10
         }
@@ -429,10 +430,11 @@ export default function HomePage() {
       // boss AI
       if (g.boss) {
         const b = g.boss
-        b.x += b.dir * (1.4 + b.phase * 0.35)
+        const rageMul = b.raged ? 1.55 : 1
+        b.x += b.dir * (1.4 + b.phase * 0.35) * rageMul
         if (b.x > g.W - 50 || b.x < 50) b.dir *= -1
         b.t++
-        const si = BOSSES[Math.min(g.level - 1, BOSSES.length - 1)]?.shootInterval ?? 60
+        const si = Math.round((BOSSES[Math.min(g.level - 1, BOSSES.length - 1)]?.shootInterval ?? 60) / rageMul)
         if (b.t % si === 0) {
           if (b.phase === 1) {
             g.bullets.push({ x: b.x, y: b.y + 28, vy: 4, enemy: true })
@@ -539,6 +541,15 @@ export default function HomePage() {
             g.bullets.splice(i, 1)
             sfx.bossHit()
             spawnParticles(g, bx.x + (Math.random()-0.5)*40, bx.y, bx.color, "✦", 4)
+            // boss rage at 50% HP
+            if (!bx.halfTriggered && bx.hp <= bx.maxHp / 2) {
+              bx.halfTriggered = true; bx.raged = true; g.shake = 8
+              for (let ri = 0; ri < 18; ri++) {
+                const a = (ri / 18) * Math.PI * 2
+                g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a)*9, vy: Math.sin(a)*9, life: 0.9, glyph: "✦", col: "#ffffff" })
+              }
+              g.particles.push({ x: bx.x, y: bx.y - 20, vx: 0, vy: -1.2, life: 1.4, glyph: "ENRAGED", col: "#f87171", sz: 11 })
+            }
             if (bx.hp <= 0) {
               sfx.bossDead()
               g.score += 500; g.shake = 14
@@ -651,7 +662,7 @@ export default function HomePage() {
 
           {phase === "upgrade" && <UpgradeScreen options={upgradeOptions} onPick={onUpgradePick} />}
 
-          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} onRestart={startGame} />}
+          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} onRestart={startGame} />}
 
           <canvas ref={canvasRef} height={GH} style={{ display:"block", width:"100%", height:GH, cursor:"crosshair" }} />
         </div>
@@ -806,11 +817,12 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     const b = g.boss
     const hpPct = b.hp / b.maxHp
     const distress = hpPct < 0.25
-    const pulse = distress
+    const pulse = (distress || b.raged)
       ? 0.4 + 0.6 * Math.abs(Math.sin(now / 80))
       : 0.55 + 0.45 * Math.sin(now / 180)
+    const glowColor = b.raged ? `rgba(255,180,180,${0.6 + 0.4 * Math.sin(now / 60)})` : b.color
     ctx.save()
-    ctx.shadowColor = b.color; ctx.shadowBlur = (distress ? 30 : 20) * pulse
+    ctx.shadowColor = glowColor; ctx.shadowBlur = (distress || b.raged ? 35 : 20) * pulse
     ctx.fillStyle = b.color
     roundRect(ctx, b.x - 50, b.y - 28, 100, 56, 8); ctx.fill()
     ctx.restore()
@@ -855,7 +867,12 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       } catch { ctx.fillStyle = bulletCol }
       ctx.fillRect(b.x - 2, b.y - 11, 4, 22)
     } else {
-      ctx.fillStyle = "#f87171"
+      // enemy bullet with fade trail
+      ctx.globalAlpha = 0.2; ctx.fillStyle = "#f87171"
+      ctx.beginPath(); ctx.arc(b.x, b.y - 8, 3, 0, Math.PI*2); ctx.fill()
+      ctx.globalAlpha = 0.08
+      ctx.beginPath(); ctx.arc(b.x, b.y - 16, 2, 0, Math.PI*2); ctx.fill()
+      ctx.globalAlpha = 1; ctx.fillStyle = "#f87171"
       ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2); ctx.fill()
     }
   })
@@ -979,6 +996,11 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     })
   }
 
+  // CRT scanline overlay
+  ctx.globalAlpha = 0.025; ctx.fillStyle = "#000000"
+  for (let sy = 0; sy < GH; sy += 3) ctx.fillRect(0, sy, cw, 1)
+  ctx.globalAlpha = 1
+
   if (shook) ctx.restore()
 }
 
@@ -1023,7 +1045,7 @@ function UpgradeScreen({ options, onPick }: { options: UpgradeDef[]; onPick: (id
   )
 }
 
-function GameOver({ score, level, kills, onRestart }: { score: number; level: number; kills: number; onRestart: () => void }) {
+function GameOver({ score, level, kills, maxCombo, upgradeCount, onRestart }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; onRestart: () => void }) {
   const [handle, setHandle]         = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted]   = useState(false)
@@ -1045,9 +1067,21 @@ function GameOver({ score, level, kills, onRestart }: { score: number; level: nu
     <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(13,13,20,0.97)", zIndex:10 }}>
       <div style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"2rem", maxWidth:"340px", width:"100%", textAlign:"center" }}>
         <div style={{ fontSize:"2.25rem", marginBottom:"0.6rem" }}>🦫</div>
-        <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.2rem" }}>SPEC WINS</p>
-        <p style={{ color:"#a09fa2", fontSize:"0.72rem", margin:"0 0 1.25rem" }}>level {level} · {kills} specs destroyed</p>
-        <p style={{ color:"#966bec", fontSize:"1.75rem", fontWeight:700, margin:"0 0 1.5rem", fontFamily:"monospace" }}>{score.toLocaleString()}</p>
+        <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.5rem" }}>SPEC WINS</p>
+        <p style={{ color:"#966bec", fontSize:"1.75rem", fontWeight:700, margin:"0 0 1rem", fontFamily:"monospace" }}>{score.toLocaleString()}</p>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.5rem", marginBottom:"1.25rem" }}>
+          {[["LVL", level],["KILLS", kills],["COMBO", `${maxCombo}×`]].map(([label, val]) => (
+            <div key={label as string} style={{ background:"rgba(255,255,255,0.04)", borderRadius:"4px", padding:"0.4rem 0.3rem" }}>
+              <p style={{ color:"#a09fa2", fontSize:"0.6rem", margin:"0 0 0.15rem", fontFamily:"monospace" }}>{label}</p>
+              <p style={{ color:"#d8d7d8", fontSize:"0.9rem", fontWeight:600, margin:0, fontFamily:"monospace" }}>{val}</p>
+            </div>
+          ))}
+        </div>
+        {upgradeCount > 0 && (
+          <p style={{ color:"rgba(150,107,236,0.6)", fontSize:"0.68rem", margin:"0 0 1rem", fontFamily:"monospace" }}>
+            {upgradeCount} upgrade{upgradeCount !== 1 ? "s" : ""} collected
+          </p>
+        )}
         {!submitted ? (
           <>
             <input value={handle} onChange={e => setHandle(e.target.value)}
