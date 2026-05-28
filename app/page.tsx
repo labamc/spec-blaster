@@ -152,7 +152,7 @@ interface GState {
   combo: number; lastKill: number; shake: number
   capyMsg: string; capyMsgEnd: number; nextCapyMsg: number
   bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null; maxCombo: number; lastStorm: number
-  paused: boolean; lastMilestone: number; livesAtWave: number
+  paused: boolean; lastMilestone: number; livesAtWave: number; py: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -176,7 +176,7 @@ function initState(W: number): GState {
     combo: 1, lastKill: 0, shake: 0,
     capyMsg: "", capyMsgEnd: 0, nextCapyMsg: 0,
     bossWarn: null, mouseX: -1, waveAnn: null, maxCombo: 1, lastStorm: 0,
-    paused: false, lastMilestone: 0, livesAtWave: MAX_LIVES,
+    paused: false, lastMilestone: 0, livesAtWave: MAX_LIVES, py: PLAYER_Y,
   }
 }
 
@@ -271,13 +271,13 @@ export default function HomePage() {
       const w = Math.min(wrap!.offsetWidth, 800)
       canvas!.width = w; canvas!.height = GH
       G.current.W = w
-      if (!G.current.running) G.current.px = w / 2
+      if (!G.current.running) { G.current.px = w / 2; G.current.py = PLAYER_Y }
     }
     resize()
     window.addEventListener("resize", resize)
 
     function onKey(e: KeyboardEvent) {
-      if ([" ","ArrowLeft","ArrowRight"].includes(e.key)) e.preventDefault()
+      if ([" ","ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) e.preventDefault()
       if (e.type === "keydown") {
         G.current.keys.add(e.key)
         if (phaseRef.current === "upgrade" && ["1","2","3"].includes(e.key)) {
@@ -400,15 +400,17 @@ export default function HomePage() {
       }
 
       // keyboard player movement
-      if (g.keys.has("ArrowLeft") || g.keys.has("a")) g.px = Math.max(20, g.px - spd)
+      if (g.keys.has("ArrowLeft")  || g.keys.has("a")) g.px = Math.max(20, g.px - spd)
       if (g.keys.has("ArrowRight") || g.keys.has("d")) g.px = Math.min(g.W - 20, g.px + spd)
+      if (g.keys.has("ArrowUp")    || g.keys.has("w")) g.py = Math.max(PLAYER_Y - 50, g.py - spd)
+      if (g.keys.has("ArrowDown")  || g.keys.has("s")) g.py = Math.min(PLAYER_Y + 18, g.py + spd)
 
       // thruster particles when moving
       const moving = g.keys.has("ArrowLeft") || g.keys.has("a") || g.keys.has("ArrowRight") || g.keys.has("d")
         || (g.mouseX >= 0 && Math.abs(g.mouseX - g.px) > 8)
       if (moving && Math.random() < 0.45) {
         g.particles.push({
-          x: g.px + (Math.random()-0.5)*10, y: PLAYER_Y + 6,
+          x: g.px + (Math.random()-0.5)*10, y: g.py + 6,
           vx: (Math.random()-0.5)*1.5, vy: 1.5 + Math.random()*2.5,
           life: 0.38, glyph: "·",
           col: Math.random() < 0.5 ? "#fb923c" : "#fde68a",
@@ -420,12 +422,12 @@ export default function HomePage() {
       if (g.keys.has(" ") && now - g.lastShot > fireInterval) {
         if (g.upgrades.spray) {
           for (let a = -2; a <= 2; a++)
-            g.bullets.push({ x: g.px + a * 10, y: PLAYER_Y - 20, vx: a * 0.8 })
+            g.bullets.push({ x: g.px + a * 10, y: g.py - 20, vx: a * 0.8 })
         } else {
-          g.bullets.push({ x: g.px, y: PLAYER_Y - 20 })
+          g.bullets.push({ x: g.px, y: g.py - 20 })
           if (g.triple || g.upgrades.triple) {
-            g.bullets.push({ x: g.px - 16, y: PLAYER_Y - 14 })
-            g.bullets.push({ x: g.px + 16, y: PLAYER_Y - 14 })
+            g.bullets.push({ x: g.px - 16, y: g.py - 14 })
+            g.bullets.push({ x: g.px + 16, y: g.py - 14 })
           }
         }
         g.lastShot = now; sfx.shoot()
@@ -529,10 +531,10 @@ export default function HomePage() {
             for (const ox of [-22, 0, 22])
               g.bullets.push({ x: b.x + ox, y: b.y + 28, vy: 3.5, enemy: true })
           } else if (b.phase === 3) {
-            const dx = g.px - b.x, dy = PLAYER_Y - b.y, dist = Math.sqrt(dx*dx+dy*dy)
+            const dx = g.px - b.x, dy = g.py - b.y, dist = Math.sqrt(dx*dx+dy*dy)
             g.bullets.push({ x: b.x, y: b.y + 28, vx: (dx/dist)*5, vy: (dy/dist)*5, enemy: true })
           } else {
-            const dx = g.px - b.x, dy = PLAYER_Y - b.y, dist = Math.sqrt(dx*dx+dy*dy)
+            const dx = g.px - b.x, dy = g.py - b.y, dist = Math.sqrt(dx*dx+dy*dy)
             g.bullets.push({ x: b.x, y: b.y + 28, vx: (dx/dist)*5.5, vy: (dy/dist)*5.5, enemy: true })
             g.bullets.push({ x: b.x - 30, y: b.y + 28, vy: 5, enemy: true })
             g.bullets.push({ x: b.x + 30, y: b.y + 28, vy: 5, enemy: true })
@@ -688,7 +690,7 @@ export default function HomePage() {
         for (let i = g.bullets.length - 1; i >= 0; i--) {
           const b = g.bullets[i]
           if (!b.enemy) continue
-          if (Math.abs(b.x - g.px) < (g.shield ? 22 : 14) && Math.abs(b.y - PLAYER_Y) < (g.shield ? 22 : 14)) {
+          if (Math.abs(b.x - g.px) < (g.shield ? 22 : 14) && Math.abs(b.y - g.py) < (g.shield ? 22 : 14)) {
             g.bullets.splice(i, 1)
             if (g.shield) { g.shield = false; sfx.powerup() }
             else loseLife(g, now)
@@ -722,7 +724,7 @@ export default function HomePage() {
       ]
       showCapyMsg(g, hitLines[Math.floor(Math.random() * hitLines.length)], now)
       for (let i = 0; i < 12; i++)
-        g.particles.push({ x: g.px, y: PLAYER_Y, vx: (Math.random()-0.5)*10, vy: -2-Math.random()*5, life: 0.9, glyph: "×", col: "#f87171" })
+        g.particles.push({ x: g.px, y: g.py, vx: (Math.random()-0.5)*10, vy: -2-Math.random()*5, life: 0.9, glyph: "×", col: "#f87171" })
       if (g.lives <= 0) {
         g.running = false; stopDrone()
         setScore(g.score); setLevel(g.level)
@@ -766,7 +768,7 @@ export default function HomePage() {
                   ))}
                 </div>
                 <p style={{ color:"rgba(255,255,255,0.22)", fontSize:"0.7rem", marginBottom:"1.25rem", fontFamily:"monospace" }}>
-                  arrows / WASD move · SPACE or click shoot
+                  WASD / arrows move · SPACE or click shoot
                 </p>
                 <div style={{ background:"#966bec", color:"#fff", borderRadius:"4px", padding:"0.5rem 1.25rem", fontSize:"0.85rem", fontWeight:500, display:"inline-block", marginBottom: topEntry || personalBest > 0 ? "1rem" : 0 }}>
                   Start game
@@ -812,7 +814,7 @@ export default function HomePage() {
           <canvas ref={canvasRef} height={GH} style={{ display:"block", width:"100%", height:GH, cursor:"crosshair" }} />
         </div>
         <div style={{ marginTop:"0.4rem", display:"flex", justifyContent:"space-between", fontSize:"0.65rem", padding:"0 2px" }}>
-          <span style={{ color:"rgba(255,255,255,0.2)", fontFamily:"monospace" }}>← → / A D move · SPACE or click shoot · mouse aim</span>
+          <span style={{ color:"rgba(255,255,255,0.2)", fontFamily:"monospace" }}>WASD / arrows move · SPACE or click shoot · mouse aim</span>
           <a href="/leaderboard" style={{ color:"#966bec", textDecoration:"none", opacity:0.6, fontSize:"0.65rem" }}>leaderboard →</a>
         </div>
       </div>
@@ -1059,14 +1061,14 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       ctx.shadowBlur = 10 + 4 * Math.sin(now / 400)
       ctx.fillStyle = g.shield ? "#4ade80" : "#e2e8f0"
       ctx.beginPath()
-      ctx.moveTo(g.px, PLAYER_Y - 18)
-      ctx.lineTo(g.px - 13, PLAYER_Y + 7)
-      ctx.lineTo(g.px + 13, PLAYER_Y + 7)
+      ctx.moveTo(g.px, g.py - 18)
+      ctx.lineTo(g.px - 13, g.py + 7)
+      ctx.lineTo(g.px + 13, g.py + 7)
       ctx.closePath(); ctx.fill()
       ctx.restore()
       if (g.shield) {
         ctx.strokeStyle = "rgba(74,222,128,0.55)"; ctx.lineWidth = 2
-        ctx.beginPath(); ctx.arc(g.px, PLAYER_Y - 5, 24, 0, Math.PI*2); ctx.stroke()
+        ctx.beginPath(); ctx.arc(g.px, g.py - 5, 24, 0, Math.PI*2); ctx.stroke()
         ctx.lineWidth = 1
       }
     }
@@ -1075,9 +1077,9 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.globalAlpha = 0.18
     ctx.fillStyle = "#966bec"
     ctx.beginPath()
-    ctx.moveTo(g.px, PLAYER_Y - 18)
-    ctx.lineTo(g.px - 13, PLAYER_Y + 7)
-    ctx.lineTo(g.px + 13, PLAYER_Y + 7)
+    ctx.moveTo(g.px, g.py - 18)
+    ctx.lineTo(g.px - 13, g.py + 7)
+    ctx.lineTo(g.px + 13, g.py + 7)
     ctx.closePath(); ctx.fill()
     ctx.globalAlpha = 1
   }
