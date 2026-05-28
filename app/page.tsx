@@ -609,15 +609,30 @@ export default function HomePage() {
       if (now - g.lastKill > 1300 && g.combo > 1) g.combo = 1
       if (g.combo > g.maxCombo) g.maxCombo = g.combo
 
-      // ambient drone pitch
+      // ambient drone pitch — each state has a distinct, tuned frequency
       if (g.paused) { droneVol(0.008) }
       else if (g.boss?.name === "THE VOID") {
-        // THE VOID: very deep drone with slow throb
-        dronePitch(28 + 4 * Math.sin(now / 800)); droneVol(g.boss.raged ? 0.055 : 0.045)
+        // THE VOID: sub-bass throb — barely audible, felt more than heard
+        dronePitch(24 + 5 * Math.sin(now / 700)); droneVol(g.boss.raged ? 0.06 : 0.05)
       }
-      else if (g.boss?.raged) { dronePitch(95 + 5 * Math.sin(now / 600)); droneVol(0.04) }
-      else if (g.boss) { dronePitch(72); droneVol(0.035) }
-      else { dronePitch(52 + (g.endless ? Math.min(g.endlessWave, 4) * 6 : g.level * 4)); droneVol(0.025) }
+      else if (g.boss?.raged) {
+        // Raged boss: mid-bass throb — urgent, aggressive
+        dronePitch(82 + 12 * Math.abs(Math.sin(now / 350))); droneVol(0.048)
+      }
+      else if (g.boss) {
+        // Boss active: drop lower than sector — creates tension via contrast
+        dronePitch(44 + 3 * Math.sin(now / 900)); droneVol(0.038)
+      }
+      else if (g.endless) {
+        // Endless: rises with depth — 55 at depth 1, escalating to 100 at depth 8+
+        const depthPitch = 55 + Math.min(g.endlessWave, 8) * 5.5 + 4 * Math.sin(now / 1200)
+        droneVol(0.025 + Math.min(g.endlessWave, 6) * 0.003); dronePitch(depthPitch)
+      }
+      else {
+        // Sector progression: each sector meaningfully higher and slightly louder
+        const sectorPitch = [55, 68, 85, 105][g.level - 1] ?? 55
+        dronePitch(sectorPitch + 2 * Math.sin(now / 1400)); droneVol(0.022 + g.level * 0.003)
+      }
 
       // wave announce tick
       if (g.waveAnn) {
