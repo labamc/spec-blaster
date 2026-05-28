@@ -14,12 +14,18 @@ const BUG_WORDS = [
   "synergy","leverage","intuitive","paradigm shift","world-class","cutting-edge",
   "disruptive","innovative","game changer","best practice","dynamic","frictionless",
   "bleeding edge","next-gen","holistic","proactive","circle back","low-hanging fruit",
+  "mission critical","bandwidth","deep dive","boil the ocean","move the needle",
+  "10x engineer","fail fast","data-driven","ecosystem","value proposition",
+  "blue sky thinking","pivot","ideation","disruption","thought leader",
 ]
 const STORY_WORDS = [
   "as a user","I want to","so that I","acceptance criteria","definition of done",
   "epic","spike","backlog","in progress","needs review","blocked","story points",
   "velocity","retrospective","stakeholder","deliverable","out of scope","nice to have",
   "P0","ASAP","fast follow","per the spec","per our conversation","to be defined",
+  "daily standup","kanban","MVP","OKR","KPI","North Star","user journey",
+  "pain point","feature flag","tech debt","grooming","sprint planning","parking lot",
+  "alignment","action items","offline","EOD","TBD","two-pizza team",
 ]
 const POWERUP_WORDS = ["KNOWLEDGE", "FLAG", "ENGAGE", "TIMEBOX"]
 const SDLC_PHASES = ["DISCOVER", "DEFINE", "DESIGN", "DELIVER"]
@@ -213,6 +219,7 @@ export default function HomePage() {
   const upgradePickRef                      = useRef<((id: string) => void) | null>(null)
   const [topEntry, setTopEntry]             = useState<{handle: string; score: number} | null>(null)
   const [personalBest, setPersonalBest]     = useState(0)
+  const [isTouchDevice, setIsTouchDevice]   = useState(false)
 
   // load leaderboard top + personal best on mount
   useEffect(() => {
@@ -221,6 +228,7 @@ export default function HomePage() {
       if (s) setTopEntry({ handle: s.handle, score: s.score })
     }).catch(() => {})
     try { setPersonalBest(parseInt(localStorage.getItem("sb_pb") || "0")) } catch {}
+    setIsTouchDevice("ontouchstart" in window || navigator.maxTouchPoints > 0)
   }, [])
 
   function startGame() {
@@ -918,6 +926,19 @@ export default function HomePage() {
 
           <canvas ref={canvasRef} height={GH} style={{ display:"block", width:"100%", height:GH, cursor:"crosshair" }} />
         </div>
+        {isTouchDevice && phase === "playing" && (
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"0.4rem 0.2rem", marginTop:"0.3rem", gap:"0.4rem" }}>
+            <div style={{ display:"flex", gap:"0.4rem" }}>
+              <VirtualBtn onPress={() => G.current.keys.add("ArrowLeft")} onRelease={() => G.current.keys.delete("ArrowLeft")}>←</VirtualBtn>
+              <VirtualBtn onPress={() => G.current.keys.add("ArrowRight")} onRelease={() => G.current.keys.delete("ArrowRight")}>→</VirtualBtn>
+            </div>
+            <div style={{ display:"flex", gap:"0.4rem" }}>
+              <VirtualBtn onPress={() => G.current.keys.add("ArrowUp")} onRelease={() => G.current.keys.delete("ArrowUp")} small>↑</VirtualBtn>
+              <VirtualBtn onPress={() => G.current.keys.add("ArrowDown")} onRelease={() => G.current.keys.delete("ArrowDown")} small>↓</VirtualBtn>
+            </div>
+            <VirtualBtn onPress={() => G.current.keys.add(" ")} onRelease={() => G.current.keys.delete(" ")} fire>FIRE</VirtualBtn>
+          </div>
+        )}
         <div style={{ marginTop:"0.4rem", display:"flex", justifyContent:"space-between", fontSize:"0.65rem", padding:"0 2px" }}>
           <span style={{ color:"rgba(255,255,255,0.2)", fontFamily:"monospace" }}>WASD / arrows move · SPACE or click shoot · mouse aim</span>
           <a href="/leaderboard" style={{ color:"#966bec", textDecoration:"none", opacity:0.6, fontSize:"0.65rem" }}>leaderboard →</a>
@@ -1359,6 +1380,28 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 }
 
 // ── UI sub-components ──────────────────────────────────────────────────────
+
+function VirtualBtn({ children, onPress, onRelease, fire, small }: {
+  children: React.ReactNode; onPress: () => void; onRelease: () => void; fire?: boolean; small?: boolean
+}) {
+  return (
+    <button
+      onTouchStart={e => { e.preventDefault(); onPress() }}
+      onTouchEnd={e => { e.preventDefault(); onRelease() }}
+      onMouseDown={onPress} onMouseUp={onRelease} onMouseLeave={onRelease}
+      style={{
+        background: fire ? "rgba(150,107,236,0.25)" : "rgba(255,255,255,0.06)",
+        border: `1px solid ${fire ? "rgba(150,107,236,0.45)" : "rgba(255,255,255,0.12)"}`,
+        borderRadius: "6px", color: fire ? "#966bec" : "#d8d7d8",
+        fontSize: fire ? "0.65rem" : "1rem", fontWeight: fire ? 600 : 400,
+        letterSpacing: fire ? "0.12em" : 0,
+        padding: small ? "0.45rem 0.7rem" : fire ? "0.65rem 1.5rem" : "0.55rem 1.1rem",
+        cursor: "pointer", userSelect: "none", touchAction: "none",
+        WebkitUserSelect: "none", outline: "none",
+      }}
+    >{children}</button>
+  )
+}
 
 function Overlay({ children, onClick, dim }: { children: React.ReactNode; onClick: () => void; dim: number }) {
   return (
