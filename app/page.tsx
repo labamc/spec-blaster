@@ -2425,7 +2425,19 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       ctx.globalAlpha = 0.08
       ctx.beginPath(); ctx.arc(b.x, b.y - 16, 2, 0, Math.PI*2); ctx.fill()
       ctx.globalAlpha = 1; ctx.fillStyle = eCol
-      ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2); ctx.fill()
+      // bounce bullet: diamond shape instead of circle
+      if (b.bounce) {
+        ctx.beginPath(); ctx.moveTo(b.x, b.y - 5); ctx.lineTo(b.x + 4, b.y); ctx.lineTo(b.x, b.y + 5); ctx.lineTo(b.x - 4, b.y); ctx.closePath(); ctx.fill()
+        ctx.globalAlpha = 0.45; ctx.strokeStyle = eCol; ctx.lineWidth = 1
+        ctx.beginPath(); ctx.arc(b.x, b.y, 8, 0, Math.PI * 2); ctx.stroke()
+      } else if (b.splitAt) {
+        // split bullet: wider, with a tiny "fork" glyph below
+        ctx.beginPath(); ctx.arc(b.x, b.y, 5, 0, Math.PI*2); ctx.fill()
+        ctx.globalAlpha = 0.5; ctx.font = "7px monospace"; ctx.textAlign = "center"
+        ctx.fillText("⋎", b.x, b.y + 14)
+      } else {
+        ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2); ctx.fill()
+      }
       ctx.restore()
     }
   })
