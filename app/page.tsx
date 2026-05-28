@@ -172,6 +172,8 @@ export default function HomePage() {
   const phaseRef                    = useRef("attract")
   const pendingCapyRef              = useRef<string[]>([])
   const [upgradeOptions, setUpgradeOptions] = useState<UpgradeDef[]>([])
+  const upgradeOptionsRef                   = useRef<UpgradeDef[]>([])
+  const upgradePickRef                      = useRef<((id: string) => void) | null>(null)
 
   function startGame() {
     const g = G.current
@@ -182,6 +184,8 @@ export default function HomePage() {
     phaseRef.current = "playing"
     setPhase("playing")
   }
+
+  upgradePickRef.current = onUpgradePick
 
   function onUpgradePick(id: string) {
     const g = G.current
@@ -233,8 +237,16 @@ export default function HomePage() {
 
     function onKey(e: KeyboardEvent) {
       if ([" ","ArrowLeft","ArrowRight"].includes(e.key)) e.preventDefault()
-      if (e.type === "keydown") G.current.keys.add(e.key)
-      else G.current.keys.delete(e.key)
+      if (e.type === "keydown") {
+        G.current.keys.add(e.key)
+        if (phaseRef.current === "upgrade" && ["1","2","3"].includes(e.key)) {
+          const idx = parseInt(e.key) - 1
+          const opt = upgradeOptionsRef.current[idx]
+          if (opt) upgradePickRef.current?.(opt.id)
+        }
+      } else {
+        G.current.keys.delete(e.key)
+      }
     }
     window.addEventListener("keydown", onKey)
     window.addEventListener("keyup",   onKey)
@@ -514,7 +526,11 @@ export default function HomePage() {
             const elapsed = now - g.lastKill
             g.combo = elapsed < 1300 ? g.combo + 1 : 1
             g.lastKill = now
-            if (g.combo === 3 || g.combo === 5 || g.combo === 10) sfx.combo(g.combo)
+            if (g.combo === 3 || g.combo === 5 || g.combo === 10) {
+              sfx.combo(g.combo)
+              if (g.combo === 5)  showCapyMsg(g, "five x.", now)
+              if (g.combo === 10) showCapyMsg(g, "double digits.\nmaximum spec blast.", now)
+            }
             const base = w.type === "bug" ? 75 : w.type === "powerup" ? 0 : 10
             const eliteMul = w.elite ? 3 : 1
             const mult = g.combo >= 3 ? 1 + (g.combo - 2) * 0.2 : 1
@@ -549,6 +565,7 @@ export default function HomePage() {
                 g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a)*9, vy: Math.sin(a)*9, life: 0.9, glyph: "✦", col: "#ffffff" })
               }
               g.particles.push({ x: bx.x, y: bx.y - 20, vx: 0, vy: -1.2, life: 1.4, glyph: "ENRAGED", col: "#f87171", sz: 11 })
+              showCapyMsg(g, "It's... escalating.", now)
             }
             if (bx.hp <= 0) {
               sfx.bossDead()
@@ -566,7 +583,9 @@ export default function HomePage() {
               const lvl = g.level; g.level++
               setLevel(g.level); setScore(g.score); setLives(g.lives)
               pendingCapyRef.current = CAPY_DIALOG[lvl - 1] || ["You made it.", "Keep shipping."]
-              setUpgradeOptions(pickUpgrades(g.upgrades))
+              const opts = pickUpgrades(g.upgrades)
+      upgradeOptionsRef.current = opts
+      setUpgradeOptions(opts)
               phaseRef.current = "upgrade"; setPhase("upgrade")
               break
             }
@@ -594,6 +613,14 @@ export default function HomePage() {
     function loseLife(g: GState, now: number) {
       g.lives--; g.shake = 7; setLives(g.lives); sfx.hit()
       g.invuln = true; g.invulnEnd = now + 1600
+      const hitLines = [
+        "Scope creep found\na gap in your spec.",
+        "That one was\nout of scope.",
+        "Read the brief.",
+        "Stay focused.",
+        "Definition of done:\nnot that.",
+      ]
+      showCapyMsg(g, hitLines[Math.floor(Math.random() * hitLines.length)], now)
       for (let i = 0; i < 12; i++)
         g.particles.push({ x: g.px, y: PLAYER_Y, vx: (Math.random()-0.5)*10, vy: -2-Math.random()*5, life: 0.9, glyph: "×", col: "#f87171" })
       if (g.lives <= 0) {
@@ -677,6 +704,12 @@ export default function HomePage() {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+function showCapyMsg(g: GState, msg: string, now: number) {
+  g.capyMsg = msg
+  g.capyMsgEnd = now + 3800
+  g.nextCapyMsg = now + 28000
+}
+
 function applyPowerup(g: GState, word: Word, now: number) {
   sfx.powerup()
   const text = word.text
@@ -689,6 +722,7 @@ function applyPowerup(g: GState, word: Word, now: number) {
       const a = (i / 20) * Math.PI * 2
       g.particles.push({ x: g.W/2, y: GH/2, vx: Math.cos(a)*12, vy: Math.sin(a)*12, life: 0.8, glyph: "◇", col: "#4ade80" })
     }
+    showCapyMsg(g, "Knowledge applied.", now)
   } else if (text === "FLAG")    { g.shield = true; g.shieldEnd = now + 6000 }
   else if (text === "ENGAGE")    { g.triple = true; g.tripleEnd = now + 8000 }
   else if (text === "TIMEBOX")   { g.fast   = true; g.fastEnd   = now + 5000 }
@@ -1029,17 +1063,19 @@ function UpgradeScreen({ options, onPick }: { options: UpgradeDef[]; onPick: (id
       <div style={{ width:"100%", maxWidth:"580px", padding:"1.5rem" }}>
         <p style={{ textAlign:"center", color:"#a09fa2", fontSize:"0.72rem", fontFamily:"monospace", marginBottom:"1.25rem", letterSpacing:"0.12em" }}>CHOOSE UPGRADE</p>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.75rem" }}>
-          {options.map(u => (
+          {options.map((u, i) => (
             <button key={u.id} onClick={() => onPick(u.id)}
-              style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"1.25rem 1rem", textAlign:"left", cursor:"pointer", display:"block", width:"100%" }}
+              style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"1.25rem 1rem", textAlign:"left", cursor:"pointer", display:"block", width:"100%", position:"relative" }}
               onMouseEnter={e => (e.currentTarget.style.borderColor = "rgba(150,107,236,0.45)")}
               onMouseLeave={e => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.07)")}
             >
+              <span style={{ position:"absolute", top:6, right:8, color:"rgba(255,255,255,0.2)", fontSize:"0.65rem", fontFamily:"monospace" }}>{i+1}</span>
               <p style={{ color:"#966bec", fontWeight:600, fontSize:"0.875rem", marginBottom:"0.4rem" }}>{u.name}</p>
               <p style={{ color:"#a09fa2", fontSize:"0.75rem", lineHeight:1.55 }}>{u.desc}</p>
             </button>
           ))}
         </div>
+        <p style={{ textAlign:"center", color:"rgba(255,255,255,0.15)", fontSize:"0.65rem", fontFamily:"monospace", marginTop:"1rem" }}>press 1 · 2 · 3 to select</p>
       </div>
     </div>
   )
