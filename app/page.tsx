@@ -57,7 +57,7 @@ const sfx = {
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Word     { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number }
 interface Bullet   { x: number; y: number; vx?: number; vy?: number; enemy?: boolean }
-interface Particle { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string }
+interface Particle { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number }
 interface Boss     { x: number; y: number; hp: number; maxHp: number; name: string; color: string; dir: number; t: number; phase: number }
 interface GState {
   px: number; lives: number; score: number; kills: number; level: number; endless: boolean
@@ -266,7 +266,9 @@ export default function HomePage() {
 
       // particles
       g.particles = g.particles.filter(p => {
-        p.x += p.vx; p.y += p.vy; p.vy += 0.14; p.life -= 0.025; return p.life > 0
+        p.x += p.vx; p.y += p.vy; p.vy += 0.14; p.life -= 0.022
+        if (p.rotV !== undefined) p.rot = (p.rot ?? 0) + p.rotV
+        return p.life > 0
       })
 
       // player bullets vs words
@@ -281,8 +283,7 @@ export default function HomePage() {
             g.score += w.type === "bug" ? 75 : w.type === "powerup" ? 0 : 10
             g.kills++; g.wordsKilled++
             if (w.type === "powerup") applyPowerup(g, w.text, now)
-            const col = w.type === "bug" ? "#fdba74" : w.type === "powerup" ? "#4ade80" : "#7dd3fc"
-            spawnParticles(g, w.x, w.y, col, w.type === "powerup" ? "★" : "✦", 7)
+            spawnLetterExplosion(g, w)
             sfx.kill()
             g.words.splice(j, 1)
             g.bullets.splice(i, 1)
@@ -447,6 +448,35 @@ function spawnParticles(g: GState, x: number, y: number, col: string, glyph: str
     g.particles.push({ x, y, vx: (Math.random()-0.5)*8, vy: (Math.random()-0.5)*7-2, life: 1, glyph, col })
 }
 
+function spawnLetterExplosion(g: GState, word: Word) {
+  const chars = word.text.split("")
+  const col = word.type === "bug" ? "#fdba74" : word.type === "powerup" ? "#4ade80" : "#7dd3fc"
+  const charW = 6.8
+  const totalW = chars.length * charW
+
+  chars.forEach((ch, i) => {
+    const startX = word.x - totalW / 2 + i * charW + charW / 2
+    const dx = startX - word.x
+    g.particles.push({
+      x: startX, y: word.y,
+      vx: dx * 0.18 + (Math.random() - 0.5) * 4,
+      vy: -1.5 - Math.random() * 4.5,
+      life: 1,
+      glyph: ch, col,
+      rot: (Math.random() - 0.5) * 1.2,
+      rotV: (Math.random() - 0.5) * 0.2,
+    })
+  })
+
+  // flash burst
+  for (let i = 0; i < 5; i++)
+    g.particles.push({
+      x: word.x, y: word.y,
+      vx: (Math.random()-0.5)*14, vy: (Math.random()-0.5)*10-4,
+      life: 0.65, glyph: "✦", col,
+    })
+}
+
 function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number) {
   // background
   ctx.fillStyle = "#0d0d14"
@@ -521,9 +551,21 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number)
 
   // particles
   g.particles.forEach(p => {
-    ctx.globalAlpha = p.life
-    ctx.fillStyle = p.col; ctx.font = "11px monospace"; ctx.textAlign = "center"
-    ctx.fillText(p.glyph, p.x, p.y)
+    ctx.globalAlpha = Math.max(0, p.life)
+    ctx.fillStyle = p.col
+    if (p.rot !== undefined) {
+      const sz = Math.max(7, 13 * p.life)
+      ctx.save()
+      ctx.translate(p.x, p.y)
+      ctx.rotate(p.rot)
+      ctx.font = `${sz}px monospace`
+      ctx.textAlign = "center"
+      ctx.fillText(p.glyph, 0, 0)
+      ctx.restore()
+    } else {
+      ctx.font = "11px monospace"; ctx.textAlign = "center"
+      ctx.fillText(p.glyph, p.x, p.y)
+    }
   }); ctx.globalAlpha = 1
 
   // HUD top-left: score + level
