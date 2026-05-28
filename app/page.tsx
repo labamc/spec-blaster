@@ -57,6 +57,7 @@ const UPGRADES: UpgradeDef[] = [
   { id: "homing",       name: "Sprint Velocity",       desc: "Bullets gently curve toward words.",       max: 1 },
   { id: "extra_life",   name: "Rollback",             desc: "Restore +1 life immediately.",            max: 3,
     instant: (g) => { g.lives = Math.min(g.lives + 1, MAX_LIVES + 2) } },
+  { id: "auto_fire",    name: "Daily Stand-Up",        desc: "Auto-fires at the nearest word every 3s.", max: 1 },
 ]
 
 function pickUpgrades(current: Record<string, number>): UpgradeDef[] {
@@ -154,6 +155,7 @@ interface GState {
   capyMsg: string; capyMsgEnd: number; nextCapyMsg: number
   bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null; maxCombo: number; lastStorm: number
   paused: boolean; lastMilestone: number; livesAtWave: number; py: number; storyStreak: number
+  lastLifeRegen: number; lastAutoFire: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -178,6 +180,7 @@ function initState(W: number): GState {
     capyMsg: "", capyMsgEnd: 0, nextCapyMsg: 0,
     bossWarn: null, mouseX: -1, waveAnn: null, maxCombo: 1, lastStorm: 0,
     paused: false, lastMilestone: 0, livesAtWave: MAX_LIVES, py: PLAYER_Y, storyStreak: 0,
+    lastLifeRegen: 0, lastAutoFire: 0,
   }
 }
 
@@ -340,8 +343,29 @@ export default function HomePage() {
           const ox = 40 + Math.random() * (g.W - 80)
           g.words.push({ x: ox, y: -18, text, type, spd: 0.65 + Math.random() * 0.35, beh: "fall", ph: 0, ox, hp: 1, hitFlash: 0, elite: false, age: 0 })
         }
+        // attract: auto-fire toward nearest word every 900ms
+        if (now - g.lastShot > 900) {
+          const targets = g.words.filter(w => w.y < g.py - 20)
+          if (targets.length > 0) {
+            g.lastShot = now
+            const nearest = targets.reduce((a, b) => Math.abs(b.x - g.px) < Math.abs(a.x - g.px) ? b : a)
+            g.bullets.push({ x: g.px, y: g.py - 20, vx: (nearest.x - g.px) * 0.035 })
+          }
+        }
+        // move attract bullets and collide with words
+        g.bullets = g.bullets.filter(b => {
+          b.y -= 9; if (b.vx) b.x += b.vx
+          for (let j = g.words.length - 1; j >= 0; j--) {
+            const w = g.words[j]; const hw = w.text.length * 5.5 + 8
+            if (Math.abs(b.x - w.x) < hw && Math.abs(b.y - w.y) < 14) {
+              spawnLetterExplosion(g, w, 0, 1); g.words.splice(j, 1); return false
+            }
+          }
+          return b.y > -10
+        })
         g.words = g.words.filter(w => { w.y += w.spd; w.age = Math.min(7, w.age + 1); return w.y < GH + 20 })
         g.bg.forEach(b => { b.y += b.vy; if (b.y > GH + 10) { b.y = -10; b.x = Math.random() * g.W } })
+        g.particles = g.particles.filter(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.14; p.life -= 0.022; return p.life > 0 })
         draw(ctx, g, canvas.width, now, true)
         return
       }
@@ -416,6 +440,13 @@ export default function HomePage() {
           life: 0.38, glyph: "·",
           col: Math.random() < 0.5 ? "#fb923c" : "#fde68a",
         })
+      } else if (!moving && Math.random() < 0.18) {
+        g.particles.push({
+          x: g.px + (Math.random()-0.5)*5, y: g.py + 7,
+          vx: (Math.random()-0.5)*0.8, vy: 0.7 + Math.random()*1.4,
+          life: 0.18, glyph: "·",
+          col: Math.random() < 0.6 ? "#fb923c" : "#7c3aed",
+        })
       }
 
       // shoot
@@ -432,6 +463,22 @@ export default function HomePage() {
           }
         }
         g.lastShot = now; sfx.shoot()
+      }
+
+      // auto-fire upgrade (Daily Stand-Up)
+      if (g.upgrades.auto_fire && g.words.length > 0 && !g.bossWarn) {
+        if (g.lastAutoFire === 0) g.lastAutoFire = now
+        if (now - g.lastAutoFire > 3000) {
+          const targets = g.words.filter(w => w.y < g.py - 20)
+          if (targets.length > 0) {
+            g.lastAutoFire = now
+            const near = targets.reduce((a, b) => Math.hypot(b.x-g.px,b.y-g.py) < Math.hypot(a.x-g.px,a.y-g.py) ? b : a)
+            const dx = near.x - g.px, dy = near.y - g.py
+            const dist = Math.sqrt(dx*dx + dy*dy)
+            g.bullets.push({ x: g.px, y: g.py - 20, vx: (dx/dist)*10, vy: (dy/dist)*10 })
+            sfx.shoot()
+          }
+        }
       }
 
       // spawn words (not during boss warning)
@@ -581,9 +628,10 @@ export default function HomePage() {
         return true
       })
 
-      // background glyphs
+      // background glyphs (speed up during boss)
+      const bgSpeedMul = g.boss ? (g.boss.raged ? 3.5 : 2.0) : 1
       g.bg.forEach(b => {
-        b.y += b.vy
+        b.y += b.vy * bgSpeedMul
         if (b.y > GH + 10) { b.y = -10; b.x = Math.random() * g.W }
       })
 
@@ -640,6 +688,12 @@ export default function HomePage() {
             }
             if (w.type === "powerup") applyPowerup(g, w, now)
             spawnLetterExplosion(g, w, pts, g.combo)
+            // clutch kill: word within 50px of bottom
+            if (w.y > GH - 50 && w.type !== "powerup") {
+              g.score += 25
+              g.particles.push({ x: w.x, y: w.y - 18, vx: 0, vy: -1.3, life: 1.4, glyph: "CLUTCH +25", col: "#facc15", sz: 12 })
+              showCapyMsg(g, "Clutch.", now)
+            }
             sfx.kill(g.combo)
             g.words.splice(j, 1)
             if (g.upgrades.piercing) { break } else { continue outer }
@@ -729,6 +783,18 @@ export default function HomePage() {
           g.lastMilestone = m
           g.particles.push({ x: canvas.width/2, y: GH/2 + 20, vx: 0, vy: -0.7, life: 1.6, glyph: `${m.toLocaleString()} pts`, col: "#facc15", sz: 14 })
           g.shake = 3
+        }
+      }
+
+      // endless life regen every 5000 pts
+      if (g.endless && g.score >= 5000) {
+        const lifeM = Math.floor(g.score / 5000) * 5000
+        if (lifeM > g.lastLifeRegen && g.lives < MAX_LIVES) {
+          g.lastLifeRegen = lifeM
+          g.lives = Math.min(g.lives + 1, MAX_LIVES)
+          g.particles.push({ x: canvas.width/2, y: GH/2, vx: 0, vy: -0.9, life: 2.0, glyph: "♥ survived", col: "#f87171", sz: 12 })
+          showCapyMsg(g, "Still standing.", now)
+          setLives(g.lives)
         }
       }
 
@@ -928,6 +994,11 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1
   }
 
+  // vignette
+  const vgr = ctx.createRadialGradient(cw/2, GH/2, GH*0.2, cw/2, GH/2, Math.max(cw, GH)*0.72)
+  vgr.addColorStop(0, "rgba(0,0,0,0)"); vgr.addColorStop(1, "rgba(0,0,0,0.55)")
+  ctx.fillStyle = vgr; ctx.fillRect(0, 0, cw, GH)
+
   // ambient background glyphs
   const glyphCol = g.endless ? "#4ade80" : BOSSES[Math.min(Math.max(g.level - 1, 0), 3)].color
   ctx.font = "10px monospace"; ctx.textAlign = "center"
@@ -1094,6 +1165,14 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       ctx.lineTo(g.px + 13, g.py + 7)
       ctx.closePath(); ctx.fill()
       ctx.restore()
+      // thruster flame
+      const tf = 0.45 + 0.55 * Math.abs(Math.sin(now / 55))
+      ctx.save(); ctx.globalAlpha = 0.78 * tf
+      ctx.fillStyle = "#fb923c"
+      ctx.beginPath(); ctx.moveTo(g.px - 5, g.py + 7); ctx.lineTo(g.px + 5, g.py + 7); ctx.lineTo(g.px, g.py + 13 + tf * 10); ctx.closePath(); ctx.fill()
+      ctx.globalAlpha = 0.5 * tf; ctx.fillStyle = "#fde68a"
+      ctx.beginPath(); ctx.moveTo(g.px - 2, g.py + 7); ctx.lineTo(g.px + 2, g.py + 7); ctx.lineTo(g.px, g.py + 10 + tf * 6); ctx.closePath(); ctx.fill()
+      ctx.restore()
       if (g.shield) {
         ctx.strokeStyle = "rgba(74,222,128,0.55)"; ctx.lineWidth = 2
         ctx.beginPath(); ctx.arc(g.px, g.py - 5, 24, 0, Math.PI*2); ctx.stroke()
@@ -1188,6 +1267,15 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   ctx.fillStyle = "#966bec"; ctx.fillText(g.score.toLocaleString(), 10, 20)
   ctx.fillStyle = "rgba(255,255,255,0.4)"
   ctx.fillText(g.endless ? "ENDLESS" : `LVL ${g.level}`, 10, 36)
+  // wave progress bar
+  if (!g.boss && !g.endless && !g.bossWarn) {
+    const wPct = Math.min(1, g.wordsKilled / WORDS_TO_BOSS)
+    ctx.fillStyle = "rgba(255,255,255,0.07)"; ctx.fillRect(10, 41, 72, 3)
+    ctx.fillStyle = wPct >= 0.85 ? "#f87171" : "#966bec"; ctx.fillRect(10, 41, 72 * wPct, 3)
+    ctx.font = "7px monospace"; ctx.textAlign = "left"
+    ctx.fillStyle = wPct >= 0.85 ? "rgba(248,113,113,0.7)" : "rgba(255,255,255,0.22)"
+    ctx.fillText(`BOSS: ${WORDS_TO_BOSS - g.wordsKilled}`, 10, 52)
+  }
   ctx.textAlign = "right"; ctx.fillStyle = "#f87171"; ctx.font = "12px monospace"
   ctx.fillText("♥".repeat(g.lives) + "♡".repeat(Math.max(0, MAX_LIVES - g.lives)), cw - 10, 20)
   let pwY = 36; ctx.font = "8px monospace"; ctx.textAlign = "right"
