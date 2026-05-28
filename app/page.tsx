@@ -476,6 +476,13 @@ export default function HomePage() {
       const g = G.current
       g.running = true; g.bossSpawned = false; g.wordsKilled = 0
       g.livesAtWave = g.lives; g.sectorClearAt = 0; g.lastMsWave = -1
+      // Activate endless mode when entering level 5+
+      if (g.level > 4) {
+        g.endless = true
+        g.endlessWave = 1
+        g.lastMiniAt = 0
+        g.lastStorm = 0
+      }
       // Seed a fresh initial burst so the new sector starts with immediate action
       const W3 = g.W
       for (let bi = 0; bi < 3; bi++) {
