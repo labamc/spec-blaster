@@ -3169,11 +3169,12 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: 
   const [rollCount, setRollCount] = useState(0)
   const [lines, setLines] = useState<CLILine[]>([])
   const [input, setInput] = useState("")
-  const [phase, setPhase] = useState<"boot"|"ready"|"parsing"|"done">("boot")
+  const [phase, setPhase] = useState<"boot"|"ready"|"parsing"|"compiled"|"done">("boot")
   const inputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const phaseRef = useRef<"boot"|"ready"|"parsing"|"done">("boot")
+  const phaseRef = useRef<"boot"|"ready"|"parsing"|"compiled"|"done">("boot")
   phaseRef.current = phase
+  const pendingPickRef = useRef<string | null>(null)
 
   const tokensAvailable = totalTokens - tokensSpent
   const rerollCost = REROLL_BASE_COST * (rollCount + 1)
@@ -3211,14 +3212,16 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: 
     setInput("")
     setPhase("parsing")
     setTimeout(() => {
+      pendingPickRef.current = upgrade.id
       setLines(prev => [...prev,
         { text:"", type:"blank" },
         { text:`SIGNAL://compiling — ${upgrade.name}`, type:"sys" },
         { text:`> ${upgrade.desc}`, type:"ok" },
         { text:`SIGNAL://compiled`, type:"sys" },
+        { text:"", type:"blank" },
+        { text:"ENTER to deploy →", type:"sys" },
       ])
-      setPhase("done")
-      setTimeout(() => onPick(upgrade.id), 420)
+      setPhase("compiled")
     }, 200)
   }
 
@@ -3241,18 +3244,28 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: 
         { text:`${matched.name}: initialized`, type:"dim" as CLILineType },
       ]
       resp.forEach((line, i) => {
-        setTimeout(() => setLines(prev => [...prev, line]), 500 + i * 85)
+        setTimeout(() => setLines(prev => [...prev, line]), 280 + i * 55)
       })
-      const totalMs = 280 + resp.length * 55 + 300
+      const totalMs = 280 + resp.length * 55 + 200
       setTimeout(() => {
+        pendingPickRef.current = matched.id
         setLines(prev => [...prev,
           { text:"", type:"blank" },
           { text:`SIGNAL://compiled — ${matched.name}`, type:"sys" },
+          { text:"", type:"blank" },
+          { text:"ENTER to deploy →", type:"sys" },
         ])
-        setPhase("done")
-        setTimeout(() => onPick(matched.id), 450)
+        setPhase("compiled")
       }, totalMs)
     }, 160)
+  }
+
+  function deployPending() {
+    const id = pendingPickRef.current
+    if (!id) return
+    pendingPickRef.current = null
+    setPhase("done")
+    onPick(id)
   }
 
   function handleReroll() {
@@ -3315,9 +3328,12 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: 
     compileFromText(cmd)
   }
 
-  // 1/2/3 keyboard shortcuts (only when input not focused)
+  // 1/2/3 shortcuts (when ready) and ENTER/SPACE to deploy (when compiled)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (phaseRef.current === "compiled" && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault(); deployPending(); return
+      }
       if (phaseRef.current !== "ready") return
       if (["1","2","3"].includes(e.key) && document.activeElement !== inputRef.current) {
         const opt = liveOptions[parseInt(e.key) - 1]
@@ -3354,24 +3370,36 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: 
         )}
         <div ref={scrollRef} />
       </div>
-      {/* Input */}
-      <div style={{ borderTop:"1px solid rgba(255,255,255,0.055)", padding:"0.65rem 1.5rem 1rem", display:"flex", gap:"0.55rem", alignItems:"center", flexShrink:0 }}>
-        <span style={{ color: phase === "ready" ? "#966bec" : "rgba(150,107,236,0.3)", fontSize:"0.85rem" }}>{">"}</span>
-        <input
-          ref={inputRef}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") handleSubmit() }}
-          disabled={phase !== "ready"}
-          autoFocus
-          placeholder={phase === "ready" ? "describe what to build…" : ""}
-          style={{
-            flex:1, background:"transparent", border:"none", outline:"none",
-            color:"rgba(255,255,255,0.88)", fontFamily:"monospace", fontSize:"0.82rem",
-            caretColor:"#966bec", opacity: phase === "ready" ? 1 : 0,
-          }}
-        />
-      </div>
+      {/* Input / deploy prompt */}
+      {phase === "compiled" ? (
+        <div onClick={deployPending}
+          style={{ borderTop:"1px solid rgba(150,107,236,0.18)", padding:"0.7rem 1.5rem 1rem",
+            display:"flex", alignItems:"center", gap:"0.75rem", cursor:"pointer", flexShrink:0,
+            background:"rgba(150,107,236,0.06)" }}>
+          <span style={{ color:"#966bec", fontSize:"0.85rem", animation:"pulse 0.9s ease-in-out infinite" }}>▶</span>
+          <span style={{ color:"#966bec", fontFamily:"monospace", fontSize:"0.82rem", letterSpacing:"0.06em" }}>
+            ENTER or click to deploy
+          </span>
+        </div>
+      ) : (
+        <div style={{ borderTop:"1px solid rgba(255,255,255,0.055)", padding:"0.65rem 1.5rem 1rem", display:"flex", gap:"0.55rem", alignItems:"center", flexShrink:0 }}>
+          <span style={{ color: phase === "ready" ? "#966bec" : "rgba(150,107,236,0.3)", fontSize:"0.85rem" }}>{">"}</span>
+          <input
+            ref={inputRef}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") handleSubmit() }}
+            disabled={phase !== "ready"}
+            autoFocus
+            placeholder={phase === "ready" ? "describe what to build…" : ""}
+            style={{
+              flex:1, background:"transparent", border:"none", outline:"none",
+              color:"rgba(255,255,255,0.88)", fontFamily:"monospace", fontSize:"0.82rem",
+              caretColor:"#966bec", opacity: phase === "ready" ? 1 : 0,
+            }}
+          />
+        </div>
+      )}
     </div>
   )
 }
