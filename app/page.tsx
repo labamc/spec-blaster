@@ -1583,9 +1583,15 @@ export default function HomePage() {
 
       // live personal best tracking
       if (!g.pbShown && g.score > g.pb && g.pb > 0) {
-        g.pbShown = true; g.pb = g.score; g.whiteFlash = 7
-        g.particles.push({ x: canvas.width/2, y: GH/2 - 22, vx: 0, vy: -0.7, life: 2.2, glyph: "NEW PB ★", col: "#facc15", sz: 14 })
-        showCapyMsg(g, "New signal depth record.", now)
+        g.pbShown = true; g.pb = g.score; g.whiteFlash = 14; g.shake = 8
+        // star burst ring + float text
+        for (let pbi = 0; pbi < 20; pbi++) {
+          const pba = (pbi / 20) * Math.PI * 2
+          g.particles.push({ x: canvas.width/2, y: GH/2, vx: Math.cos(pba) * 8, vy: Math.sin(pba) * 8, life: 1.1, glyph: pbi % 3 === 0 ? "★" : "◇", col: "#facc15" })
+        }
+        g.particles.push({ x: canvas.width/2, y: GH/2 - 22, vx: 0, vy: -0.6, life: 2.6, glyph: "NEW PERSONAL BEST ★", col: "#facc15", sz: 13 })
+        g.particles.push({ x: canvas.width/2, y: GH/2 - 22, vx: 0, vy: 0, life: 0.7, initLife: 0.7, glyph: "", col: "#facc15", ring: true })
+        showCapyMsg(g, "New signal record.\nYou've gone further\nthan ever before.", now)
         setPersonalBest(g.score)
         try { localStorage.setItem("sb_pb", String(g.score)) } catch {}
         sfx.newPB()
@@ -2123,8 +2129,13 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   }
 
   // words
+  const retroActive = !attractMode && g.retroEnd > 0 && now < g.retroEnd
   g.words.forEach(w => {
-    const col = w.regenBoss ? "#34d399" : w.type === "bug" ? "#fdba74" : w.type === "powerup" ? "#4ade80" : "#7dd3fc"
+    // RETRO tint: bug→pale blue, story→deeper blue (signals temporal freeze)
+    const col = w.regenBoss ? "#34d399"
+      : w.type === "bug" ? (retroActive ? "#93c5fd" : "#fdba74")
+      : w.type === "powerup" ? "#4ade80"
+      : (retroActive ? "#a5f3fc" : "#7dd3fc")
     const flashRed = w.hitFlash > 0
 
     const spawnAlpha = Math.min(1, w.age / 7)
@@ -2159,6 +2170,9 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       const pulse = 0.3 + 0.7 * Math.abs(Math.sin(now / 300))
       ctx.save(); ctx.shadowColor = "#34d399"; ctx.shadowBlur = 7 * pulse
     }
+    if (retroActive && w.type !== "powerup" && !w.regenBoss && !w.elite) {
+      ctx.save(); ctx.shadowColor = "#7dd3fc"; ctx.shadowBlur = 5 + 2 * Math.sin(now / 600)
+    }
     if (w.elite) {
       ctx.save(); ctx.shadowColor = "#f87171"; ctx.shadowBlur = 8 + 4 * Math.sin(now / 200)
     }
@@ -2176,6 +2190,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
 
     if (w.type === "powerup") ctx.restore()
     if (w.regenBoss) ctx.restore()
+    if (retroActive && w.type !== "powerup" && !w.regenBoss && !w.elite) ctx.restore()
     if (w.elite) {
       ctx.restore()
       // HP pips
