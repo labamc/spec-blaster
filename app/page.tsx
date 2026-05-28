@@ -8,8 +8,8 @@ const GH = 420
 const PLAYER_Y = GH - 50
 const MAX_LIVES = 3
 const WORDS_TO_BOSS = 18
-const MAX_WORDS_NORMAL = 12   // hard cap on words on-screen outside boss fight
-const MAX_WORDS_ENDLESS = 15  // slightly more room in endless, but still capped
+const MAX_WORDS_NORMAL = 8    // hard cap on words on-screen outside boss fight
+const MAX_WORDS_ENDLESS = 10  // endless allows a bit more pressure, still manageable
 const MAX_COMBO = 30          // combo display and multiplier cap
 
 const BUG_WORDS = [
@@ -1067,7 +1067,14 @@ export default function HomePage() {
 
       // spawn boss warning
       if (!g.boss && !g.bossWarn && !g.bossSpawned && !g.endless && g.wordsKilled >= WORDS_TO_BOSS) {
-        g.bossSpawned = true; g.words = []
+        g.bossSpawned = true
+        // Scatter remaining words as score bonus before boss warning
+        g.words.forEach(w => {
+          if (w.type === "powerup") return
+          g.score += w.type === "bug" ? 20 : 5
+          spawnParticles(g, w.x, w.y, w.type === "bug" ? "#fb923c" : "#7dd3fc", "↑", 2)
+        })
+        g.words = g.words.filter(w => w.type === "powerup")
         const bd = BOSSES[g.level - 1]
         const charW = 18
         const nameW = bd.name.length * charW
@@ -1116,13 +1123,13 @@ export default function HomePage() {
           const phase = isVoid ? 6 : 5
           g.boss = { x: g.W/2, y: 70, hp, maxHp: hp, name: mb.name, color: mb.color, dir: 1, t: 0, phase, raged: false, halfTriggered: false }
           g.waveAnn = { text: mb.name, t: 0 }
-          // Clear the board — sweep words below midpoint into score particles so boss fight is readable
-          const swept = g.words.filter(w => w.y > GH * 0.45)
-          swept.forEach(w => {
+          // Full board clear on boss spawn — words scatter upward as score bonus
+          g.words.forEach(w => {
+            if (w.type === "powerup") return
             g.score += w.type === "bug" ? 20 : 5
             spawnParticles(g, w.x, w.y, w.type === "bug" ? "#fb923c" : "#7dd3fc", "↑", 2)
           })
-          g.words = g.words.filter(w => w.y <= GH * 0.45)
+          g.words = g.words.filter(w => w.type === "powerup")
           g.shake = isVoid ? 14 : 8; sfx.warning()
           const miniBossCapy: Record<string, string> = {
             "SCOPE SPECTRE":   "SCOPE SPECTRE.\nIt feeds on undefined requirements.\nKeep the signal tight.",
@@ -1409,10 +1416,12 @@ export default function HomePage() {
               spawnParticles(g, w.x, w.y, "#f87171", "✦", 3)
               if (g.upgrades.piercing) { break } else { continue outer }
             }
-            // kill
+            // kill — push spawn timer forward so rapid kills create a breathing gap
             const elapsed = now - g.lastKill
             g.combo = elapsed < 1300 ? Math.min(g.combo + 1, MAX_COMBO) : 1
             g.lastKill = now
+            // Each kill defers next spawn by 300ms so bursts create visible pauses
+            g.lastWord = Math.max(g.lastWord, now - 100)
             if (g.combo === 3 || g.combo === 5 || g.combo === 10 || g.combo === 15 || g.combo === 20 || g.combo === 25 || g.combo === 30) {
               sfx.combo(g.combo)
               if (g.combo === 5)  { showCapyMsg(g, "Five x.\nThe Signal amplifies.", now); g.shake = 3 }
