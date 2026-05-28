@@ -321,6 +321,7 @@ interface GState {
   trail: Array<{x: number; y: number}>
   retroEnd: number
   sectorClearAt: number
+  lastMsWave: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -354,6 +355,7 @@ function initState(W: number): GState {
     trail: [],
     retroEnd: 0,
     sectorClearAt: 0,
+    lastMsWave: -1,
   }
 }
 
@@ -473,7 +475,7 @@ export default function HomePage() {
       capyIdxRef.current = 0; setCapyIdx(0)
       const g = G.current
       g.running = true; g.bossSpawned = false; g.wordsKilled = 0
-      g.livesAtWave = g.lives; g.sectorClearAt = 0
+      g.livesAtWave = g.lives; g.sectorClearAt = 0; g.lastMsWave = -1
       // Seed a fresh initial burst so the new sector starts with immediate action
       const W3 = g.W
       for (let bi = 0; bi < 3; bi++) {
@@ -836,6 +838,32 @@ export default function HomePage() {
           // Elite words in endless: 3 HP, worth 3× score, slightly slower
           const isElite = g.endless && type !== "powerup" && Math.random() < 0.12
           g.words.push({ x: ox, y: -18, text, type, spd: spd2 * (isElite ? 0.7 : 1), beh, ph: Math.random() * Math.PI * 2, ox, hp: isElite ? 3 : 1, hitFlash: 0, elite: isElite, age: 0 })
+        }
+      }
+
+      // Mid-sector momentum spikes (sector mode only) — at kill 4 and 9, spawn burst of aggressive words
+      if (!g.endless && !g.boss && !g.bossWarn) {
+        const msThreshold = g.wordsKilled >= 4 && g.wordsKilled < 6 ? 4 : g.wordsKilled >= 9 && g.wordsKilled < WORDS_TO_BOSS - 4 ? 9 : -1
+        if (msThreshold > 0 && g.lastMsWave !== msThreshold) {
+          g.lastMsWave = msThreshold
+          const slowFactor = Math.pow(0.85, g.upgrades.word_slow ?? 0)
+          const designMul = g.activeAgents.includes("claude_design") ? 0.88 : 1
+          const burstSpd = (1.9 + g.level * 0.3) * slowFactor * designMul
+          const burstCount = 2 + g.level  // 3 in s1, 4 in s2, 5 in s3, 6 in s4
+          for (let bi = 0; bi < burstCount; bi++) {
+            const ox = 40 + Math.random() * (g.W - 80)
+            const beh: Behavior = ["charge","zigzag","charge","fall"][Math.floor(Math.random() * 4)] as Behavior
+            const tp: Word["type"] = Math.random() < 0.45 ? "bug" : "story"
+            const txt = tp === "bug"
+              ? BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)]
+              : STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)]
+            g.words.push({ x: ox, y: -18 - bi * 32, text: txt, type: tp, spd: burstSpd, beh, ph: Math.random() * Math.PI * 2, ox, hp: 1, hitFlash: 0, elite: false, age: 0 })
+          }
+          g.shake = 4 + g.level
+          if (msThreshold === 9) {
+            const bossName = BOSSES[Math.min(g.level - 1, 3)].name
+            showCapyMsg(g, `Pattern density rising.\n${bossName} is close.`, now)
+          }
         }
       }
 
@@ -3126,7 +3154,7 @@ function matchUpgrade(cmd: string, options: UpgradeDef[]): UpgradeDef {
   return best
 }
 
-const REROLL_BASE_COST = 300
+const REROLL_BASE_COST = 120
 
 function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: {
   options: UpgradeDef[]; onPick: (id: string) => void; score: number; kills: number
@@ -3151,38 +3179,29 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: 
   // Auto-scroll
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior:"smooth" }) }, [lines])
 
-  // Boot sequence
+  // Boot sequence — shows options immediately so player can act fast
   useEffect(() => {
+    const optLines: CLILine[] = initialOptions.map((o, i) => ({
+      text: `  [${i+1}]  ${o.name.padEnd(22)}${o.desc}`,
+      type: "dim" as CLILineType,
+    }))
     const boot: CLILine[] = [
       { text:"SIGNAL://runtime stabilized", type:"sys" },
       { text:`TOKENS AVAILABLE: ${totalTokens.toLocaleString()}`, type:"dim" },
-      { text:onReroll ? `type "reroll" to re-roll directives (costs ${REROLL_BASE_COST} tokens)` : "", type:"dim" },
       { text:"", type:"blank" },
-      { text:"SIGNAL://compile directive ready", type:"sys" },
-      { text:"Describe what you want to build.", type:"dim" },
+      { text:"COMPILE TARGETS:", type:"sys" },
+      ...optLines,
+      { text:"", type:"blank" },
+      { text:onReroll ? `type number, name, or "reroll" (costs ${REROLL_BASE_COST} tokens)` : "type a number or describe what you want to build", type:"dim" },
       { text:"", type:"blank" },
     ]
     let i = 0
     const tick = () => {
-      if (i < boot.length) { setLines(prev => [...prev, boot[i++]]); setTimeout(tick, 90) }
-      else { setPhase("ready"); setTimeout(() => inputRef.current?.focus(), 60) }
+      if (i < boot.length) { setLines(prev => [...prev, boot[i++]]); setTimeout(tick, 42) }
+      else { setPhase("ready"); setTimeout(() => inputRef.current?.focus(), 40) }
     }
-    setTimeout(tick, 250)
+    setTimeout(tick, 80)
   }, []) // eslint-disable-line
-
-  // Idle hint after 7 seconds
-  useEffect(() => {
-    if (phase !== "ready") return
-    const t = setTimeout(() => {
-      setLines(prev => [...prev,
-        { text:"SIGNAL://idle — syntax cache available", type:"sys" },
-        { text:liveOptions.map((o, i) => `[${i+1}] ${o.name}`).join("  ·  "), type:"dim" },
-        { text:canReroll ? `"reroll" to recompile — costs ${rerollCost} tokens (have ${tokensAvailable.toLocaleString()})` : "or describe freely", type:"dim" },
-        { text:"", type:"blank" },
-      ])
-    }, 7000)
-    return () => clearTimeout(t)
-  }, [phase, liveOptions]) // eslint-disable-line
 
   function compileDirect(upgrade: UpgradeDef, label: string) {
     setLines(prev => [...prev, { text:`> ${label}`, type:"cmd" }])
@@ -3191,14 +3210,13 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: 
     setTimeout(() => {
       setLines(prev => [...prev,
         { text:"", type:"blank" },
-        { text:`SIGNAL://direct compile — ${upgrade.name}`, type:"sys" },
+        { text:`SIGNAL://compiling — ${upgrade.name}`, type:"sys" },
         { text:`> ${upgrade.desc}`, type:"ok" },
-        { text:"", type:"blank" },
-        { text:`SIGNAL://compile complete — ${upgrade.name}`, type:"sys" },
+        { text:`SIGNAL://compiled`, type:"sys" },
       ])
       setPhase("done")
-      setTimeout(() => onPick(upgrade.id), 700)
-    }, 380)
+      setTimeout(() => onPick(upgrade.id), 420)
+    }, 200)
   }
 
   function compileFromText(cmd: string) {
@@ -3222,16 +3240,16 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: 
       resp.forEach((line, i) => {
         setTimeout(() => setLines(prev => [...prev, line]), 500 + i * 85)
       })
-      const totalMs = 500 + resp.length * 85 + 550
+      const totalMs = 280 + resp.length * 55 + 300
       setTimeout(() => {
         setLines(prev => [...prev,
           { text:"", type:"blank" },
-          { text:`SIGNAL://compile complete — ${matched.name}`, type:"sys" },
+          { text:`SIGNAL://compiled — ${matched.name}`, type:"sys" },
         ])
         setPhase("done")
-        setTimeout(() => onPick(matched.id), 750)
+        setTimeout(() => onPick(matched.id), 450)
       }, totalMs)
-    }, 280)
+    }, 160)
   }
 
   function handleReroll() {
