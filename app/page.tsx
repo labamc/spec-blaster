@@ -220,6 +220,7 @@ interface GState {
   activeAgents: string[]; endlessWave: number; secUnlockTriggered: boolean
   laserChargeStart: number; laserFireEnd: number; laserCooldownEnd: number
   mines: Mine[]; lastMine: number; dropMine: boolean
+  trail: Array<{x: number; y: number}>
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -250,6 +251,7 @@ function initState(W: number): GState {
     activeAgents: [], endlessWave: 0, secUnlockTriggered: false,
     laserChargeStart: 0, laserFireEnd: 0, laserCooldownEnd: 0,
     mines: [], lastMine: 0, dropMine: false,
+    trail: [],
   }
 }
 
@@ -539,6 +541,10 @@ export default function HomePage() {
         if (Math.abs(dx) > 4) g.px += Math.sign(dx) * Math.min(Math.abs(dx) * 0.12, 6)
       }
 
+      // motion trail
+      g.trail.push({ x: g.px, y: g.py })
+      if (g.trail.length > 10) g.trail.shift()
+
       // thruster particles when moving
       const moving = g.keys.has("ArrowLeft") || g.keys.has("a") || g.keys.has("ArrowRight") || g.keys.has("d")
         || (g.mouseX >= 0 && Math.abs(g.mouseX - g.px) > 8)
@@ -676,9 +682,58 @@ export default function HomePage() {
           g.endlessWave = expectedWave
           if (g.endlessWave > 1) {
             g.waveAnn = { text: `RECURSION · DEPTH ${g.endlessWave}`, t: 0 }
-            g.shake = 5
-            showCapyMsg(g, `Endless wave ${g.endlessWave}.\nStill here?`, now)
             sfx.warning()
+            // depth-specific escalation events
+            switch (g.endlessWave) {
+              case 2: {
+                // VELOCITY BURST — all live words get 25% speed surge
+                g.shake = 8
+                g.words.forEach(w => { if (w.type !== "powerup") w.spd *= 1.25 })
+                g.particles.push({ x: g.W/2, y: GH/2 - 14, vx: 0, vy: -0.9, life: 1.9, glyph: "VELOCITY ×1.25", col: "#fb923c", sz: 11 })
+                showCapyMsg(g, "DEPTH 2 · VELOCITY BURST.\nPatterns accelerating.\nAdjust your cadence.", now)
+                break
+              }
+              case 3: {
+                // PATTERN CHAOS — all falling words break into zigzag
+                g.shake = 9
+                let converted = 0
+                g.words.forEach(w => { if (w.beh === "fall" && w.type !== "powerup") { w.beh = "zigzag"; converted++ } })
+                if (converted > 0) g.particles.push({ x: g.W/2, y: GH/2 - 14, vx: 0, vy: -0.9, life: 1.9, glyph: `CHAOS ×${converted}`, col: "#f472b6", sz: 11 })
+                showCapyMsg(g, "DEPTH 3 · PATTERN CHAOS.\nDrift vectors unstable.\nAll patterns break formation.", now)
+                break
+              }
+              case 4: {
+                // ELITE SURGE — existing words harden to elite tier
+                g.shake = 10; g.whiteFlash = 8
+                g.words.forEach(w => { if (!w.elite && w.type !== "powerup" && w.hp === 1) { w.hp = 2; w.elite = true } })
+                g.particles.push({ x: g.W/2, y: GH/2 - 14, vx: 0, vy: -0.9, life: 1.9, glyph: "ELITE SURGE", col: "#facc15", sz: 12 })
+                showCapyMsg(g, "DEPTH 4 · ELITE SURGE.\nPatterns are hardening.\nStandard rounds insufficient.", now)
+                break
+              }
+              case 5: {
+                // THE VOID AWAKENS — ominous fanfare
+                g.shake = 15; g.whiteFlash = 10
+                for (let i = 0; i < 18; i++) {
+                  const a = (i / 18) * Math.PI * 2
+                  g.particles.push({ x: g.W/2, y: GH/2, vx: Math.cos(a) * 7, vy: Math.sin(a) * 7, life: 1.5, glyph: "∅", col: i % 2 === 0 ? "#6d28d9" : "#a855f7" })
+                }
+                g.particles.push({ x: g.W/2, y: GH/2 - 16, vx: 0, vy: -0.6, life: 2.4, glyph: "THE VOID AWAKENS", col: "#6d28d9", sz: 13 })
+                showCapyMsg(g, "DEPTH 5 · THE VOID.\nFinal recursion layer.\nYou were warned.", now)
+                setTimeout(() => sfx.warning(), 700)
+                setTimeout(() => sfx.warning(), 1400)
+                break
+              }
+              default: {
+                // post-void: escalating chaos
+                const d = g.endlessWave
+                g.shake = Math.min(5 + d * 2, 20)
+                if (d % 2 === 0) {
+                  g.words.forEach(w => { if (w.type !== "powerup") w.spd *= 1.08 })
+                }
+                showCapyMsg(g, `DEPTH ${d} · BEYOND THE VOID.\nThe recursion has no floor.`, now)
+                break
+              }
+            }
           }
         }
         // Unlock CLAUDE SEC at 100 endless kills
@@ -725,12 +780,12 @@ export default function HomePage() {
         g.shake = 8
         sfx.warning()
         const bossCapy: Record<string, string> = {
-          "THE RECURSION": "Infinite loop detected.\nSever it.",
-          "THE DRIFT":     "Semantic drift.\nAll context corrupted.",
-          "THE FRAGMENT":  "Fragmentation event.\nHold coherence.",
-          "THE COLLAPSE":  "Total collapse incoming.\nThis is everything.",
+          "THE RECURSION": "First collapse detected.\nA loop with no exit condition.\nSever it before it eats the stack.",
+          "THE DRIFT":     "Semantic drift incoming.\nMeaning has decoupled from intent.\nEvery word is suspect now.",
+          "THE FRAGMENT":  "Fragmentation event.\nCoherence is splitting at the seam.\nEvery shard carries a piece of the signal.",
+          "THE COLLAPSE":  "THE COLLAPSE.\nFour sectors, one moment.\nThis is what all of it was building toward.",
         }
-        showCapyMsg(g, bossCapy[bd.name] ?? "Hostile pattern incoming.", now)
+        showCapyMsg(g, bossCapy[bd.name] ?? "Hostile pattern incoming.\nHold formation.", now)
       }
 
       // endless mini-boss spawn every 100 kills
@@ -748,14 +803,23 @@ export default function HomePage() {
           const phase = isVoid ? 6 : 5
           g.boss = { x: g.W/2, y: 70, hp, maxHp: hp, name: mb.name, color: mb.color, dir: 1, t: 0, phase, raged: false, halfTriggered: false }
           g.shake = isVoid ? 14 : 8; sfx.warning()
+          const miniBossCapy: Record<string, string> = {
+            "SCOPE SPECTRE":   "SCOPE SPECTRE.\nIt feeds on undefined requirements.\nKeep the signal tight.",
+            "SPRINT GHOST":    "SPRINT GHOST.\nVelocity without direction.\nDon't let it outflank you.",
+            "TECH DEBT DEMON": "TECH DEBT DEMON.\nIt regenerates from entropy.\nHit fast. Hit clean.",
+            "BLOCKER BOT":     "BLOCKER BOT.\nThree-burst suppression fire.\nWall shots too. Stay mobile.",
+            "THE DEPENDENCY":  "THE DEPENDENCY.\nSpawns legacy on death.\nKill the children first.",
+            "THE ROADMAP":     "THE ROADMAP.\nA plan that outlived its purpose.\nThe signal remembers what it forgot.",
+            "THE PIVOT":       "THE PIVOT.\nEverything changed and nothing did.\nFind the pattern behind the change.",
+          }
           if (isVoid) {
-            showCapyMsg(g, "THE VOID.\nComplete semantic collapse.", now)
+            showCapyMsg(g, "THE VOID.\nComplete semantic collapse.\nNo signal survives this unchallenged.", now)
             for (let ri = 0; ri < 20; ri++) {
               const a = (ri / 20) * Math.PI * 2
               g.particles.push({ x: g.W/2, y: 70, vx: Math.cos(a)*12, vy: Math.sin(a)*12, life: 1.2, glyph: "★", col: "#6d28d9" })
             }
           } else {
-            showCapyMsg(g, `${mb.name}\narrives.`, now)
+            showCapyMsg(g, miniBossCapy[mb.name] ?? `${mb.name} incoming.\nHold formation.`, now)
           }
         }
       }
@@ -794,6 +858,16 @@ export default function HomePage() {
               g.bullets.push({ x: b.x + 30, y: b.y + 28, vy: 5, enemy: true })
             }
           }
+        }
+        // THE COLLAPSE: signature shockwave — 16-bullet ring every 200 frames when raged
+        if (b.name === "THE COLLAPSE" && b.raged && b.t % 200 === 0) {
+          for (let ci = 0; ci < 16; ci++) {
+            const ang = (ci / 16) * Math.PI * 2
+            g.bullets.push({ x: b.x, y: b.y, vx: Math.cos(ang) * 5, vy: Math.sin(ang) * 5, enemy: true })
+          }
+          g.shake = 8
+          g.particles.push({ x: b.x, y: b.y - 22, vx: 0, vy: -0.8, life: 1.4, glyph: "SHOCKWAVE", col: "#4ade80", sz: 9 })
+          showCapyMsg(g, "Collapse shockwave.\nThe Signal bends but holds.", now)
         }
         // The Roadmap: periodically spawns healing words
         if (b.name === "THE ROADMAP" && b.t % 140 === 0) {
@@ -1102,9 +1176,36 @@ export default function HomePage() {
         g.boss = null; g.mines = [] // clear mines on boss death
         if (g.endless) {
           sfx.miniBoss()
-          g.score += 250
+          if (bx.name === "THE VOID") {
+            // THE VOID death — special treatment
+            g.score += 750; g.whiteFlash = 14; g.shake = 18
+            // implosion particle burst in void purple
+            for (let vi = 0; vi < 40; vi++) {
+              const a = (vi / 40) * Math.PI * 2
+              const spd = 4 + Math.random() * 9
+              g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
+                life: 1.4 + Math.random() * 0.6, glyph: vi % 3 === 0 ? "∅" : vi % 3 === 1 ? "◈" : "★",
+                col: vi % 2 === 0 ? "#6d28d9" : "#a855f7" })
+            }
+            g.particles.push({ x: bx.x, y: bx.y - 22, vx: 0, vy: -0.7, life: 2.2, glyph: "THE VOID · COLLAPSED", col: "#a855f7", sz: 11 })
+            g.particles.push({ x: bx.x, y: bx.y + 8, vx: 0, vy: -0.5, life: 1.8, glyph: "+750", col: "#facc15", sz: 12 })
+            showCapyMsg(g, "THE VOID is closed.\nSignal coherence: restored.\nYou outran the recursion.", now)
+            setTimeout(() => sfx.bossDead(), 350)
+            setTimeout(() => sfx.bossDead(), 700)
+          } else {
+            g.score += 250
+            const miniBossDeathMsgs: Record<string, string> = {
+              "SCOPE SPECTRE":   "Scope creep severed.\nRequirements crystallized.",
+              "SPRINT GHOST":    "Velocity reclaimed.\nDirection restored.",
+              "TECH DEBT DEMON": "Debt cycle broken.\nThe codebase breathes.",
+              "BLOCKER BOT":     "Blockers cleared.\nThe path is open.",
+              "THE DEPENDENCY":  "Dependency chain severed.\nSignal self-sufficient.",
+              "THE ROADMAP":     "The roadmap is gone.\nShip what matters.",
+              "THE PIVOT":       "The pivot dissolves.\nThe signal held its course.",
+            }
+            showCapyMsg(g, miniBossDeathMsgs[bx.name] ?? "Pattern dissolved.\nThe Signal holds.", now)
+          }
           g.words.push({ x: bx.x, y: Math.min(bx.y + 55, GH - 80), text: "KNOWLEDGE", type: "powerup", spd: 0.85, beh: "fall", ph: 0, ox: bx.x, hp: 1, hitFlash: 0, elite: false, age: 7 })
-          showCapyMsg(g, "Pattern dissolved.\nThe Signal holds.", now)
         } else {
           g.score += 500
           if (g.lives >= g.livesAtWave) {
@@ -1314,23 +1415,44 @@ export default function HomePage() {
                   WASD / ← → move · SPACE fire · hold SPACE = laser charge · M = mine
                 </p>
 
+                {/* Crew status row */}
+                {unlockedAgents.length > 0 && (() => {
+                  const deployed = AGENT_DEFS.filter(a => selectedAgents.includes(a.id) && unlockedAgents.includes(a.id))
+                  return (
+                    <div style={{ marginBottom:"0.9rem" }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:"0.4rem", marginBottom:"0.4rem" }}>
+                        <span style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.6rem", fontFamily:"monospace", letterSpacing:"0.12em" }}>CREW</span>
+                        <div style={{ flex:1, height:"1px", background:"rgba(255,255,255,0.06)" }} />
+                        <button onClick={e => { e.stopPropagation(); setShowAgentModule(true) }}
+                          style={{ background:"none", border:"none", cursor:"pointer", color:"rgba(150,107,236,0.5)", fontSize:"0.6rem", fontFamily:"monospace", padding:0 }}>
+                          manage →
+                        </button>
+                      </div>
+                      {deployed.length > 0 ? (
+                        <div style={{ display:"flex", flexWrap:"wrap", gap:"0.3rem" }}>
+                          {deployed.map(a => (
+                            <span key={a.id} style={{
+                              background:"rgba(74,222,128,0.07)", border:"1px solid rgba(74,222,128,0.18)",
+                              borderRadius:"3px", padding:"0.15rem 0.5rem",
+                              color:"rgba(74,222,128,0.65)", fontSize:"0.6rem", fontFamily:"monospace",
+                            }}>{a.name}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p style={{ color:"rgba(248,113,113,0.5)", fontSize:"0.6rem", fontFamily:"monospace", margin:0 }}>
+                          ⚠ all crew benched — no buffs active
+                        </p>
+                      )}
+                    </div>
+                  )
+                })()}
+
                 {/* CTA */}
                 <div style={{ display:"flex", alignItems:"center", gap:"0.75rem", marginBottom:"0.85rem", justifyContent:"center" }}>
                   <div style={{ background:"#966bec", color:"#fff", borderRadius:"4px", padding:"0.55rem 1.5rem",
                     fontSize:"0.88rem", fontWeight:600, letterSpacing:"0.06em" }}>
                     Launch mission
                   </div>
-                  <button onClick={e => { e.stopPropagation(); setShowAgentModule(true) }}
-                    style={{ background:"rgba(150,107,236,0.08)", border:"1px solid rgba(150,107,236,0.28)",
-                      borderRadius:"4px", padding:"0.5rem 1rem", color:"rgba(150,107,236,0.85)",
-                      fontSize:"0.72rem", cursor:"pointer", fontFamily:"monospace", letterSpacing:"0.08em" }}>
-                    THE SIGNAL
-                    {unlockedAgents.length > 0 && (
-                      <span style={{ marginLeft:"0.4rem", color:"#4ade80", fontSize:"0.68rem" }}>
-                        {selectedAgents.filter(id => unlockedAgents.includes(id)).length}/{unlockedAgents.length}
-                      </span>
-                    )}
-                  </button>
                 </div>
 
                 {/* Scores */}
@@ -1363,9 +1485,9 @@ export default function HomePage() {
             />
           )}
 
-          {phase === "upgrade" && <CLIScreen options={upgradeOptions} onPick={onUpgradePick} score={score} kills={G.current.kills} />}
+          {phase === "upgrade" && <CLIScreen options={upgradeOptions} onPick={onUpgradePick} score={score} kills={G.current.kills} onReroll={() => pickUpgrades(G.current.upgrades)} />}
 
-          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} onRestart={startGame} unlockedAgents={unlockedAgents} onShowStack={() => setShowAgentModule(true)} />}
+          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} onRestart={startGame} unlockedAgents={unlockedAgents} onShowStack={() => setShowAgentModule(true)} endless={G.current.endless} endlessDepth={G.current.endlessWave} />}
 
           {showAgentModule && (
             <AgentModule unlocked={unlockedAgents} selected={selectedAgents}
@@ -1521,10 +1643,20 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   ctx.fillStyle = "#0d0d14"
   ctx.fillRect(0, 0, cw, GH)
 
-  // level tint overlay (very subtle per-level color)
+  // level tint overlay — shifts with recursion depth in endless mode
   if (!attractMode) {
-    const tintCol = g.endless ? "#4ade80" : BOSSES[Math.min(g.level - 1, 3)].color
-    ctx.globalAlpha = 0.04; ctx.fillStyle = tintCol
+    let tintCol: string
+    let tintStr: number
+    if (g.endless) {
+      const d = g.endlessWave
+      if (d >= 5) { tintCol = "#6d28d9"; tintStr = 0.06 + Math.min(d - 5, 4) * 0.008 }
+      else if (d >= 3) { tintCol = "#7c3aed"; tintStr = 0.05 }
+      else { tintCol = "#4ade80"; tintStr = 0.04 }
+    } else {
+      tintCol = BOSSES[Math.min(g.level - 1, 3)].color
+      tintStr = 0.04
+    }
+    ctx.globalAlpha = tintStr; ctx.fillStyle = tintCol
     ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1
   }
 
@@ -1538,9 +1670,18 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1; g.whiteFlash--
   }
 
-  // vignette
-  const vgr = ctx.createRadialGradient(cw/2, GH/2, GH*0.2, cw/2, GH/2, Math.max(cw, GH)*0.72)
-  vgr.addColorStop(0, "rgba(0,0,0,0)"); vgr.addColorStop(1, "rgba(0,0,0,0.55)")
+  // vignette — intensifies with boss presence, turns deep purple-black for THE VOID
+  const isVoidPresent = g.boss?.name === "THE VOID"
+  const vignetteStr = isVoidPresent
+    ? 0.75 + 0.1 * Math.sin(now / 400)
+    : g.boss
+      ? 0.62 + 0.06 * Math.sin(now / 300)
+      : 0.5
+  const vignetteCol = isVoidPresent
+    ? `rgba(6,0,18,${vignetteStr})`
+    : `rgba(0,0,0,${vignetteStr})`
+  const vgr = ctx.createRadialGradient(cw/2, GH*0.55, GH*0.15, cw/2, GH*0.55, Math.max(cw, GH)*0.78)
+  vgr.addColorStop(0, "rgba(0,0,0,0)"); vgr.addColorStop(1, vignetteCol)
   ctx.fillStyle = vgr; ctx.fillRect(0, 0, cw, GH)
 
   // ambient background glyphs
@@ -1581,7 +1722,20 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     const flashRed = w.hitFlash > 0
 
     const spawnAlpha = Math.min(1, w.age / 7)
+    // Brief spawn flash: extra glow for age 0-12
+    const spawnFlash = w.age < 12 ? Math.max(0, 1 - w.age / 12) : 0
     ctx.globalAlpha = spawnAlpha
+
+    if (spawnFlash > 0 && w.type !== "powerup") {
+      ctx.save()
+      const flashCol = w.type === "bug" ? "#fdba74" : "#7dd3fc"
+      ctx.shadowColor = flashCol; ctx.shadowBlur = 20 * spawnFlash
+      ctx.globalAlpha = spawnFlash * 0.7
+      ctx.fillStyle = flashCol; ctx.font = "11px monospace"; ctx.textAlign = "center"
+      ctx.fillText(w.text, w.x, w.y)
+      ctx.restore()
+      ctx.globalAlpha = spawnAlpha
+    }
 
     if (w.type === "powerup") {
       const pulse = 0.5 + 0.5 * Math.sin(now / 280)
@@ -1644,33 +1798,106 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     const b = g.boss
     const hpPct = b.hp / b.maxHp
     const distress = hpPct < 0.25
-    const pulse = (distress || b.raged)
-      ? 0.4 + 0.6 * Math.abs(Math.sin(now / 80))
-      : 0.55 + 0.45 * Math.sin(now / 180)
-    const glowColor = b.raged ? `rgba(255,180,180,${0.6 + 0.4 * Math.sin(now / 60)})` : b.color
-    ctx.save()
-    ctx.shadowColor = glowColor; ctx.shadowBlur = (distress || b.raged ? 35 : 20) * pulse
-    ctx.fillStyle = b.color
-    roundRect(ctx, b.x - 50, b.y - 28, 100, 56, 8); ctx.fill()
-    ctx.restore()
-    ctx.fillStyle = "#0d0d14"; ctx.font = "bold 9px monospace"; ctx.textAlign = "center"
-    ctx.fillText(b.name, b.x, b.y - 11)
-    ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(b.x - 42, b.y + 4, 84, 7)
-    ctx.fillStyle = hpPct > 0.5 ? "#4ade80" : hpPct > 0.25 ? "#facc15" : "#f87171"
-    ctx.fillRect(b.x - 42, b.y + 4, 84 * hpPct, 7)
-    // segment markers at 25%, 50%, 75%
-    ctx.fillStyle = "rgba(0,0,0,0.5)"
-    for (const pct of [0.25, 0.5, 0.75]) ctx.fillRect(b.x - 42 + 84 * pct - 0.5, b.y + 4, 1, 7)
-    // enraged: orbiting "!" symbols
-    if (b.raged) {
-      const t = now / 500
-      for (let ri = 0; ri < 4; ri++) {
-        const a = t + (ri / 4) * Math.PI * 2
-        ctx.globalAlpha = 0.55 + 0.45 * Math.sin(now / 90 + ri)
-        ctx.fillStyle = "#f87171"; ctx.font = "bold 9px monospace"; ctx.textAlign = "center"
-        ctx.fillText("!", b.x + Math.cos(a) * 60, b.y + Math.sin(a) * 34)
+    const isVoid = b.name === "THE VOID"
+
+    if (isVoid) {
+      // ── THE VOID: pulsing dark orb ──────────────────────────────────────
+      const vPulse = 0.5 + 0.5 * Math.abs(Math.sin(now / 90))
+      const vRadius = 38 + vPulse * 5
+
+      // ambient darkness halo — a radial darkening around the orb
+      ctx.save()
+      const halo = ctx.createRadialGradient(b.x, b.y, vRadius * 0.4, b.x, b.y, vRadius * 3.2)
+      halo.addColorStop(0, `rgba(12,3,28,${0.55 + vPulse * 0.2})`)
+      halo.addColorStop(1, "rgba(14,14,26,0)")
+      ctx.fillStyle = halo
+      ctx.beginPath(); ctx.arc(b.x, b.y, vRadius * 3.2, 0, Math.PI * 2); ctx.fill()
+      ctx.restore()
+
+      // dark orb with radial gradient
+      ctx.save()
+      ctx.shadowColor = b.raged ? "#dc2626" : "#6d28d9"
+      ctx.shadowBlur = (distress || b.raged ? 44 : 30) * vPulse
+      const orb = ctx.createRadialGradient(b.x - vRadius * 0.32, b.y - vRadius * 0.32, 2, b.x, b.y, vRadius)
+      orb.addColorStop(0, b.raged ? "#4c0519" : "#3b0764")
+      orb.addColorStop(0.65, b.raged ? "#1c0209" : "#1a0535")
+      orb.addColorStop(1, "#080414")
+      ctx.fillStyle = orb
+      ctx.beginPath(); ctx.arc(b.x, b.y, vRadius, 0, Math.PI * 2); ctx.fill()
+      ctx.restore()
+
+      // orbiting void glyphs
+      const VOID_GLYPHS = ["∅", "⊗", "//", "??", "◈", "∞"]
+      const orbitT = now / (b.raged ? 270 : 660)
+      VOID_GLYPHS.forEach((ch, i) => {
+        const ang = orbitT + (i / VOID_GLYPHS.length) * Math.PI * 2
+        const r = 54 + Math.sin(now / 360 + i) * 6
+        ctx.save()
+        ctx.globalAlpha = 0.3 + 0.38 * Math.sin(now / 210 + i * 1.3)
+        ctx.fillStyle = i % 2 === 0 ? "#6d28d9" : "#a855f7"
+        ctx.font = `${8 + Math.sin(now / 290 + i) * 1.5}px monospace`; ctx.textAlign = "center"
+        ctx.shadowColor = "#6d28d9"; ctx.shadowBlur = 6
+        ctx.fillText(ch, b.x + Math.cos(ang) * r, b.y + Math.sin(ang) * r + 3)
+        ctx.restore()
+      })
+
+      // HP ring
+      const ringR = vRadius + 10
+      ctx.save()
+      ctx.lineWidth = 5; ctx.strokeStyle = "rgba(0,0,0,0.65)"
+      ctx.beginPath(); ctx.arc(b.x, b.y, ringR, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2); ctx.stroke()
+      const hpRingCol = hpPct > 0.5 ? "#a855f7" : hpPct > 0.25 ? "#facc15" : "#f87171"
+      ctx.lineWidth = 4; ctx.strokeStyle = hpRingCol
+      ctx.shadowColor = hpRingCol; ctx.shadowBlur = 12
+      ctx.beginPath(); ctx.arc(b.x, b.y, ringR, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * hpPct); ctx.stroke()
+      ctx.restore()
+
+      // name label
+      ctx.fillStyle = distress ? "#f87171" : "#c4b5fd"
+      ctx.font = "bold 9px monospace"; ctx.textAlign = "center"
+      ctx.fillText(b.name, b.x, b.y - vRadius - 13)
+
+      // enraged: rage "!" orbiting faster
+      if (b.raged) {
+        const rt = now / 140
+        for (let ri = 0; ri < 5; ri++) {
+          const a = rt + (ri / 5) * Math.PI * 2
+          ctx.globalAlpha = 0.55 + 0.45 * Math.sin(now / 65 + ri)
+          ctx.fillStyle = "#f87171"; ctx.font = "bold 10px monospace"; ctx.textAlign = "center"
+          ctx.fillText("!", b.x + Math.cos(a) * 64, b.y + Math.sin(a) * 50)
+        }
+        ctx.globalAlpha = 1
       }
-      ctx.globalAlpha = 1
+    } else {
+      // ── standard boss: rounded rect ─────────────────────────────────────
+      const pulse = (distress || b.raged)
+        ? 0.4 + 0.6 * Math.abs(Math.sin(now / 80))
+        : 0.55 + 0.45 * Math.sin(now / 180)
+      const glowColor = b.raged ? `rgba(255,180,180,${0.6 + 0.4 * Math.sin(now / 60)})` : b.color
+      ctx.save()
+      ctx.shadowColor = glowColor; ctx.shadowBlur = (distress || b.raged ? 35 : 20) * pulse
+      ctx.fillStyle = b.color
+      roundRect(ctx, b.x - 50, b.y - 28, 100, 56, 8); ctx.fill()
+      ctx.restore()
+      ctx.fillStyle = "#0d0d14"; ctx.font = "bold 9px monospace"; ctx.textAlign = "center"
+      ctx.fillText(b.name, b.x, b.y - 11)
+      ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(b.x - 42, b.y + 4, 84, 7)
+      ctx.fillStyle = hpPct > 0.5 ? "#4ade80" : hpPct > 0.25 ? "#facc15" : "#f87171"
+      ctx.fillRect(b.x - 42, b.y + 4, 84 * hpPct, 7)
+      // segment markers at 25%, 50%, 75%
+      ctx.fillStyle = "rgba(0,0,0,0.5)"
+      for (const pct of [0.25, 0.5, 0.75]) ctx.fillRect(b.x - 42 + 84 * pct - 0.5, b.y + 4, 1, 7)
+      // enraged: orbiting "!" symbols
+      if (b.raged) {
+        const t = now / 500
+        for (let ri = 0; ri < 4; ri++) {
+          const a = t + (ri / 4) * Math.PI * 2
+          ctx.globalAlpha = 0.55 + 0.45 * Math.sin(now / 90 + ri)
+          ctx.fillStyle = "#f87171"; ctx.font = "bold 9px monospace"; ctx.textAlign = "center"
+          ctx.fillText("!", b.x + Math.cos(a) * 60, b.y + Math.sin(a) * 34)
+        }
+        ctx.globalAlpha = 1
+      }
     }
   }
 
@@ -1729,6 +1956,21 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2); ctx.fill()
     }
   })
+
+  // player motion trail
+  if (!attractMode && g.trail.length > 1) {
+    const trailCol = g.shield ? "74,222,128" : "150,107,236"
+    g.trail.forEach((pt, i) => {
+      const age = g.trail.length - 1 - i
+      const alpha = (1 - age / g.trail.length) * 0.22
+      const r = 4 * (1 - age / g.trail.length)
+      ctx.save()
+      ctx.globalAlpha = alpha
+      ctx.fillStyle = `rgb(${trailCol})`
+      ctx.beginPath(); ctx.arc(pt.x, pt.y - 5, r, 0, Math.PI * 2); ctx.fill()
+      ctx.restore()
+    })
+  }
 
   // player ship
   if (!attractMode) {
@@ -1961,9 +2203,16 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   ctx.textAlign = "left"; ctx.font = "bold 13px monospace"
   ctx.fillStyle = "#966bec"; ctx.fillText(g.score.toLocaleString(), 10, 20)
   ctx.fillStyle = "rgba(255,255,255,0.4)"
-  ctx.fillText(g.endless ? "RECURSION" : `SECTOR ${g.level}`, 10, 36)
+  ctx.fillText(g.endless ? (g.endlessWave > 1 ? `DEPTH ${g.endlessWave}` : "RECURSION") : `SECTOR ${g.level}`, 10, 36)
   ctx.fillStyle = "rgba(255,255,255,0.18)"; ctx.font = "7px monospace"
   ctx.fillText(`${g.kills} kills`, 10, 60)
+  // combo counter when active
+  if (g.combo >= 3) {
+    const comboAlpha = g.combo >= 10 ? 1 : 0.55 + g.combo * 0.045
+    const comboCol = g.combo >= 20 ? "#facc15" : g.combo >= 10 ? "#fb923c" : "#7dd3fc"
+    ctx.fillStyle = `rgba(${comboCol === "#facc15" ? "250,204,21" : comboCol === "#fb923c" ? "251,146,60" : "125,211,252"},${comboAlpha})`
+    ctx.fillText(`×${g.combo} combo`, 10, 80)
+  }
   if (g.pb > 0) {
     ctx.fillStyle = g.score >= g.pb ? "rgba(250,204,21,0.55)" : "rgba(255,255,255,0.13)"
     ctx.fillText(g.score >= g.pb ? `★ ${g.pb.toLocaleString()}` : `PB ${g.pb.toLocaleString()}`, 10, 70)
@@ -2225,10 +2474,16 @@ function matchUpgrade(cmd: string, options: UpgradeDef[]): UpgradeDef {
   return best
 }
 
-function CLIScreen({ options, onPick, score, kills }: {
+const REROLL_BASE_COST = 300
+
+function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: {
   options: UpgradeDef[]; onPick: (id: string) => void; score: number; kills: number
+  onReroll?: () => UpgradeDef[]
 }) {
-  const tokens = Math.floor(score / 6) + kills * 3
+  const totalTokens = Math.floor(score / 6) + kills * 3
+  const [liveOptions, setLiveOptions] = useState(initialOptions)
+  const [tokensSpent, setTokensSpent] = useState(0)
+  const [rollCount, setRollCount] = useState(0)
   const [lines, setLines] = useState<CLILine[]>([])
   const [input, setInput] = useState("")
   const [phase, setPhase] = useState<"boot"|"ready"|"parsing"|"done">("boot")
@@ -2237,6 +2492,10 @@ function CLIScreen({ options, onPick, score, kills }: {
   const phaseRef = useRef<"boot"|"ready"|"parsing"|"done">("boot")
   phaseRef.current = phase
 
+  const tokensAvailable = totalTokens - tokensSpent
+  const rerollCost = REROLL_BASE_COST * (rollCount + 1)
+  const canReroll = !!onReroll && tokensAvailable >= rerollCost
+
   // Auto-scroll
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior:"smooth" }) }, [lines])
 
@@ -2244,7 +2503,8 @@ function CLIScreen({ options, onPick, score, kills }: {
   useEffect(() => {
     const boot: CLILine[] = [
       { text:"SIGNAL://runtime stabilized", type:"sys" },
-      { text:`TOKENS AVAILABLE: ${tokens.toLocaleString()}`, type:"dim" },
+      { text:`TOKENS AVAILABLE: ${totalTokens.toLocaleString()}`, type:"dim" },
+      { text:onReroll ? `type "reroll" to re-roll directives (costs ${REROLL_BASE_COST} tokens)` : "", type:"dim" },
       { text:"", type:"blank" },
       { text:"SIGNAL://compile directive ready", type:"sys" },
       { text:"Describe what you want to build.", type:"dim" },
@@ -2264,13 +2524,13 @@ function CLIScreen({ options, onPick, score, kills }: {
     const t = setTimeout(() => {
       setLines(prev => [...prev,
         { text:"SIGNAL://idle — syntax cache available", type:"sys" },
-        { text:options.map((o, i) => `[${i+1}] ${o.name}`).join("  ·  "), type:"dim" },
-        { text:"or describe freely", type:"dim" },
+        { text:liveOptions.map((o, i) => `[${i+1}] ${o.name}`).join("  ·  "), type:"dim" },
+        { text:canReroll ? `"reroll" to recompile — costs ${rerollCost} tokens (have ${tokensAvailable.toLocaleString()})` : "or describe freely", type:"dim" },
         { text:"", type:"blank" },
       ])
     }, 7000)
     return () => clearTimeout(t)
-  }, [phase, options])
+  }, [phase, liveOptions]) // eslint-disable-line
 
   function compileDirect(upgrade: UpgradeDef, label: string) {
     setLines(prev => [...prev, { text:`> ${label}`, type:"cmd" }])
@@ -2290,7 +2550,7 @@ function CLIScreen({ options, onPick, score, kills }: {
   }
 
   function compileFromText(cmd: string) {
-    const matched = matchUpgrade(cmd, options)
+    const matched = matchUpgrade(cmd, liveOptions)
     setLines(prev => [...prev, { text:`> ${cmd}`, type:"cmd" }])
     setInput("")
     setPhase("parsing")
@@ -2322,23 +2582,61 @@ function CLIScreen({ options, onPick, score, kills }: {
     }, 280)
   }
 
+  function handleReroll() {
+    if (!onReroll) return
+    if (tokensAvailable < rerollCost) {
+      setLines(prev => [...prev,
+        { text:"> reroll", type:"cmd" },
+        { text:"", type:"blank" },
+        { text:`SIGNAL://insufficient tokens — need ${rerollCost.toLocaleString()}`, type:"sys" },
+        { text:`Available: ${tokensAvailable.toLocaleString()} · ${rerollCost - tokensAvailable} short`, type:"dim" },
+        { text:"", type:"blank" },
+      ])
+      setInput(""); return
+    }
+    const newOpts = onReroll()
+    if (!newOpts || newOpts.length === 0) return
+    const newSpent = tokensSpent + rerollCost
+    const newAvailable = totalTokens - newSpent
+    setLiveOptions(newOpts)
+    setTokensSpent(newSpent)
+    setRollCount(r => r + 1)
+    setLines(prev => [...prev,
+      { text:"> reroll", type:"cmd" },
+      { text:"", type:"blank" },
+      { text:`SIGNAL://tokens consumed — ${rerollCost.toLocaleString()}`, type:"sys" },
+      { text:`Remaining: ${newAvailable.toLocaleString()} · next reroll costs ${REROLL_BASE_COST * (rollCount + 2)}`, type:"dim" },
+      { text:"", type:"blank" },
+      { text:"SIGNAL://new directives compiled", type:"sys" },
+      ...newOpts.map((o, i) => ({ text:`  [${i+1}]  ${o.name.padEnd(24)}${o.desc}`, type:"dim" as CLILineType })),
+      { text:"", type:"blank" },
+    ])
+    setInput("")
+    setTimeout(() => inputRef.current?.focus(), 60)
+  }
+
   function handleSubmit() {
     if (!input.trim() || phaseRef.current !== "ready") return
     const cmd = input.trim()
+    // reroll command
+    if (cmd.toLowerCase() === "reroll" || cmd.toLowerCase() === "re-roll") {
+      handleReroll(); return
+    }
     // help command
     if (cmd.toLowerCase() === "help" || cmd === "?") {
       setLines(prev => [...prev,
         { text:`> ${cmd}`, type:"cmd" },
         { text:"", type:"blank" },
         { text:"AVAILABLE COMPILE TARGETS:", type:"sys" },
-        ...options.map((o, i) => ({ text:`  [${i+1}]  ${o.name.padEnd(24)}${o.desc}`, type:"dim" as CLILineType })),
+        ...liveOptions.map((o, i) => ({ text:`  [${i+1}]  ${o.name.padEnd(24)}${o.desc}`, type:"dim" as CLILineType })),
+        canReroll ? { text:`  reroll  — spend ${rerollCost} tokens for new directives`, type:"dim" as CLILineType } : { text:"", type:"blank" as CLILineType },
         { text:"", type:"blank" },
       ])
       setInput(""); return
     }
     // direct number
     if (["1","2","3"].includes(cmd)) {
-      const opt = options[parseInt(cmd) - 1]
+      const opt = liveOptions[parseInt(cmd) - 1]
       if (opt) { compileDirect(opt, cmd); return }
     }
     compileFromText(cmd)
@@ -2349,13 +2647,13 @@ function CLIScreen({ options, onPick, score, kills }: {
     const handler = (e: KeyboardEvent) => {
       if (phaseRef.current !== "ready") return
       if (["1","2","3"].includes(e.key) && document.activeElement !== inputRef.current) {
-        const opt = options[parseInt(e.key) - 1]
+        const opt = liveOptions[parseInt(e.key) - 1]
         if (opt) compileDirect(opt, e.key)
       }
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [options]) // eslint-disable-line
+  }, [liveOptions]) // eslint-disable-line
 
   const col = (t: CLILineType) => t === "sys" ? "#966bec" : t === "ok" ? "#4ade80" : t === "cmd" ? "rgba(255,255,255,0.88)" : "rgba(255,255,255,0.0)"
 
@@ -2364,7 +2662,9 @@ function CLIScreen({ options, onPick, score, kills }: {
       {/* Header bar */}
       <div style={{ borderBottom:"1px solid rgba(150,107,236,0.14)", padding:"0.55rem 1.5rem", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
         <span style={{ color:"rgba(150,107,236,0.7)", fontSize:"0.65rem", letterSpacing:"0.18em" }}>THE SIGNAL · COMPILE TERMINAL</span>
-        <span style={{ color:"rgba(74,222,128,0.5)", fontSize:"0.62rem" }}>TOKENS: {tokens.toLocaleString()}</span>
+        <span style={{ color: tokensAvailable < rerollCost ? "rgba(74,222,128,0.3)" : "rgba(74,222,128,0.5)", fontSize:"0.62rem" }}>
+          TOKENS: {tokensAvailable.toLocaleString()}{canReroll ? ` · reroll costs ${rerollCost}` : ""}
+        </span>
       </div>
       {/* Terminal output */}
       <div style={{ flex:1, overflowY:"auto", padding:"1rem 1.5rem 0.5rem" }}>
@@ -2483,7 +2783,7 @@ function CapyScreen({ text, lineNum, totalLines, level, onAdvance }: {
   )
 }
 
-function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isNewPB, onRestart, unlockedAgents, onShowStack }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; shotsFired: number; isNewPB: boolean; onRestart: () => void; unlockedAgents: string[]; onShowStack: () => void }) {
+function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isNewPB, onRestart, unlockedAgents, onShowStack, endless, endlessDepth }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; shotsFired: number; isNewPB: boolean; onRestart: () => void; unlockedAgents: string[]; onShowStack: () => void; endless?: boolean; endlessDepth?: number }) {
   const accuracy = shotsFired > 0 ? Math.round((kills / shotsFired) * 100) : 0
   const [handle, setHandle]         = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -2532,20 +2832,31 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
     <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(13,13,20,0.97)", zIndex:10 }}>
       <div style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"2rem", maxWidth:"340px", width:"100%", textAlign:"center" }}>
         <div style={{ fontSize:"2.25rem", marginBottom:"0.6rem" }}>🦫</div>
-        <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.5rem" }}>SIGNAL LOST</p>
+        <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.2rem" }}>SIGNAL LOST</p>
+        {endless && endlessDepth && endlessDepth >= 5 && (
+          <p style={{ color:"rgba(109,40,217,0.8)", fontSize:"0.65rem", margin:"0 0 0.3rem", fontFamily:"monospace", letterSpacing:"0.06em" }}>
+            {endlessDepth >= 5 ? "you reached the void" : `depth ${endlessDepth} reached`}
+          </p>
+        )}
         <p style={{ color:"#966bec", fontSize:"1.75rem", fontWeight:700, margin:"0 0 0.3rem", fontFamily:"monospace" }}>{score.toLocaleString()}</p>
         {isNewPB && <p style={{ color:"#facc15", fontSize:"0.72rem", margin:"0 0 0.8rem", fontFamily:"monospace", letterSpacing:"0.08em" }}>★ NEW PERSONAL BEST</p>}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:"0.4rem", marginBottom:"1.25rem" }}>
-          {[["SECTOR", level],["PATTERNS", kills],["CHAIN", `${maxCombo}×`],["ACC", accuracy > 0 ? `${accuracy}%` : "—"]].map(([label, val]) => (
+        <div style={{ display:"grid", gridTemplateColumns: endless ? "1fr 1fr 1fr 1fr 1fr" : "1fr 1fr 1fr 1fr", gap:"0.4rem", marginBottom:"1.25rem" }}>
+          {[
+            endless ? ["DEPTH", endlessDepth ?? "—"] : ["SECTOR", level],
+            ["PATTERNS", kills],
+            ["CHAIN", `${maxCombo}×`],
+            ["ACC", accuracy > 0 ? `${accuracy}%` : "—"],
+            ...(endless ? [["UPGRADES", upgradeCount]] : []),
+          ].map(([label, val]) => (
             <div key={label as string} style={{ background:"rgba(255,255,255,0.04)", borderRadius:"4px", padding:"0.4rem 0.3rem" }}>
               <p style={{ color:"#a09fa2", fontSize:"0.6rem", margin:"0 0 0.15rem", fontFamily:"monospace" }}>{label}</p>
               <p style={{ color:"#d8d7d8", fontSize:"0.9rem", fontWeight:600, margin:0, fontFamily:"monospace" }}>{val}</p>
             </div>
           ))}
         </div>
-        {upgradeCount > 0 && (
+        {!endless && upgradeCount > 0 && (
           <p style={{ color:"rgba(150,107,236,0.6)", fontSize:"0.68rem", margin:"0 0 0.4rem", fontFamily:"monospace" }}>
-            {upgradeCount} upgrade{upgradeCount !== 1 ? "s" : ""} collected
+            {upgradeCount} upgrade{upgradeCount !== 1 ? "s" : ""} compiled
           </p>
         )}
         {rank !== null && (
