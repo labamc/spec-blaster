@@ -82,6 +82,13 @@ const BOSSES = [
   { name: "THE INTEGRATION",  hp: 70,  color: "#facc15", shootInterval: 55 },
   { name: "THE RELEASE",      hp: 100, color: "#4ade80", shootInterval: 40 },
 ]
+const MINI_BOSSES = [
+  { name: "SCOPE SPECTRE",    color: "#c084fc" },
+  { name: "SPRINT GHOST",     color: "#67e8f9" },
+  { name: "TECH DEBT DEMON",  color: "#fb923c" },
+  { name: "BLOCKER BOT",      color: "#f87171" },
+  { name: "THE DEPENDENCY",   color: "#a3e635" },
+]
 
 const CAPY_DIALOG = [
   ["Nice refactor.", "The backlog is...\nlighter.", "Sprint Zero awaits."],
@@ -167,7 +174,7 @@ interface GState {
   bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null; maxCombo: number; lastStorm: number
   paused: boolean; lastMilestone: number; livesAtWave: number; py: number; storyStreak: number
   lastLifeRegen: number; lastAutoFire: number; firstKill: boolean
-  redFlash: number; whiteFlash: number
+  redFlash: number; whiteFlash: number; lastMiniAt: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -193,7 +200,7 @@ function initState(W: number): GState {
     bossWarn: null, mouseX: -1, waveAnn: null, maxCombo: 1, lastStorm: 0,
     paused: false, lastMilestone: 0, livesAtWave: MAX_LIVES, py: PLAYER_Y, storyStreak: 0,
     lastLifeRegen: 0, lastAutoFire: 0, firstKill: false,
-    redFlash: 0, whiteFlash: 0,
+    redFlash: 0, whiteFlash: 0, lastMiniAt: 0,
   }
 }
 
@@ -586,14 +593,27 @@ export default function HomePage() {
         showCapyMsg(g, bossCapy[bd.name] ?? "Boss incoming.", now)
       }
 
+      // endless mini-boss spawn every 100 kills
+      if (g.endless && !g.boss && !g.bossWarn) {
+        const nextMiniAt = (Math.floor(g.lastMiniAt / 100) + 1) * 100
+        if (g.wordsKilled >= nextMiniAt) {
+          g.lastMiniAt = nextMiniAt
+          const mb = MINI_BOSSES[Math.floor(Math.random() * MINI_BOSSES.length)]
+          const hp = 30 + Math.floor(g.score / 800) * 3
+          g.boss = { x: g.W/2, y: 70, hp, maxHp: hp, name: mb.name, color: mb.color, dir: 1, t: 0, phase: 5, raged: false, halfTriggered: false }
+          g.shake = 8; sfx.warning()
+          showCapyMsg(g, `${mb.name}\narrives.`, now)
+        }
+      }
+
       // boss AI
       if (g.boss) {
         const b = g.boss
         const rageMul = b.raged ? 1.55 : 1
-        b.x += b.dir * (1.4 + b.phase * 0.35) * rageMul
+        b.x += b.dir * (1.4 + (Math.min(b.phase, 4)) * 0.35) * rageMul
         if (b.x > g.W - 50 || b.x < 50) b.dir *= -1
         b.t++
-        const si = Math.round((BOSSES[Math.min(g.level - 1, BOSSES.length - 1)]?.shootInterval ?? 60) / rageMul)
+        const si = Math.round((b.phase >= 5 ? 65 : (BOSSES[Math.min(g.level - 1, BOSSES.length - 1)]?.shootInterval ?? 60)) / rageMul)
         if (b.t % si === 0) {
           if (b.phase === 1) {
             g.bullets.push({ x: b.x, y: b.y + 28, vy: 4, enemy: true })
@@ -603,6 +623,13 @@ export default function HomePage() {
           } else if (b.phase === 3) {
             const dx = g.px - b.x, dy = g.py - b.y, dist = Math.sqrt(dx*dx+dy*dy)
             g.bullets.push({ x: b.x, y: b.y + 28, vx: (dx/dist)*5, vy: (dy/dist)*5, enemy: true })
+          } else if (b.phase >= 5) {
+            // endless mini-boss: aimed + occasional spread burst
+            const dx = g.px - b.x, dy = g.py - b.y, dist = Math.sqrt(dx*dx+dy*dy)
+            g.bullets.push({ x: b.x, y: b.y + 28, vx: (dx/dist)*5.5, vy: (dy/dist)*5.5, enemy: true })
+            if (b.t % 200 === 0) {
+              for (const ox of [-28, 28]) g.bullets.push({ x: b.x + ox, y: b.y + 28, vy: 4.5, enemy: true })
+            }
           } else {
             const dx = g.px - b.x, dy = g.py - b.y, dist = Math.sqrt(dx*dx+dy*dy)
             g.bullets.push({ x: b.x, y: b.y + 28, vx: (dx/dist)*5.5, vy: (dy/dist)*5.5, enemy: true })
@@ -747,13 +774,8 @@ export default function HomePage() {
             }
             if (bx.hp <= 0) {
               sfx.bossDead()
-              g.score += 500; g.shake = 14
-              if (g.lives >= g.livesAtWave) {
-                g.score += 300
-                g.particles.push({ x: bx.x, y: bx.y - 35, vx: 0, vy: -0.8, life: 1.8, glyph: "no regressions +300", col: "#4ade80", sz: 10 })
-                showCapyMsg(g, "No regressions.", now)
-              }
-              spawnParticles(g, bx.x, bx.y, bx.color, "★", 30)
+              g.shake = 14
+              spawnParticles(g, bx.x, bx.y, bx.color, "★", g.endless ? 20 : 30)
               bx.name.split("").forEach((ch, i2) => {
                 g.particles.push({
                   x: bx.x + (i2 - bx.name.length/2) * 8, y: bx.y,
@@ -762,24 +784,38 @@ export default function HomePage() {
                   rot: (Math.random()-0.5)*1.5, rotV: (Math.random()-0.5)*0.25,
                 })
               })
-              g.boss = null; g.running = false
-              const lvl = g.level; g.level++
-              // Final boss: extra dramatic death
-              if (lvl === 4) {
-                g.shake = 22
-                for (let ri = 0; ri < 55; ri++) {
-                  const ra = Math.random() * Math.PI * 2, rr = Math.random() * 130
-                  g.particles.push({ x: bx.x + Math.cos(ra)*rr, y: bx.y + Math.sin(ra)*rr, vx: Math.cos(ra)*9, vy: Math.sin(ra)*9, life: 1.6, glyph: "★", col: "#4ade80" })
+              g.boss = null
+              if (g.endless) {
+                // Endless mini-boss: keep playing, drop a powerup
+                g.score += 250
+                g.words.push({ x: bx.x, y: Math.min(bx.y + 55, GH - 80), text: "KNOWLEDGE", type: "powerup", spd: 0.85, beh: "fall", ph: 0, ox: bx.x, hp: 1, hitFlash: 0, elite: false, age: 7 })
+                showCapyMsg(g, "Mini-boss cleared.\nKeep surviving.", now)
+              } else {
+                // Story boss: transition to upgrade / capy screen
+                g.score += 500
+                if (g.lives >= g.livesAtWave) {
+                  g.score += 300
+                  g.particles.push({ x: bx.x, y: bx.y - 35, vx: 0, vy: -0.8, life: 1.8, glyph: "no regressions +300", col: "#4ade80", sz: 10 })
+                  showCapyMsg(g, "No regressions.", now)
                 }
-                g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.6, life: 2.4, glyph: "SHIPPED TO PRODUCTION", col: "#4ade80", sz: 13 })
-                showCapyMsg(g, "Shipped.\nAll four bosses.\nProduction is live.", now)
+                g.running = false
+                const lvl = g.level; g.level++
+                if (lvl === 4) {
+                  g.shake = 22
+                  for (let ri = 0; ri < 55; ri++) {
+                    const ra = Math.random() * Math.PI * 2, rr = Math.random() * 130
+                    g.particles.push({ x: bx.x + Math.cos(ra)*rr, y: bx.y + Math.sin(ra)*rr, vx: Math.cos(ra)*9, vy: Math.sin(ra)*9, life: 1.6, glyph: "★", col: "#4ade80" })
+                  }
+                  g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.6, life: 2.4, glyph: "SHIPPED TO PRODUCTION", col: "#4ade80", sz: 13 })
+                  showCapyMsg(g, "Shipped.\nAll four bosses.\nProduction is live.", now)
+                }
+                setLevel(g.level); setScore(g.score); setLives(g.lives)
+                pendingCapyRef.current = CAPY_DIALOG[lvl - 1] || ["You made it.", "Keep shipping."]
+                const opts = pickUpgrades(g.upgrades)
+                upgradeOptionsRef.current = opts
+                setUpgradeOptions(opts)
+                phaseRef.current = "upgrade"; setPhase("upgrade")
               }
-              setLevel(g.level); setScore(g.score); setLives(g.lives)
-              pendingCapyRef.current = CAPY_DIALOG[lvl - 1] || ["You made it.", "Keep shipping."]
-              const opts = pickUpgrades(g.upgrades)
-      upgradeOptionsRef.current = opts
-      setUpgradeOptions(opts)
-              phaseRef.current = "upgrade"; setPhase("upgrade")
               break
             }
           }
