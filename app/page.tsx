@@ -179,7 +179,7 @@ interface GState {
   paused: boolean; lastMilestone: number; livesAtWave: number; py: number; storyStreak: number
   lastLifeRegen: number; lastAutoFire: number; firstKill: boolean
   redFlash: number; whiteFlash: number; lastMiniAt: number
-  pb: number; pbShown: boolean
+  pb: number; pbShown: boolean; shotsFired: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -206,7 +206,7 @@ function initState(W: number): GState {
     paused: false, lastMilestone: 0, livesAtWave: MAX_LIVES, py: PLAYER_Y, storyStreak: 0,
     lastLifeRegen: 0, lastAutoFire: 0, firstKill: false,
     redFlash: 0, whiteFlash: 0, lastMiniAt: 0,
-    pb: 0, pbShown: false,
+    pb: 0, pbShown: false, shotsFired: 0,
   }
 }
 
@@ -493,6 +493,7 @@ export default function HomePage() {
           }
         }
         g.lastShot = now; sfx.shoot()
+        g.shotsFired += g.upgrades.spray ? 5 : (g.triple || g.upgrades.triple ? 3 : 1)
       }
 
       // auto-fire upgrade (Daily Stand-Up)
@@ -506,7 +507,7 @@ export default function HomePage() {
             const dx = near.x - g.px, dy = near.y - g.py
             const dist = Math.sqrt(dx*dx + dy*dy)
             g.bullets.push({ x: g.px, y: g.py - 20, vx: (dx/dist)*10, vy: (dy/dist)*10 })
-            sfx.shoot()
+            g.shotsFired++; sfx.shoot()
           }
         }
       }
@@ -977,7 +978,7 @@ export default function HomePage() {
 
           {phase === "upgrade" && <UpgradeScreen options={upgradeOptions} onPick={onUpgradePick} />}
 
-          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} isNewPB={score > 0 && score >= personalBest} onRestart={startGame} />}
+          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} onRestart={startGame} />}
 
           <canvas ref={canvasRef} height={GH} style={{ display:"block", width:"100%", height:GH, cursor:"crosshair" }} />
         </div>
@@ -1318,6 +1319,22 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     }
   }); ctx.globalAlpha = 1
 
+  // bottom danger glow when words are near the floor
+  if (!attractMode) {
+    const nearBottom = g.words.filter(w => w.type !== "powerup" && w.y > GH - 85)
+    if (nearBottom.length > 0) {
+      const maxY = Math.max(...nearBottom.map(w => w.y))
+      const danger = Math.min(1, (maxY - (GH - 85)) / 65)
+      const pulse = danger * (0.5 + 0.5 * Math.sin(now / 100))
+      try {
+        const dg = ctx.createLinearGradient(0, GH - 35, 0, GH)
+        dg.addColorStop(0, "rgba(248,113,113,0)")
+        dg.addColorStop(1, `rgba(248,113,113,${pulse * 0.28})`)
+        ctx.fillStyle = dg; ctx.fillRect(0, GH - 35, cw, 35)
+      } catch {}
+    }
+  }
+
   if (attractMode) { if (shook) ctx.restore(); return }
 
   // Pause hint (bottom left, very subtle)
@@ -1505,7 +1522,8 @@ function UpgradeScreen({ options, onPick }: { options: UpgradeDef[]; onPick: (id
   )
 }
 
-function GameOver({ score, level, kills, maxCombo, upgradeCount, isNewPB, onRestart }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; isNewPB: boolean; onRestart: () => void }) {
+function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isNewPB, onRestart }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; shotsFired: number; isNewPB: boolean; onRestart: () => void }) {
+  const accuracy = shotsFired > 0 ? Math.round((kills / shotsFired) * 100) : 0
   const [handle, setHandle]         = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted]   = useState(false)
@@ -1542,8 +1560,8 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, isNewPB, onRest
         <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.5rem" }}>SPEC WINS</p>
         <p style={{ color:"#966bec", fontSize:"1.75rem", fontWeight:700, margin:"0 0 0.3rem", fontFamily:"monospace" }}>{score.toLocaleString()}</p>
         {isNewPB && <p style={{ color:"#facc15", fontSize:"0.72rem", margin:"0 0 0.8rem", fontFamily:"monospace", letterSpacing:"0.08em" }}>★ NEW PERSONAL BEST</p>}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.5rem", marginBottom:"1.25rem" }}>
-          {[["LVL", level],["KILLS", kills],["COMBO", `${maxCombo}×`]].map(([label, val]) => (
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:"0.4rem", marginBottom:"1.25rem" }}>
+          {[["LVL", level],["KILLS", kills],["COMBO", `${maxCombo}×`],["ACC", accuracy > 0 ? `${accuracy}%` : "—"]].map(([label, val]) => (
             <div key={label as string} style={{ background:"rgba(255,255,255,0.04)", borderRadius:"4px", padding:"0.4rem 0.3rem" }}>
               <p style={{ color:"#a09fa2", fontSize:"0.6rem", margin:"0 0 0.15rem", fontFamily:"monospace" }}>{label}</p>
               <p style={{ color:"#d8d7d8", fontSize:"0.9rem", fontWeight:600, margin:0, fontFamily:"monospace" }}>{val}</p>
