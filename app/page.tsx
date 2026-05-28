@@ -151,6 +151,10 @@ const sfx = {
   combo:    (n: number) => tone(800 + n * 80, 0.12, 0.3),
   hit:      () => tone(160, 0.4, 0.35, "sawtooth"),
   elite:    () => { tone(300, 0.15, 0.3, "sawtooth"); setTimeout(() => tone(250, 0.2, 0.3, "sawtooth"), 120) },
+  shield:   () => tone(620, 0.07, 0.18, "triangle"),
+  clutch:   () => { tone(1400, 0.06, 0.3); setTimeout(() => tone(1800, 0.09, 0.35), 80) },
+  miniBoss: () => { tone(440, 0.1, 0.28, "sawtooth"); setTimeout(() => tone(330, 0.15, 0.28, "sawtooth"), 140) },
+  newPB:    () => { tone(660, 0.1, 0.3); setTimeout(() => tone(880, 0.1, 0.3), 110); setTimeout(() => tone(1100, 0.18, 0.38), 220) },
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -175,6 +179,7 @@ interface GState {
   paused: boolean; lastMilestone: number; livesAtWave: number; py: number; storyStreak: number
   lastLifeRegen: number; lastAutoFire: number; firstKill: boolean
   redFlash: number; whiteFlash: number; lastMiniAt: number
+  pb: number; pbShown: boolean
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -201,6 +206,7 @@ function initState(W: number): GState {
     paused: false, lastMilestone: 0, livesAtWave: MAX_LIVES, py: PLAYER_Y, storyStreak: 0,
     lastLifeRegen: 0, lastAutoFire: 0, firstKill: false,
     redFlash: 0, whiteFlash: 0, lastMiniAt: 0,
+    pb: 0, pbShown: false,
   }
 }
 
@@ -241,7 +247,9 @@ export default function HomePage() {
   function startGame() {
     const g = G.current
     const W = g.W
+    const pb = personalBest
     Object.assign(g, initState(W))
+    g.pb = pb; g.pbShown = pb === 0
     g.running = true
     g.waveAnn = { text: `WAVE 1 · ${BOSSES[0].name}`, t: 0 }
     g.livesAtWave = MAX_LIVES
@@ -740,7 +748,7 @@ export default function HomePage() {
             spawnLetterExplosion(g, w, pts, g.combo)
             // clutch kill: word within 50px of bottom
             if (w.y > GH - 50 && w.type !== "powerup") {
-              g.score += 25; g.whiteFlash = 5
+              g.score += 25; g.whiteFlash = 5; sfx.clutch()
               g.particles.push({ x: w.x, y: w.y - 18, vx: 0, vy: -1.3, life: 1.4, glyph: "CLUTCH +25", col: "#facc15", sz: 12 })
               showCapyMsg(g, "Clutch.", now)
             }
@@ -787,6 +795,7 @@ export default function HomePage() {
               g.boss = null
               if (g.endless) {
                 // Endless mini-boss: keep playing, drop a powerup
+                sfx.miniBoss()
                 g.score += 250
                 g.words.push({ x: bx.x, y: Math.min(bx.y + 55, GH - 80), text: "KNOWLEDGE", type: "powerup", spd: 0.85, beh: "fall", ph: 0, ox: bx.x, hp: 1, hitFlash: 0, elite: false, age: 7 })
                 showCapyMsg(g, "Mini-boss cleared.\nKeep surviving.", now)
@@ -829,7 +838,7 @@ export default function HomePage() {
           if (!b.enemy) continue
           if (Math.abs(b.x - g.px) < (g.shield ? 22 : 14) && Math.abs(b.y - g.py) < (g.shield ? 22 : 14)) {
             g.bullets.splice(i, 1)
-            if (g.shield) { g.shield = false; sfx.powerup() }
+            if (g.shield) { g.shield = false; sfx.shield() }
             else loseLife(g, now)
           }
         }
@@ -843,6 +852,16 @@ export default function HomePage() {
           g.particles.push({ x: canvas.width/2, y: GH/2 + 20, vx: 0, vy: -0.7, life: 1.6, glyph: `${m.toLocaleString()} pts`, col: "#facc15", sz: 14 })
           g.shake = 3
         }
+      }
+
+      // live personal best tracking
+      if (!g.pbShown && g.score > g.pb && g.pb > 0) {
+        g.pbShown = true; g.pb = g.score; g.whiteFlash = 7
+        g.particles.push({ x: canvas.width/2, y: GH/2 - 22, vx: 0, vy: -0.7, life: 2.2, glyph: "NEW PB ★", col: "#facc15", sz: 14 })
+        showCapyMsg(g, "New personal best.", now)
+        setPersonalBest(g.score)
+        try { localStorage.setItem("sb_pb", String(g.score)) } catch {}
+        sfx.newPB()
       }
 
       // endless life regen every 5000 pts
@@ -1186,6 +1205,17 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     // segment markers at 25%, 50%, 75%
     ctx.fillStyle = "rgba(0,0,0,0.5)"
     for (const pct of [0.25, 0.5, 0.75]) ctx.fillRect(b.x - 42 + 84 * pct - 0.5, b.y + 4, 1, 7)
+    // enraged: orbiting "!" symbols
+    if (b.raged) {
+      const t = now / 500
+      for (let ri = 0; ri < 4; ri++) {
+        const a = t + (ri / 4) * Math.PI * 2
+        ctx.globalAlpha = 0.55 + 0.45 * Math.sin(now / 90 + ri)
+        ctx.fillStyle = "#f87171"; ctx.font = "bold 9px monospace"; ctx.textAlign = "center"
+        ctx.fillText("!", b.x + Math.cos(a) * 60, b.y + Math.sin(a) * 34)
+      }
+      ctx.globalAlpha = 1
+    }
   }
 
   // boss warning animation
@@ -1350,6 +1380,10 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   ctx.fillText(g.endless ? "ENDLESS" : `LVL ${g.level}`, 10, 36)
   ctx.fillStyle = "rgba(255,255,255,0.18)"; ctx.font = "7px monospace"
   ctx.fillText(`${g.kills} kills`, 10, 60)
+  if (g.pb > 0) {
+    ctx.fillStyle = g.score >= g.pb ? "rgba(250,204,21,0.55)" : "rgba(255,255,255,0.13)"
+    ctx.fillText(g.score >= g.pb ? `★ ${g.pb.toLocaleString()}` : `PB ${g.pb.toLocaleString()}`, 10, 70)
+  }
   // wave progress bar
   if (!g.boss && !g.endless && !g.bossWarn) {
     const wPct = Math.min(1, g.wordsKilled / WORDS_TO_BOSS)
