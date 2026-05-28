@@ -2394,6 +2394,24 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   if (!attractMode) {
     const flash = g.invuln && Math.floor(now/90) % 2 === 0
     if (!flash) {
+      // Combo halo — rings expand around player when combo >= 5
+      if (g.combo >= 5) {
+        const haloCombo = Math.min(g.combo, 30)
+        const haloCol = g.combo >= 20 ? "#facc15" : g.combo >= 10 ? "#fb923c" : "#7dd3fc"
+        const haloA = Math.min(0.38, haloCombo * 0.012) * (0.55 + 0.45 * Math.sin(now / 160))
+        ctx.save()
+        ctx.globalAlpha = haloA
+        ctx.strokeStyle = haloCol; ctx.lineWidth = 1.2
+        ctx.shadowColor = haloCol; ctx.shadowBlur = 10
+        const r1 = 28 + 6 * Math.sin(now / 220)
+        ctx.beginPath(); ctx.arc(g.px, g.py - 5, r1, 0, Math.PI * 2); ctx.stroke()
+        if (g.combo >= 10) {
+          ctx.globalAlpha = haloA * 0.55
+          const r2 = r1 + 10 + 4 * Math.sin(now / 180 + 1)
+          ctx.beginPath(); ctx.arc(g.px, g.py - 5, r2, 0, Math.PI * 2); ctx.stroke()
+        }
+        ctx.restore()
+      }
       const glowCol = g.shield ? "#4ade80" : "#966bec"
       ctx.save()
       ctx.shadowColor = glowCol
@@ -2712,10 +2730,21 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     })
   }
 
-  // CRT scanline overlay
+  // CRT scanline overlay (static)
   ctx.globalAlpha = 0.025; ctx.fillStyle = "#000000"
   for (let sy = 0; sy < GH; sy += 3) ctx.fillRect(0, sy, cw, 1)
   ctx.globalAlpha = 1
+
+  // CRT sweep — a faint luminance band that scans top→bottom every 4.5s
+  try {
+    const sweepPeriod = 4500
+    const sweepY = ((now % sweepPeriod) / sweepPeriod) * (GH + 60) - 30
+    const sweepGrad = ctx.createLinearGradient(0, sweepY, 0, sweepY + 60)
+    sweepGrad.addColorStop(0, "rgba(255,255,255,0)")
+    sweepGrad.addColorStop(0.5, "rgba(255,255,255,0.018)")
+    sweepGrad.addColorStop(1, "rgba(255,255,255,0)")
+    ctx.fillStyle = sweepGrad; ctx.fillRect(0, Math.max(0, sweepY), cw, 60)
+  } catch {}
 
   if (shook) ctx.restore()
 }
@@ -3340,6 +3369,14 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
         {!endless && upgradeCount > 0 && (
           <p style={{ color:"rgba(150,107,236,0.6)", fontSize:"0.68rem", margin:"0 0 0.4rem", fontFamily:"monospace" }}>
             {upgradeCount} upgrade{upgradeCount !== 1 ? "s" : ""} compiled
+          </p>
+        )}
+        {accuracy > 0 && shotsFired >= 5 && (
+          <p style={{
+            color: accuracy >= 85 ? "rgba(74,222,128,0.7)" : accuracy >= 70 ? "rgba(125,211,252,0.6)" : "rgba(160,159,162,0.5)",
+            fontSize:"0.62rem", margin:"0 0 0.55rem", fontFamily:"monospace", letterSpacing:"0.08em",
+          }}>
+            {accuracy >= 85 ? "◈ PRECISION CARRIER" : accuracy >= 70 ? "◈ CLEAN SIGNAL" : accuracy >= 50 ? "◈ SIGNAL STABLE" : "◈ SIGNAL DEGRADED"}
           </p>
         )}
         {rank !== null && (
