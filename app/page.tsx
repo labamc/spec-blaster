@@ -532,10 +532,12 @@ export default function HomePage() {
     window.addEventListener("resize", resize)
 
     function onKey(e: KeyboardEvent) {
+      // Only intercept game controls when actually playing — never steal keys from the CLI
+      if (phaseRef.current !== "playing") return
       if ([" ","ArrowLeft","ArrowRight","ArrowUp","ArrowDown","m","M"].includes(e.key)) e.preventDefault()
       if (e.type === "keydown") {
         G.current.keys.add(e.key)
-        if ((e.key === "p" || e.key === "P" || e.key === "Escape") && phaseRef.current === "playing" && G.current.running) {
+        if ((e.key === "p" || e.key === "P" || e.key === "Escape") && G.current.running) {
           G.current.paused = !G.current.paused
         }
         if ((e.key === "m" || e.key === "M") && G.current.upgrades.mine) {
@@ -3274,6 +3276,7 @@ interface CrewState {
   names: Record<string,string>
 }
 
+// ── CLI Screen — card-based upgrade picker with crew panel ─────────────────
 function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll, crew, onAgentHire, onAgentUpgrade, onAgentRename }: {
   options: UpgradeDef[]; onPick: (id: string) => void; score: number; kills: number
   onReroll?: () => UpgradeDef[]
@@ -3286,459 +3289,298 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll, cr
   const [liveOptions, setLiveOptions] = useState(initialOptions)
   const [tokensSpent, setTokensSpent] = useState(0)
   const [rollCount, setRollCount] = useState(0)
-  const [lines, setLines] = useState<CLILine[]>([])
+  // Selected card index for keyboard navigation
+  const [selectedIdx, setSelectedIdx] = useState(0)
+  // Terminal log lines (crew command feedback only)
+  const [log, setLog] = useState<{text:string; col?:string}[]>([])
+  // Text input for power-user crew commands
   const [input, setInput] = useState("")
-  const [phase, setPhase] = useState<"boot"|"ready"|"parsing"|"compiled"|"done">("boot")
   const inputRef = useRef<HTMLInputElement>(null)
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const phaseRef = useRef<"boot"|"ready"|"parsing"|"compiled"|"done">("boot")
-  phaseRef.current = phase
-  const pendingPickRef = useRef<string | null>(null)
+  const logEndRef = useRef<HTMLDivElement>(null)
 
   const tokensAvailable = totalTokens - tokensSpent
   const rerollCost = REROLL_BASE_COST * (rollCount + 1)
   const canReroll = !!onReroll && tokensAvailable >= rerollCost
 
-  // Auto-scroll
-  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior:"smooth" }) }, [lines])
+  // Auto-scroll log
+  useEffect(() => { logEndRef.current?.scrollIntoView({ behavior:"smooth" }) }, [log])
 
-  // Build crew manifest lines for boot sequence
-  function buildCrewLines(): CLILine[] {
-    if (!crew) return []
-    const lines: CLILine[] = [
-      { text: "THE SIGNAL · CREW MANIFEST", type: "sys" },
-    ]
-    const deployed = [...AGENT_DEFS, ...MERC_AGENTS].filter(a => crew.selected.includes(a.id) && crew.unlocked.includes(a.id))
-    const available = AGENT_DEFS.filter(a => crew.unlocked.includes(a.id) && !crew.selected.includes(a.id))
-    const hirable = MERC_AGENTS.filter(a => !crew.unlocked.includes(a.id))
-    if (deployed.length > 0) {
-      lines.push({ text: "  DEPLOYED:", type: "dim" })
-      deployed.forEach(a => {
-        const upLv = crew.upgrades[a.id] ?? 0
-        const displayName = crew.names[a.id] ?? a.name
-        const lvTag = upLv > 0 ? ` lv.${upLv + 1}` : ""
-        lines.push({ text: `  ● ${displayName.padEnd(16)} ${a.role.padEnd(12)}${lvTag}`, type: "ok" })
-      })
-    }
-    if (available.length > 0) {
-      lines.push({ text: "  STANDBY:", type: "dim" })
-      available.forEach(a => {
-        lines.push({ text: `  ○ ${(crew.names[a.id] ?? a.name).padEnd(16)} ${a.role}`, type: "dim" })
-      })
-    }
-    if (hirable.length > 0) {
-      lines.push({ text: "  FOR HIRE:", type: "dim" })
-      hirable.forEach(a => {
-        lines.push({ text: `  ◇ ${a.name.padEnd(16)} ${a.role.padEnd(12)} ${a.cost} tokens`, type: "dim" })
-      })
-    }
-    lines.push({ text: `  type "crew" to view full manifest · "hire <name>" · "upgrade <name>" · "rename <name> <alias>"`, type: "dim" })
-    lines.push({ text: "", type: "blank" })
-    return lines
-  }
-
-  // Boot sequence — shows options immediately so player can act fast
-  useEffect(() => {
-    const optLines: CLILine[] = initialOptions.map((o, i) => ({
-      text: `  [${i+1}]  ${o.name.padEnd(22)}${o.desc}`,
-      type: "dim" as CLILineType,
-    }))
-    const crewLines = buildCrewLines()
-    const boot: CLILine[] = [
-      { text:"SIGNAL://runtime stabilized", type:"sys" },
-      { text:`TOKENS AVAILABLE: ${totalTokens.toLocaleString()}`, type:"dim" },
-      { text:"", type:"blank" },
-      ...crewLines,
-      { text:"COMPILE TARGETS:", type:"sys" },
-      ...optLines,
-      { text:"", type:"blank" },
-      { text:onReroll ? `type number, name, or "reroll" (costs ${REROLL_BASE_COST} tokens)` : "type a number or describe what you want to build", type:"dim" },
-      { text:"", type:"blank" },
-    ]
-    let i = 0
-    const tick = () => {
-      if (i < boot.length) { setLines(prev => [...prev, boot[i++]]); setTimeout(tick, 38) }
-      else { setPhase("ready"); setTimeout(() => inputRef.current?.focus(), 40) }
-    }
-    setTimeout(tick, 80)
-  }, []) // eslint-disable-line
-
-  function compileDirect(upgrade: UpgradeDef, label: string) {
-    setLines(prev => [...prev, { text:`> ${label}`, type:"cmd" }])
-    setInput("")
-    setPhase("parsing")
-    setTimeout(() => {
-      pendingPickRef.current = upgrade.id
-      setLines(prev => [...prev,
-        { text:"", type:"blank" },
-        { text:`SIGNAL://compiling — ${upgrade.name}`, type:"sys" },
-        { text:`> ${upgrade.desc}`, type:"ok" },
-        { text:`SIGNAL://compiled`, type:"sys" },
-        { text:"", type:"blank" },
-        { text:"ENTER to deploy →", type:"sys" },
-      ])
-      setPhase("compiled")
-    }, 200)
-  }
-
-  function compileFromText(cmd: string) {
-    const matched = matchUpgrade(cmd, liveOptions)
-    setLines(prev => [...prev, { text:`> ${cmd}`, type:"cmd" }])
-    setInput("")
-    setPhase("parsing")
-
-    setTimeout(() => {
-      setLines(prev => [...prev,
-        { text:"", type:"blank" },
-        { text:"SIGNAL://analyzing directive...", type:"sys" },
-      ])
-      const resp = CLI_RESPONSES[matched.id]?.(cmd) ?? [
-        { text: `DIRECTIVE: "${cmd}"`, type:"dim" as CLILineType }, { text:"", type:"blank" as CLILineType },
-        { text:`> Parsing non-standard input...`, type:"ok" as CLILineType },
-        { text:`> Best match: ${matched.name}`, type:"ok" as CLILineType },
-        { text:"", type:"blank" as CLILineType },
-        { text:`${matched.name}: initialized`, type:"dim" as CLILineType },
-      ]
-      resp.forEach((line, i) => {
-        setTimeout(() => setLines(prev => [...prev, line]), 280 + i * 55)
-      })
-      const totalMs = 280 + resp.length * 55 + 200
-      setTimeout(() => {
-        pendingPickRef.current = matched.id
-        setLines(prev => [...prev,
-          { text:"", type:"blank" },
-          { text:`SIGNAL://compiled — ${matched.name}`, type:"sys" },
-          { text:"", type:"blank" },
-          { text:"ENTER to deploy →", type:"sys" },
-        ])
-        setPhase("compiled")
-      }, totalMs)
-    }, 160)
-  }
-
-  function deployPending() {
-    const id = pendingPickRef.current
-    if (!id) return
-    pendingPickRef.current = null
-    setPhase("done")
-    onPick(id)
-  }
-
-  function handleReroll() {
-    if (!onReroll) return
-    if (tokensAvailable < rerollCost) {
-      setLines(prev => [...prev,
-        { text:"> reroll", type:"cmd" },
-        { text:"", type:"blank" },
-        { text:`SIGNAL://insufficient tokens — need ${rerollCost.toLocaleString()}`, type:"sys" },
-        { text:`Available: ${tokensAvailable.toLocaleString()} · ${rerollCost - tokensAvailable} short`, type:"dim" },
-        { text:"", type:"blank" },
-      ])
-      setInput(""); return
-    }
-    const newOpts = onReroll()
-    if (!newOpts || newOpts.length === 0) return
-    const newSpent = tokensSpent + rerollCost
-    const newAvailable = totalTokens - newSpent
-    setLiveOptions(newOpts)
-    setTokensSpent(newSpent)
-    setRollCount(r => r + 1)
-    setLines(prev => [...prev,
-      { text:"> reroll", type:"cmd" },
-      { text:"", type:"blank" },
-      { text:`SIGNAL://tokens consumed — ${rerollCost.toLocaleString()}`, type:"sys" },
-      { text:`Remaining: ${newAvailable.toLocaleString()} · next reroll costs ${REROLL_BASE_COST * (rollCount + 2)}`, type:"dim" },
-      { text:"", type:"blank" },
-      { text:"SIGNAL://new directives compiled", type:"sys" },
-      ...newOpts.map((o, i) => ({ text:`  [${i+1}]  ${o.name.padEnd(24)}${o.desc}`, type:"dim" as CLILineType })),
-      { text:"", type:"blank" },
-    ])
-    setInput("")
-    setTimeout(() => inputRef.current?.focus(), 60)
-  }
-
-  function handleSubmit() {
-    if (!input.trim() || phaseRef.current !== "ready") return
-    const cmd = input.trim()
-    // reroll command
-    if (cmd.toLowerCase() === "reroll" || cmd.toLowerCase() === "re-roll") {
-      handleReroll(); return
-    }
-    // help command
-    if (cmd.toLowerCase() === "help" || cmd === "?") {
-      setLines(prev => [...prev,
-        { text:`> ${cmd}`, type:"cmd" },
-        { text:"", type:"blank" },
-        { text:"AVAILABLE COMPILE TARGETS:", type:"sys" },
-        ...liveOptions.map((o, i) => ({ text:`  [${i+1}]  ${o.name.padEnd(24)}${o.desc}`, type:"dim" as CLILineType })),
-        canReroll ? { text:`  reroll  — spend ${rerollCost} tokens for new directives`, type:"dim" as CLILineType } : { text:"", type:"blank" as CLILineType },
-        { text:"", type:"blank" },
-        { text:"CREW COMMANDS:", type:"sys" as CLILineType },
-        { text:"  crew                    — view full crew manifest", type:"dim" as CLILineType },
-        { text:"  hire <name>             — recruit a merc agent", type:"dim" as CLILineType },
-        { text:"  upgrade <name>          — enhance an agent (400/800 tokens)", type:"dim" as CLILineType },
-        { text:"  rename <name> <alias>   — give an agent a callsign", type:"dim" as CLILineType },
-        { text:"", type:"blank" as CLILineType },
-      ])
-      setInput(""); return
-    }
-    // crew manifest command
-    if (cmd.toLowerCase() === "crew" || cmd.toLowerCase() === "manifest") {
-      setLines(prev => [...prev, { text:`> ${cmd}`, type:"cmd" }, { text:"", type:"blank" }])
-      if (!crew) {
-        setLines(prev => [...prev, { text:"SIGNAL://no crew data", type:"sys" }, { text:"", type:"blank" }])
-        setInput(""); return
-      }
-      const out: CLILine[] = [{ text:"THE SIGNAL · CREW MANIFEST", type:"sys" }]
-      const allAgents = [...AGENT_DEFS, ...MERC_AGENTS]
-      const deployed = allAgents.filter(a => crew.selected.includes(a.id) && crew.unlocked.includes(a.id))
-      const available = AGENT_DEFS.filter(a => crew.unlocked.includes(a.id) && !crew.selected.includes(a.id))
-      const hirable = MERC_AGENTS.filter(a => !crew.unlocked.includes(a.id))
-      out.push({ text:"──────────────────────────────────────", type:"dim" })
-      if (deployed.length > 0) {
-        out.push({ text:"  [DEPLOYED]", type:"ok" })
-        deployed.forEach(a => {
-          const upLv = crew.upgrades[a.id] ?? 0
-          const displayName = crew.names[a.id] ?? a.name
-          const lvStr = `lv.${upLv+1}/${MAX_AGENT_UPGRADES+1}`
-          const nextCost = upLv < MAX_AGENT_UPGRADES ? `  next upgrade: ${AGENT_UPGRADE_COSTS[upLv]} tokens` : "  [MAX LEVEL]"
-          out.push({ text:`  ● ${displayName.padEnd(18)} ${lvStr.padEnd(8)} ${a.role}`, type:"ok" })
-          out.push({ text:`    ${a.desc}${nextCost}`, type:"dim" })
-        })
-      }
-      if (available.length > 0) {
-        out.push({ text:"", type:"blank" })
-        out.push({ text:"  [STANDBY — not active this game]", type:"dim" })
-        available.forEach(a => {
-          out.push({ text:`  ○ ${(crew.names[a.id] ?? a.name).padEnd(18)} ${a.role}`, type:"dim" })
-        })
-      }
-      if (hirable.length > 0) {
-        out.push({ text:"", type:"blank" })
-        out.push({ text:"  [MERCS FOR HIRE]", type:"sys" })
-        hirable.forEach(a => {
-          out.push({ text:`  ◇ ${a.name.padEnd(18)} ${a.cost} tokens  — ${a.desc}`, type:"dim" })
-          out.push({ text:`    type: hire ${a.id.replace("claude_","")}`, type:"dim" })
-        })
-      }
-      out.push({ text:"──────────────────────────────────────", type:"dim" })
-      out.push({ text:"", type:"blank" })
-      setLines(prev => [...prev, ...out])
-      setInput(""); return
-    }
-    // hire command — recruit merc agent
-    const hireMatch = cmd.match(/^hire\s+(.+)$/i)
-    if (hireMatch) {
-      const target = hireMatch[1].trim().toLowerCase()
-      const merc = MERC_AGENTS.find(a =>
-        a.name.toLowerCase().includes(target) ||
-        a.id.toLowerCase().includes(target) ||
-        a.id.replace("claude_","").includes(target) ||
-        a.role.toLowerCase().includes(target)
-      )
-      setLines(prev => [...prev, { text:`> ${cmd}`, type:"cmd" }, { text:"", type:"blank" }])
-      if (!merc) {
-        setLines(prev => [...prev,
-          { text:"SIGNAL://target not found", type:"sys" },
-          { text:`Available mercs: ${MERC_AGENTS.map(a => a.name).join(" · ")}`, type:"dim" },
-          { text:"", type:"blank" },
-        ])
-        setInput(""); return
-      }
-      if (crew?.unlocked.includes(merc.id)) {
-        setLines(prev => [...prev,
-          { text:`SIGNAL://already on crew — ${merc.name}`, type:"sys" },
-          { text:"", type:"blank" },
-        ])
-        setInput(""); return
-      }
-      if (tokensAvailable < merc.cost) {
-        setLines(prev => [...prev,
-          { text:`SIGNAL://insufficient tokens — need ${merc.cost.toLocaleString()}`, type:"sys" },
-          { text:`Available: ${tokensAvailable.toLocaleString()} · short by ${(merc.cost - tokensAvailable).toLocaleString()}`, type:"dim" },
-          { text:"", type:"blank" },
-        ])
-        setInput(""); return
-      }
-      setTokensSpent(t => t + merc.cost)
-      onAgentHire?.(merc.id)
-      setLines(prev => [...prev,
-        { text:"SIGNAL://contract executed", type:"sys" },
-        { text:`${merc.name} · ${merc.role} joined the crew`, type:"ok" },
-        { text:`> ${merc.desc}`, type:"ok" },
-        { text:`TOKENS CONSUMED: ${merc.cost.toLocaleString()} · remaining: ${(tokensAvailable - merc.cost).toLocaleString()}`, type:"dim" },
-        { text:"SIGNAL://agent active next sector", type:"sys" },
-        { text:"", type:"blank" },
-      ])
-      setInput(""); return
-    }
-    // upgrade command — level up an agent
-    const upgradeMatch = cmd.match(/^upgrade\s+(.+)$/i)
-    if (upgradeMatch) {
-      const target = upgradeMatch[1].trim().toLowerCase()
-      const allAgents = [...AGENT_DEFS, ...MERC_AGENTS]
-      const agent = allAgents.find(a =>
-        crew?.unlocked.includes(a.id) && (
-          a.name.toLowerCase().includes(target) ||
-          a.id.replace("claude_","").includes(target) ||
-          a.role.toLowerCase().includes(target) ||
-          (crew?.names[a.id] ?? "").toLowerCase().includes(target)
-        )
-      )
-      setLines(prev => [...prev, { text:`> ${cmd}`, type:"cmd" }, { text:"", type:"blank" }])
-      if (!agent) {
-        const activeIds = [...AGENT_DEFS,...MERC_AGENTS].filter(a => crew?.unlocked.includes(a.id))
-        setLines(prev => [...prev,
-          { text:"SIGNAL://agent not found in crew", type:"sys" },
-          { text:`Crew: ${activeIds.map(a => crew?.names[a.id] ?? a.name).join(" · ") || "none"}`, type:"dim" },
-          { text:"", type:"blank" },
-        ])
-        setInput(""); return
-      }
-      const currentLv = crew?.upgrades[agent.id] ?? 0
-      if (currentLv >= MAX_AGENT_UPGRADES) {
-        setLines(prev => [...prev,
-          { text:`SIGNAL://agent at max level`, type:"sys" },
-          { text:`${crew?.names[agent.id] ?? agent.name} is level ${currentLv+1}/${MAX_AGENT_UPGRADES+1} — no further upgrades`, type:"dim" },
-          { text:"", type:"blank" },
-        ])
-        setInput(""); return
-      }
-      const cost = AGENT_UPGRADE_COSTS[currentLv]
-      if (tokensAvailable < cost) {
-        setLines(prev => [...prev,
-          { text:`SIGNAL://insufficient tokens — need ${cost.toLocaleString()}`, type:"sys" },
-          { text:`Available: ${tokensAvailable.toLocaleString()} · short by ${(cost - tokensAvailable).toLocaleString()}`, type:"dim" },
-          { text:"", type:"blank" },
-        ])
-        setInput(""); return
-      }
-      setTokensSpent(t => t + cost)
-      onAgentUpgrade?.(agent.id)
-      const newLv = currentLv + 2
-      setLines(prev => [...prev,
-        { text:"SIGNAL://upgrade compiled", type:"sys" },
-        { text:`${crew?.names[agent.id] ?? agent.name} → level ${newLv}/${MAX_AGENT_UPGRADES+1}`, type:"ok" },
-        { text:`> ${agent.desc} (enhanced)`, type:"ok" },
-        { text:`TOKENS CONSUMED: ${cost.toLocaleString()} · remaining: ${(tokensAvailable - cost).toLocaleString()}`, type:"dim" },
-        { text:"SIGNAL://upgrade active next sector", type:"sys" },
-        { text:"", type:"blank" },
-      ])
-      setInput(""); return
-    }
-    // rename command — give an agent a callsign
-    const renameMatch = cmd.match(/^rename\s+(\S+)\s+(.+)$/i)
-    if (renameMatch) {
-      const target = renameMatch[1].trim().toLowerCase()
-      const newName = renameMatch[2].trim().toUpperCase().slice(0, 24)
-      const allAgents = [...AGENT_DEFS, ...MERC_AGENTS]
-      const agent = allAgents.find(a =>
-        crew?.unlocked.includes(a.id) && (
-          a.name.toLowerCase().includes(target) ||
-          a.id.replace("claude_","").includes(target) ||
-          (crew?.names[a.id] ?? "").toLowerCase().includes(target)
-        )
-      )
-      setLines(prev => [...prev, { text:`> ${cmd}`, type:"cmd" }, { text:"", type:"blank" }])
-      if (!agent) {
-        setLines(prev => [...prev,
-          { text:"SIGNAL://agent not found — must be in your crew", type:"sys" },
-          { text:"", type:"blank" },
-        ])
-        setInput(""); return
-      }
-      onAgentRename?.(agent.id, newName)
-      setLines(prev => [...prev,
-        { text:"SIGNAL://callsign updated", type:"sys" },
-        { text:`${agent.name} → ${newName}`, type:"ok" },
-        { text:"Identity persists across sectors.", type:"dim" },
-        { text:"", type:"blank" },
-      ])
-      setInput(""); return
-    }
-    // direct number
-    if (["1","2","3"].includes(cmd)) {
-      const opt = liveOptions[parseInt(cmd) - 1]
-      if (opt) { compileDirect(opt, cmd); return }
-    }
-    compileFromText(cmd)
-  }
-
-  // 1/2/3 shortcuts (when ready) and ENTER/SPACE to deploy (when compiled)
+  // ── Keyboard nav: arrows cycle cards, 1/2/3 select, Enter deploys ──────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (phaseRef.current === "compiled" && (e.key === "Enter" || e.key === " ")) {
-        e.preventDefault(); deployPending(); return
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault()
+        setSelectedIdx(i => {
+          const next = e.key === "ArrowUp" ? i - 1 : i + 1
+          return (next + liveOptions.length) % liveOptions.length
+        })
+        return
       }
-      if (phaseRef.current !== "ready") return
       if (["1","2","3"].includes(e.key) && document.activeElement !== inputRef.current) {
-        const opt = liveOptions[parseInt(e.key) - 1]
-        if (opt) compileDirect(opt, e.key)
+        e.preventDefault()
+        const idx = parseInt(e.key) - 1
+        if (idx < liveOptions.length) { setSelectedIdx(idx) }
+        return
+      }
+      if (e.key === "Enter" && document.activeElement !== inputRef.current) {
+        e.preventDefault()
+        onPick(liveOptions[selectedIdx]?.id)
+        return
       }
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [liveOptions]) // eslint-disable-line
+  }, [liveOptions, selectedIdx]) // eslint-disable-line
 
-  const col = (t: CLILineType) => t === "sys" ? "#966bec" : t === "ok" ? "#4ade80" : t === "cmd" ? "rgba(255,255,255,0.88)" : "rgba(255,255,255,0.0)"
+  // ── Crew command handler (power-user text input) ──────────────────────
+  function addLog(text: string, col?: string) {
+    setLog(prev => [...prev, { text, col }])
+  }
+
+  function handleCrewCommand(raw: string) {
+    const cmd = raw.trim()
+    if (!cmd) return
+    setInput("")
+
+    if (cmd.toLowerCase() === "reroll" || cmd.toLowerCase() === "re-roll") {
+      if (!onReroll) { addLog("reroll not available", "#f87171"); return }
+      if (tokensAvailable < rerollCost) {
+        addLog(`need ${rerollCost}t — have ${tokensAvailable}t`, "#f87171"); return
+      }
+      const newOpts = onReroll()
+      if (!newOpts?.length) return
+      setTokensSpent(t => t + rerollCost)
+      setRollCount(r => r + 1)
+      setLiveOptions(newOpts)
+      setSelectedIdx(0)
+      addLog(`rerolled — ${rerollCost}t spent`, "rgba(150,107,236,0.9)")
+      return
+    }
+
+    if (cmd.toLowerCase() === "crew" || cmd.toLowerCase() === "manifest") {
+      if (!crew) { addLog("no crew data", "#f87171"); return }
+      const deployed = [...AGENT_DEFS,...MERC_AGENTS].filter(a => crew.selected.includes(a.id) && crew.unlocked.includes(a.id))
+      const hirable = MERC_AGENTS.filter(a => !crew.unlocked.includes(a.id))
+      addLog("── THE SIGNAL · CREW ────────────────", "rgba(150,107,236,0.7)")
+      deployed.forEach(a => {
+        const lv = 1 + (crew.upgrades[a.id] ?? 0)
+        addLog(`  ● ${(crew.names[a.id] ?? a.name).padEnd(18)} lv.${lv}  ${a.desc}`, "#4ade80")
+      })
+      hirable.forEach(a => addLog(`  ◇ ${a.name.padEnd(18)} ${a.cost}t  hire: hire ${a.id.replace("claude_","")}`, "rgba(255,255,255,0.38)"))
+      addLog("─────────────────────────────────────", "rgba(150,107,236,0.3)")
+      return
+    }
+
+    const hireM = cmd.match(/^hire\s+(.+)$/i)
+    if (hireM) {
+      const t = hireM[1].trim().toLowerCase()
+      const merc = MERC_AGENTS.find(a => a.name.toLowerCase().includes(t) || a.id.replace("claude_","").includes(t) || a.role.toLowerCase().includes(t))
+      if (!merc) { addLog(`unknown agent: "${t}" — try: hire ops / hire data / hire exec`, "#f87171"); return }
+      if (crew?.unlocked.includes(merc.id)) { addLog(`${merc.name} already on crew`, "#fdba74"); return }
+      if (tokensAvailable < merc.cost) { addLog(`need ${merc.cost}t — have ${tokensAvailable}t`, "#f87171"); return }
+      setTokensSpent(s => s + merc.cost)
+      onAgentHire?.(merc.id)
+      addLog(`${merc.name} hired — ${merc.desc}`, "#4ade80")
+      addLog(`${merc.cost}t spent · ${tokensAvailable - merc.cost}t remaining`, "rgba(255,255,255,0.38)")
+      return
+    }
+
+    const upM = cmd.match(/^upgrade\s+(.+)$/i)
+    if (upM) {
+      const t = upM[1].trim().toLowerCase()
+      const all = [...AGENT_DEFS,...MERC_AGENTS]
+      const agent = all.find(a => crew?.unlocked.includes(a.id) && (
+        a.name.toLowerCase().includes(t) || a.id.replace("claude_","").includes(t) ||
+        a.role.toLowerCase().includes(t) || (crew?.names[a.id]??"").toLowerCase().includes(t)
+      ))
+      if (!agent) { addLog(`agent not found — type "crew" to see your roster`, "#f87171"); return }
+      const lv = crew?.upgrades[agent.id] ?? 0
+      if (lv >= MAX_AGENT_UPGRADES) { addLog(`${crew?.names[agent.id] ?? agent.name} is at max level`, "#fdba74"); return }
+      const cost = AGENT_UPGRADE_COSTS[lv]
+      if (tokensAvailable < cost) { addLog(`need ${cost}t — have ${tokensAvailable}t`, "#f87171"); return }
+      setTokensSpent(s => s + cost)
+      onAgentUpgrade?.(agent.id)
+      addLog(`${crew?.names[agent.id] ?? agent.name} → lv.${lv+2}  ${agent.desc}`, "#4ade80")
+      addLog(`${cost}t spent`, "rgba(255,255,255,0.38)")
+      return
+    }
+
+    const renM = cmd.match(/^rename\s+(\S+)\s+(.+)$/i)
+    if (renM) {
+      const t = renM[1].trim().toLowerCase()
+      const newName = renM[2].trim().toUpperCase().slice(0,24)
+      const agent = [...AGENT_DEFS,...MERC_AGENTS].find(a => crew?.unlocked.includes(a.id) && (
+        a.name.toLowerCase().includes(t) || a.id.replace("claude_","").includes(t) ||
+        (crew?.names[a.id]??"").toLowerCase().includes(t)
+      ))
+      if (!agent) { addLog(`agent not found in your crew`, "#f87171"); return }
+      onAgentRename?.(agent.id, newName)
+      addLog(`${agent.name} → ${newName}`, "#4ade80")
+      return
+    }
+
+    if (cmd.toLowerCase() === "help" || cmd === "?") {
+      addLog("crew commands:", "rgba(150,107,236,0.9)")
+      addLog("  crew                  show full manifest", "rgba(255,255,255,0.5)")
+      addLog("  hire ops/data/exec    recruit a merc agent", "rgba(255,255,255,0.5)")
+      addLog("  upgrade <name>        level up an agent (400/800t)", "rgba(255,255,255,0.5)")
+      addLog("  rename <name> <alias> give an agent a callsign", "rgba(255,255,255,0.5)")
+      addLog("  reroll                fresh upgrade options (120t+)", "rgba(255,255,255,0.5)")
+      return
+    }
+
+    addLog(`unknown: "${cmd}" — type help for commands`, "rgba(255,255,255,0.35)")
+  }
+
+  // deployed crew for the panel (including mercs)
+  const deployedCrew = crew ? [...AGENT_DEFS,...MERC_AGENTS].filter(a => crew.selected.includes(a.id) && crew.unlocked.includes(a.id)) : []
+  const hirableMercs = crew ? MERC_AGENTS.filter(a => !crew.unlocked.includes(a.id)) : []
 
   return (
-    <div style={{ position:"absolute", inset:0, background:"#08080f", zIndex:10, display:"flex", flexDirection:"column", fontFamily:"monospace" }}>
-      {/* Header bar */}
-      <div style={{ borderBottom:"1px solid rgba(150,107,236,0.14)", padding:"0.55rem 1.5rem", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-        <span style={{ color:"rgba(150,107,236,0.7)", fontSize:"0.65rem", letterSpacing:"0.18em" }}>THE SIGNAL · COMPILE TERMINAL</span>
-        <span style={{ color: tokensAvailable < rerollCost ? "rgba(74,222,128,0.3)" : "rgba(74,222,128,0.5)", fontSize:"0.62rem" }}>
-          TOKENS: {tokensAvailable.toLocaleString()}{canReroll ? ` · reroll costs ${rerollCost}` : ""}
+    <div style={{ position:"absolute", inset:0, background:"#09090f", zIndex:10, display:"flex", flexDirection:"column", fontFamily:"monospace", overflow:"hidden" }}>
+
+      {/* ── Header ── */}
+      <div style={{ borderBottom:"1px solid rgba(150,107,236,0.2)", padding:"0.55rem 1.4rem", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+        <span style={{ color:"rgba(150,107,236,0.7)", fontSize:"0.62rem", letterSpacing:"0.2em" }}>THE SIGNAL · COMPILE TERMINAL</span>
+        <span style={{ color:"rgba(74,222,128,0.75)", fontSize:"0.62rem", letterSpacing:"0.06em" }}>
+          {tokensAvailable.toLocaleString()} TOKENS
         </span>
       </div>
-      {/* Terminal output */}
-      <div style={{ flex:1, overflowY:"auto", padding:"1rem 1.5rem 0.5rem" }}>
-        {lines.map((l, i) => (
-          <div key={i} style={{
-            color: l.type === "dim" ? "rgba(255,255,255,0.38)" : col(l.type),
-            fontSize:"0.8rem", lineHeight:"1.8",
-            minHeight: l.type === "blank" ? "0.6rem" : undefined,
-            fontStyle: l.type === "dim" ? "normal" : undefined,
-          }}>{l.text}</div>
-        ))}
-        {phase === "parsing" && (
-          <div style={{ color:"#966bec", fontSize:"0.8rem", lineHeight:"1.8" }}>▋</div>
+
+      <div style={{ flex:1, overflowY:"auto", padding:"1rem 1.2rem", display:"flex", flexDirection:"column", gap:"1rem" }}>
+
+        {/* ── Upgrade cards ── */}
+        <div>
+          <p style={{ color:"rgba(255,255,255,0.4)", fontSize:"0.6rem", letterSpacing:"0.2em", margin:"0 0 0.6rem" }}>
+            CHOOSE AN UPGRADE · ↑↓ navigate · ENTER deploy · or click
+          </p>
+          <div style={{ display:"flex", flexDirection:"column", gap:"0.45rem" }}>
+            {liveOptions.map((opt, i) => {
+              const active = i === selectedIdx
+              return (
+                <div key={opt.id}
+                  onClick={() => { setSelectedIdx(i); onPick(opt.id) }}
+                  onMouseEnter={() => setSelectedIdx(i)}
+                  style={{
+                    border: active ? "1px solid rgba(150,107,236,0.7)" : "1px solid rgba(255,255,255,0.1)",
+                    borderRadius:"6px",
+                    padding:"0.65rem 0.9rem",
+                    background: active ? "rgba(150,107,236,0.1)" : "rgba(255,255,255,0.03)",
+                    cursor:"pointer",
+                    transition:"all 0.12s",
+                    display:"grid",
+                    gridTemplateColumns:"1.6rem 1fr auto",
+                    alignItems:"center",
+                    gap:"0.6rem",
+                  }}>
+                  <span style={{ color: active ? "#c4b5fd" : "rgba(255,255,255,0.3)", fontSize:"0.78rem", fontWeight:700 }}>[{i+1}]</span>
+                  <div>
+                    <div style={{ color: active ? "#e9d5ff" : "rgba(255,255,255,0.8)", fontSize:"0.78rem", fontWeight:600, letterSpacing:"0.04em", marginBottom:"0.18rem" }}>{opt.name}</div>
+                    <div style={{ color: active ? "rgba(196,181,253,0.65)" : "rgba(255,255,255,0.35)", fontSize:"0.68rem" }}>{opt.desc}</div>
+                  </div>
+                  {active && <span style={{ color:"#966bec", fontSize:"0.75rem" }}>▶</span>}
+                </div>
+              )
+            })}
+          </div>
+          {/* ENTER to deploy hint + reroll */}
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:"0.6rem", paddingTop:"0.5rem", borderTop:"1px solid rgba(255,255,255,0.06)" }}>
+            <span style={{ color:"rgba(150,107,236,0.55)", fontSize:"0.62rem" }}>ENTER or click to deploy upgrade [{selectedIdx+1}]</span>
+            {canReroll && (
+              <button onClick={() => handleCrewCommand("reroll")} style={{
+                background:"none", border:"1px solid rgba(255,255,255,0.12)", borderRadius:"4px",
+                color:"rgba(255,255,255,0.45)", fontSize:"0.6rem", fontFamily:"monospace",
+                padding:"0.2rem 0.6rem", cursor:"pointer", letterSpacing:"0.06em",
+              }}>reroll ({rerollCost}t)</button>
+            )}
+          </div>
+        </div>
+
+        {/* ── Crew panel ── */}
+        {(deployedCrew.length > 0 || hirableMercs.length > 0) && (
+          <div style={{ borderTop:"1px solid rgba(255,255,255,0.07)", paddingTop:"0.8rem" }}>
+            <p style={{ color:"rgba(255,255,255,0.4)", fontSize:"0.6rem", letterSpacing:"0.2em", margin:"0 0 0.55rem" }}>CREW</p>
+            {deployedCrew.length > 0 && (
+              <div style={{ display:"flex", flexWrap:"wrap", gap:"0.35rem", marginBottom:"0.5rem" }}>
+                {deployedCrew.map(a => {
+                  const lv = 1 + (crew?.upgrades[a.id] ?? 0)
+                  const canUp = (crew?.upgrades[a.id] ?? 0) < MAX_AGENT_UPGRADES && tokensAvailable >= AGENT_UPGRADE_COSTS[crew?.upgrades[a.id] ?? 0]
+                  return (
+                    <div key={a.id} style={{ display:"flex", alignItems:"center", gap:"0.3rem" }}>
+                      <span style={{
+                        background:"rgba(74,222,128,0.07)", border:"1px solid rgba(74,222,128,0.25)",
+                        borderRadius:"4px", padding:"0.18rem 0.5rem",
+                        color:"rgba(74,222,128,0.8)", fontSize:"0.62rem",
+                      }}>
+                        {(crew?.names[a.id] ?? a.name)} <span style={{ opacity:0.5 }}>lv{lv}</span>
+                      </span>
+                      {canUp && (
+                        <button onClick={() => handleCrewCommand(`upgrade ${a.id.replace("claude_","")}`)} title={`Upgrade ${a.name} — ${AGENT_UPGRADE_COSTS[crew?.upgrades[a.id]??0]}t`} style={{
+                          background:"rgba(150,107,236,0.12)", border:"1px solid rgba(150,107,236,0.3)",
+                          borderRadius:"3px", color:"rgba(150,107,236,0.8)", fontSize:"0.58rem",
+                          padding:"0.12rem 0.4rem", cursor:"pointer", fontFamily:"monospace",
+                        }}>↑ {AGENT_UPGRADE_COSTS[crew?.upgrades[a.id]??0]}t</button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            {hirableMercs.length > 0 && (
+              <div style={{ display:"flex", flexWrap:"wrap", gap:"0.35rem" }}>
+                {hirableMercs.map(a => {
+                  const canHire = tokensAvailable >= a.cost
+                  return (
+                    <button key={a.id} onClick={() => canHire && handleCrewCommand(`hire ${a.id.replace("claude_","")}`)}
+                      title={a.desc}
+                      style={{
+                        background: canHire ? "rgba(251,146,60,0.08)" : "rgba(255,255,255,0.03)",
+                        border: canHire ? "1px solid rgba(251,146,60,0.3)" : "1px solid rgba(255,255,255,0.08)",
+                        borderRadius:"4px", padding:"0.18rem 0.55rem",
+                        color: canHire ? "rgba(251,146,60,0.85)" : "rgba(255,255,255,0.25)",
+                        fontSize:"0.62rem", fontFamily:"monospace", cursor: canHire ? "pointer" : "default",
+                      }}>
+                      + {a.name} <span style={{ opacity:0.6 }}>{a.cost}t</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
         )}
-        <div ref={scrollRef} />
+
+        {/* ── Terminal log (crew command feedback) ── */}
+        {log.length > 0 && (
+          <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"0.6rem" }}>
+            {log.slice(-6).map((l,i) => (
+              <div key={i} style={{ fontSize:"0.7rem", lineHeight:1.7, color: l.col ?? "rgba(255,255,255,0.55)", fontFamily:"monospace" }}>{l.text}</div>
+            ))}
+            <div ref={logEndRef} />
+          </div>
+        )}
+
       </div>
-      {/* Input / deploy prompt */}
-      {phase === "compiled" ? (
-        <div onClick={deployPending}
-          style={{ borderTop:"1px solid rgba(150,107,236,0.18)", padding:"0.7rem 1.5rem 1rem",
-            display:"flex", alignItems:"center", gap:"0.75rem", cursor:"pointer", flexShrink:0,
-            background:"rgba(150,107,236,0.06)" }}>
-          <span style={{ color:"#966bec", fontSize:"0.85rem", animation:"pulse 0.9s ease-in-out infinite" }}>▶</span>
-          <span style={{ color:"#966bec", fontFamily:"monospace", fontSize:"0.82rem", letterSpacing:"0.06em" }}>
-            ENTER or click to deploy
-          </span>
-        </div>
-      ) : (
-        <div style={{ borderTop:"1px solid rgba(255,255,255,0.055)", padding:"0.65rem 1.5rem 1rem", display:"flex", gap:"0.55rem", alignItems:"center", flexShrink:0 }}>
-          <span style={{ color: phase === "ready" ? "#966bec" : "rgba(150,107,236,0.3)", fontSize:"0.85rem" }}>{">"}</span>
-          <input
-            ref={inputRef}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") handleSubmit() }}
-            disabled={phase !== "ready"}
-            autoFocus
-            placeholder={phase === "ready" ? "describe what to build…" : ""}
-            style={{
-              flex:1, background:"transparent", border:"none", outline:"none",
-              color:"rgba(255,255,255,0.88)", fontFamily:"monospace", fontSize:"0.82rem",
-              caretColor:"#966bec", opacity: phase === "ready" ? 1 : 0,
-            }}
-          />
-        </div>
-      )}
+
+      {/* ── Power-user command input ── */}
+      <div style={{ borderTop:"1px solid rgba(255,255,255,0.08)", padding:"0.55rem 1.2rem 0.8rem", display:"flex", gap:"0.5rem", alignItems:"center", flexShrink:0 }}>
+        <span style={{ color:"rgba(150,107,236,0.6)", fontSize:"0.8rem" }}>{">"}</span>
+        <input
+          ref={inputRef}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") handleCrewCommand(input) }}
+          placeholder="crew · hire ops · upgrade pm · rename pm GHOST · help"
+          style={{
+            flex:1, background:"transparent", border:"none", outline:"none",
+            color:"rgba(255,255,255,0.75)", fontFamily:"monospace", fontSize:"0.72rem",
+            caretColor:"#966bec",
+          }}
+        />
+      </div>
     </div>
   )
 }
+
 
 // ── Attract screen typewriter tagline ────────────────────────────────────
 function AttractTagline() {
