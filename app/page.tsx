@@ -8,6 +8,9 @@ const GH = 420
 const PLAYER_Y = GH - 50
 const MAX_LIVES = 3
 const WORDS_TO_BOSS = 18
+const MAX_WORDS_NORMAL = 12   // hard cap on words on-screen outside boss fight
+const MAX_WORDS_ENDLESS = 15  // slightly more room in endless, but still capped
+const MAX_COMBO = 30          // combo display and multiplier cap
 
 const BUG_WORDS = [
   "seamlessly","real-time","automatically","zero latency","scalable","robust",
@@ -816,10 +819,13 @@ export default function HomePage() {
       if (!g.bossWarn && (!g.boss || g.endless)) {
         // Pre-boss surge: last 3 kills before boss, modest 20% faster spawn
         const preBossSurge = !g.endless && !g.boss && g.wordsKilled >= WORDS_TO_BOSS - 3
-        // Spawn interval: sector 1 ~1300ms, sector 4 ~820ms. Endless scales with score.
-        const baseInterval = Math.max(340, 1500 - g.level * 170 - (g.endless ? Math.floor(g.score / 600) * 30 : 0))
-        const interval = preBossSurge ? Math.floor(baseInterval * 0.8) : baseInterval
-        if (now - g.lastWord > interval) {
+        // Spawn interval: sector 1 ~1300ms, sector 4 ~820ms. Endless scales more gently.
+        const baseInterval = Math.max(400, 1500 - g.level * 160 - (g.endless ? Math.floor(g.score / 1200) * 20 : 0))
+        const interval = preBossSurge ? Math.floor(baseInterval * 0.82) : baseInterval
+        // Hard word cap — never overwhelm the screen
+        const wordCap = g.endless ? MAX_WORDS_ENDLESS : MAX_WORDS_NORMAL
+        const liveWords = g.words.filter(w => w.type !== "powerup").length
+        if (now - g.lastWord > interval && liveWords < wordCap) {
           g.lastWord = now
           const roll = Math.random()
           let type: Word["type"] = "story", text = ""
@@ -839,8 +845,9 @@ export default function HomePage() {
           // claude_design scales: base 12% slower → lv2 20% → lv3 28%
           const designLv = g.activeAgents.includes("claude_design") ? 1 + (g.agentUpgrades.claude_design ?? 0) : 0
           const designMul = designLv >= 3 ? 0.72 : designLv >= 2 ? 0.80 : designLv >= 1 ? 0.88 : 1
-          // Speed: sector 1 ~1.55, sector 4 ~2.2, endless scales up gently
-          const spd2 = (1.3 + g.level * 0.22 + (g.endless ? Math.floor(g.score / 800) * 0.1 : 0)) * slowFactor * designMul
+          // Speed: sector 1 ~1.55, sector 4 ~2.2, endless capped at 3.5 (readable but threatening)
+          const rawSpd = (1.3 + g.level * 0.22 + (g.endless ? Math.floor(g.score / 1200) * 0.08 : 0))
+          const spd2 = Math.min(rawSpd, 3.5) * slowFactor * designMul
           const br = Math.random()
           let beh: Behavior = "fall"
           if (type !== "powerup") {
@@ -861,12 +868,15 @@ export default function HomePage() {
 
       // endless buzzword storm every 1500 pts
       if (g.endless && g.score > 0) {
-        const stormAt = Math.floor(g.score / 1500) * 1500
+        const stormAt = Math.floor(g.score / 2000) * 2000
         if (stormAt > g.lastStorm) {
           g.lastStorm = stormAt; g.shake = 6
           const slowFactor = Math.pow(0.85, g.upgrades.word_slow ?? 0)
-          const stormSpd = (1.5 + g.level * 0.3) * slowFactor
-          for (let si = 0; si < 9; si++) {
+          const stormSpd = Math.min((1.5 + g.level * 0.25) * slowFactor, 3.2)
+          // Storm: 5 words capped to not exceed MAX_WORDS_ENDLESS
+          const stormSlots = Math.max(0, MAX_WORDS_ENDLESS - g.words.filter(w => w.type !== "powerup").length)
+          const stormCount = Math.min(5, stormSlots)
+          for (let si = 0; si < stormCount; si++) {
             const stormText = Math.random() < 0.4
               ? BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)]
               : STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)]
@@ -874,8 +884,10 @@ export default function HomePage() {
             const beh: Behavior = ["fall","charge","zigzag","sine"][Math.floor(Math.random()*4)] as Behavior
             g.words.push({ x: sox, y: -18 - si * 22, text: stormText, type: Math.random() < 0.35 ? "bug" : "story", spd: stormSpd, beh, ph: Math.random() * Math.PI * 2, ox: sox, hp: 1, hitFlash: 0, elite: false, age: 0 })
           }
-          showCapyMsg(g, "Semantic storm.\nCoherence under pressure.", now)
-          sfx.warning()
+          if (stormCount > 0) {
+            showCapyMsg(g, "Semantic storm.\nCoherence under pressure.", now)
+            sfx.warning()
+          }
         }
       }
 
@@ -1391,7 +1403,7 @@ export default function HomePage() {
             }
             // kill
             const elapsed = now - g.lastKill
-            g.combo = elapsed < 1300 ? g.combo + 1 : 1
+            g.combo = elapsed < 1300 ? Math.min(g.combo + 1, MAX_COMBO) : 1
             g.lastKill = now
             if (g.combo === 3 || g.combo === 5 || g.combo === 10 || g.combo === 15 || g.combo === 20 || g.combo === 25 || g.combo === 30) {
               sfx.combo(g.combo)
@@ -1780,13 +1792,19 @@ export default function HomePage() {
       const col = g.px
       const blastW = 20 + power * 10
       const bossDmg = Math.max(4, Math.ceil(power * 14))
-      // Kill all words in beam column
+      // Kill all words in beam column, each counting toward combo
       let beamKills = 0
       for (let wi = g.words.length - 1; wi >= 0; wi--) {
         const w = g.words[wi]
         if (Math.abs(w.x - col) < blastW) {
-          spawnLetterExplosion(g, w, 0, 1)
-          g.score += w.type === "bug" ? 75 : 10
+          g.combo = Math.min(g.combo + 1, MAX_COMBO)
+          g.lastKill = now
+          const mult = g.combo >= 3 ? 1 + (g.combo - 2) * 0.2 : 1
+          const pmLv = g.activeAgents.includes("claude_pm") ? 1 + (g.agentUpgrades.claude_pm ?? 0) : 0
+          const pmMul = pmLv >= 3 ? 1.30 : pmLv >= 2 ? 1.22 : pmLv >= 1 ? 1.15 : 1
+          const pts = Math.floor((w.type === "bug" ? 75 : 10) * mult * pmMul)
+          spawnLetterExplosion(g, w, pts, g.combo)
+          g.score += pts
           g.kills++; g.wordsKilled++; beamKills++
           g.words.splice(wi, 1)
         }
