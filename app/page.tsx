@@ -7,7 +7,7 @@ const GW = 600
 const GH = 420
 const PLAYER_Y = GH - 50
 const MAX_LIVES = 3
-const WORDS_TO_BOSS = 18
+const WORDS_TO_BOSS = 14
 
 const BUG_WORDS = [
   "seamlessly","real-time","automatically","zero latency","scalable","robust",
@@ -320,6 +320,7 @@ interface GState {
   mines: Mine[]; lastMine: number; dropMine: boolean
   trail: Array<{x: number; y: number}>
   retroEnd: number
+  sectorClearAt: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -352,6 +353,7 @@ function initState(W: number): GState {
     mines: [], lastMine: 0, dropMine: false,
     trail: [],
     retroEnd: 0,
+    sectorClearAt: 0,
   }
 }
 
@@ -417,6 +419,16 @@ export default function HomePage() {
     g.waveAnn = { text: `SECTOR 1 · ${BOSSES[0].name}`, t: 0 }
     g.livesAtWave = MAX_LIVES
     startDrone()
+    // Seed initial burst — player has targets immediately, no waiting
+    const W2 = g.W
+    for (let bi = 0; bi < 4; bi++) {
+      const ox = 60 + Math.random() * (W2 - 120)
+      const typ = Math.random() < 0.35 ? "bug" : "story"
+      const wtext = typ === "bug"
+        ? BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)]
+        : STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)]
+      g.words.push({ x: ox, y: -18 - bi * 38, text: wtext, type: typ as Word["type"], spd: 1.7 + Math.random() * 0.3, beh: "fall", ph: 0, ox, hp: 1, hitFlash: 0, elite: false, age: 0 })
+    }
     setScore(0); setLevel(1); setLives(MAX_LIVES)
     phaseRef.current = "playing"
     setPhase("playing")
@@ -461,7 +473,20 @@ export default function HomePage() {
       capyIdxRef.current = 0; setCapyIdx(0)
       const g = G.current
       g.running = true; g.bossSpawned = false; g.wordsKilled = 0
-      g.livesAtWave = g.lives
+      g.livesAtWave = g.lives; g.sectorClearAt = 0
+      // Seed a fresh initial burst so the new sector starts with immediate action
+      const W3 = g.W
+      for (let bi = 0; bi < 3; bi++) {
+        const ox3 = 60 + Math.random() * (W3 - 120)
+        const typ3 = Math.random() < 0.35 ? "bug" : "story"
+        const wt3 = typ3 === "bug"
+          ? BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)]
+          : STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)]
+        const slowFactor3 = Math.pow(0.85, g.upgrades.word_slow ?? 0)
+        const designMul3 = g.activeAgents.includes("claude_design") ? 0.88 : 1
+        const spd3 = (1.6 + g.level * 0.3) * slowFactor3 * designMul3
+        g.words.push({ x: ox3, y: -18 - bi * 40, text: wt3, type: typ3 as Word["type"], spd: spd3, beh: "fall", ph: 0, ox: ox3, hp: 1, hitFlash: 0, elite: false, age: 0 })
+      }
       // Wave announcement
       if (g.level <= 4) {
         g.waveAnn = { text: `SECTOR ${g.level} · ${BOSSES[g.level-1]?.name ?? ""}`, t: 0 }
@@ -578,6 +603,19 @@ export default function HomePage() {
         g.bg.forEach(b => { b.y += b.vy; if (b.y > GH + 10) { b.y = -10; b.x = Math.random() * g.W } })
         g.particles = g.particles.filter(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.14; p.life -= 0.022; return p.life > 0 })
         draw(ctx, g, canvas.width, now, true)
+        return
+      }
+
+      // Sector-clear celebration window — keep loop alive for particle drain
+      if (g.sectorClearAt > 0) {
+        g.particles = g.particles.filter(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.14; p.life -= 0.022; return p.life > 0 })
+        g.bg.forEach(b => { b.y += b.vy * 0.5; if (b.y > GH + 10) { b.y = -10; b.x = Math.random() * g.W } })
+        if (g.whiteFlash > 0) g.whiteFlash--
+        draw(ctx, g, canvas.width, now, false)
+        if (now >= g.sectorClearAt) {
+          g.sectorClearAt = 0; g.running = false
+          phaseRef.current = "upgrade"; setPhase("upgrade")
+        }
         return
       }
 
@@ -758,7 +796,11 @@ export default function HomePage() {
 
       // spawn words (not during boss warning)
       if (!g.bossWarn && (!g.boss || g.endless)) {
-        const interval = Math.max(360, 1600 - g.level * 180 - (g.endless ? Math.floor(g.score / 600) * 40 : 0))
+        // Pre-boss surge: last 4 kills before boss, spawn rate spikes 45% for crescendo
+        const preBossSurge = !g.endless && !g.boss && g.wordsKilled >= WORDS_TO_BOSS - 4
+        // Much faster spawn rate — sector 1 at ~750ms (was 1420ms), sector 4 at ~350ms
+        const baseInterval = Math.max(260, 960 - g.level * 130 - (g.endless ? Math.floor(g.score / 500) * 35 : 0))
+        const interval = preBossSurge ? Math.floor(baseInterval * 0.55) : baseInterval
         if (now - g.lastWord > interval) {
           g.lastWord = now
           const roll = Math.random()
@@ -777,13 +819,18 @@ export default function HomePage() {
           }
           const slowFactor = Math.pow(0.85, g.upgrades.word_slow ?? 0)
           const designMul = g.activeAgents.includes("claude_design") ? 0.88 : 1
-          const spd2 = (1.3 + g.level * 0.25 + (g.endless ? Math.floor(g.score / 800) * 0.12 : 0)) * slowFactor * designMul
+          // Higher base speed — sector 1 at 1.9 (was 1.55), sector 4 at 2.82 (was 2.3)
+          const spd2 = (1.6 + g.level * 0.3 + (g.endless ? Math.floor(g.score / 700) * 0.14 : 0)) * slowFactor * designMul
           const br = Math.random()
           let beh: Behavior = "fall"
           if (type !== "powerup") {
-            if      (g.level >= 4 && br < 0.20) beh = "sine"
-            else if (g.level >= 3 && br < 0.35) beh = "zigzag"
-            else if (g.level >= 2 && br < 0.45) beh = "charge"
+            if      (g.level >= 3 && br < 0.20) beh = "sine"
+            else if (g.level >= 2 && br < 0.30) beh = "zigzag"
+            else if (br < 0.18) beh = "charge"   // sector 1 gets 18% charge variety
+            // Pre-boss surge: force chaotic behaviors for dramatic buildup
+            if (preBossSurge && beh === "fall" && g.level >= 1) {
+              beh = br < 0.5 ? "charge" : "zigzag"
+            }
           }
           const ox = 30 + Math.random() * (g.W - 60)
           // Elite words in endless: 3 HP, worth 3× score, slightly slower
@@ -1442,13 +1489,19 @@ export default function HomePage() {
             spawnParticles(g, bx.x + (Math.random()-0.5)*40, bx.y, bx.color, "✦", 4)
             // boss rage at 50% HP
             if (!bx.halfTriggered && bx.hp <= bx.maxHp / 2) {
-              bx.halfTriggered = true; bx.raged = true; g.shake = 8
-              for (let ri = 0; ri < 18; ri++) {
-                const a = (ri / 18) * Math.PI * 2
-                g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a)*9, vy: Math.sin(a)*9, life: 0.9, glyph: "✦", col: "#ffffff" })
+              bx.halfTriggered = true; bx.raged = true; g.shake = 10
+              for (let ri = 0; ri < 22; ri++) {
+                const a = (ri / 22) * Math.PI * 2
+                g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a)*11, vy: Math.sin(a)*11, life: 1.0, glyph: ri % 2 === 0 ? "✦" : "×", col: ri % 3 === 0 ? "#ffffff" : bx.color })
               }
-              g.particles.push({ x: bx.x, y: bx.y - 20, vx: 0, vy: -1.2, life: 1.4, glyph: "ENRAGED", col: "#f87171", sz: 11 })
+              g.particles.push({ x: bx.x, y: bx.y - 20, vx: 0, vy: -1.2, life: 1.6, glyph: "ENRAGED", col: "#f87171", sz: 12 })
+              g.whiteFlash = 8
               showCapyMsg(g, "Pattern is escalating.\nIt knows you're here.", now)
+              sfx.warning()
+            }
+            // boss critical at 20% HP — red edge pulse, final push feeling
+            if (bx.hp <= Math.floor(bx.maxHp * 0.2) && bx.hp > 0 && bx.raged) {
+              g.redFlash = Math.max(g.redFlash, 2)
             }
           }
         }
@@ -1547,13 +1600,13 @@ export default function HomePage() {
           }
           g.words.push({ x: bx.x, y: Math.min(bx.y + 55, GH - 80), text: "KNOWLEDGE", type: "powerup", spd: 0.85, beh: "fall", ph: 0, ox: bx.x, hp: 1, hitFlash: 0, elite: false, age: 7 })
         } else {
+          const noReg = g.lives >= g.livesAtWave
           g.score += 500
-          if (g.lives >= g.livesAtWave) {
+          if (noReg) {
             g.score += 300
-            g.particles.push({ x: bx.x, y: bx.y - 35, vx: 0, vy: -0.8, life: 1.8, glyph: "no regressions +300", col: "#4ade80", sz: 10 })
+            g.particles.push({ x: bx.x, y: bx.y - 35, vx: 0, vy: -0.8, life: 2.0, glyph: "no regressions +300", col: "#4ade80", sz: 10 })
             showCapyMsg(g, "Signal intact.\nNo corruption.", now)
           }
-          g.running = false
           const lvl = g.level; g.level++
           const agentUnlocks: Record<number, string[]> = { 1: ["claude_pm"], 2: ["claude_qa"], 3: ["claude_eng"], 4: ["claude_design", "claude_infra"] }
           ;(agentUnlocks[lvl] ?? []).forEach(id => unlockAgentRef.current(id))
@@ -1564,38 +1617,63 @@ export default function HomePage() {
           g.bullets = g.bullets.filter(b => !b.enemy) // purge enemy bullets
           g.mines = []
           if (lvl === 4) {
-            // THE COLLAPSE — final sector cleared. Make it legendary.
-            g.shake = 28; g.whiteFlash = 18
-            for (let ri = 0; ri < 80; ri++) {
-              const ra = Math.random() * Math.PI * 2, rr = Math.random() * 160
+            // THE COLLAPSE — final sector cleared. Legendary ceremony.
+            g.shake = 28; g.whiteFlash = 22
+            for (let ri = 0; ri < 100; ri++) {
+              const ra = Math.random() * Math.PI * 2, rr = Math.random() * 180
               g.particles.push({ x: g.W/2 + Math.cos(ra)*rr, y: GH/2 + Math.sin(ra)*rr,
-                vx: Math.cos(ra)*(6+Math.random()*8), vy: Math.sin(ra)*(6+Math.random()*8),
-                life: 1.8 + Math.random()*0.5, glyph: Math.random()<0.5?"★":"◇", col: Math.random()<0.5?"#4ade80":"#966bec" })
+                vx: Math.cos(ra)*(6+Math.random()*10), vy: Math.sin(ra)*(6+Math.random()*10),
+                life: 2.0 + Math.random()*0.8, glyph: Math.random()<0.33?"★":Math.random()<0.5?"◇":"◈", col: Math.random()<0.4?"#4ade80":Math.random()<0.5?"#966bec":"#facc15" })
             }
-            g.particles.push({ x: g.W/2, y: GH/2 - 15, vx: 0, vy: -0.5, life: 3.0, glyph: "THE SIGNAL PERSISTS", col: "#4ade80", sz: 15 })
-            g.particles.push({ x: g.W/2, y: GH/2 + 10, vx: 0, vy: -0.4, life: 2.6, glyph: "INFINITE RECURSION UNLOCKED", col: "#966bec", sz: 9 })
+            // Concentric rings
+            for (let ri = 0; ri < 3; ri++) {
+              g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: 0, life: 0.9 - ri * 0.18, initLife: 0.9 - ri * 0.18, glyph: "", col: ri === 0 ? "#4ade80" : ri === 1 ? "#966bec" : "#facc15", ring: true })
+            }
+            g.particles.push({ x: g.W/2, y: GH/2 - 20, vx: 0, vy: -0.5, life: 3.5, glyph: "THE SIGNAL PERSISTS", col: "#4ade80", sz: 15 })
+            g.particles.push({ x: g.W/2, y: GH/2 + 6, vx: 0, vy: -0.35, life: 3.0, glyph: "INFINITE RECURSION UNLOCKED", col: "#966bec", sz: 9 })
+            g.particles.push({ x: g.W/2, y: GH/2 + 22, vx: 0, vy: -0.25, life: 2.5, glyph: "+500 COLLAPSE RESOLVED", col: "#facc15", sz: 10 })
+            if (noReg) g.particles.push({ x: g.W/2, y: GH/2 + 36, vx: 0, vy: -0.2, life: 2.2, glyph: "+300 CARRIER INTACT", col: "#4ade80", sz: 10 })
             showCapyMsg(g, "All collapses survived.\nThe Signal persists.\nInfinite recursion begins.", now)
-            // Extra boss dead fanfare
-            setTimeout(() => sfx.bossDead(), 400)
-            setTimeout(() => sfx.bossDead(), 800)
+            setTimeout(() => sfx.bossDead(), 300)
+            setTimeout(() => sfx.bossDead(), 650)
+            setTimeout(() => sfx.bossDead(), 1050)
+            g.sectorClearAt = now + 2800
           } else {
-            // Sector 1-3 clear: celebration scaled by sector
+            // Sector 1-3 clear: dramatic ceremony scaled by sector
             const sectorNames = ["", "SECTOR 1 · CLEAR", "SECTOR 2 · CLEAR", "SECTOR 3 · CLEAR"]
-            g.whiteFlash = 6 + lvl * 2; g.shake = 8 + lvl * 2
+            g.whiteFlash = 8 + lvl * 3; g.shake = 10 + lvl * 3
             const clearCol = bx.color
-            for (let ci = 0; ci < 20 + lvl * 6; ci++) {
+            const particleCount = 32 + lvl * 12
+            for (let ci = 0; ci < particleCount; ci++) {
               const a = Math.random() * Math.PI * 2
-              const spd = 3 + Math.random() * 6
-              g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, life: 1.2 + Math.random() * 0.4, glyph: ci % 2 === 0 ? "★" : "◇", col: ci % 3 === 0 ? "#966bec" : clearCol })
+              const spd = 4 + Math.random() * 8
+              const life = 1.5 + Math.random() * 0.6
+              g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, life, glyph: ci % 3 === 0 ? "★" : ci % 3 === 1 ? "◇" : "◈", col: ci % 4 === 0 ? "#966bec" : ci % 4 === 1 ? "#facc15" : clearCol })
             }
-            g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.7, life: 1.8, glyph: sectorNames[lvl] ?? "", col: "#966bec", sz: 11 })
+            // Radial ring
+            g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0, life: 0.7, initLife: 0.7, glyph: "", col: clearCol, ring: true })
+            // Sector clear text
+            g.particles.push({ x: g.W/2, y: GH/2 - 14, vx: 0, vy: -0.6, life: 2.5, glyph: sectorNames[lvl] ?? "", col: "#966bec", sz: 13 })
+            // Score breakdown floats
+            g.particles.push({ x: g.W/2, y: GH/2 + 6, vx: 0, vy: -0.45, life: 2.2, glyph: `+500 ${bx.name} DEFEATED`, col: "#facc15", sz: 10 })
+            if (noReg) g.particles.push({ x: g.W/2, y: GH/2 + 22, vx: 0, vy: -0.35, life: 2.0, glyph: "+300 CARRIER INTACT", col: "#4ade80", sz: 10 })
+            // Next sector preview
+            const nextSector = lvl + 1
+            const nextBoss = BOSSES[nextSector - 1]
+            if (nextBoss) {
+              g.particles.push({ x: g.W/2, y: GH/2 + (noReg ? 38 : 22), vx: 0, vy: -0.25, life: 1.8, glyph: `SECTOR ${nextSector} · ${nextBoss.name}`, col: "rgba(150,107,236,0.6)", sz: 9 })
+            }
+            // Extra boss dead fanfare for later sectors
+            if (lvl >= 2) setTimeout(() => sfx.bossDead(), 350)
+            if (lvl >= 3) setTimeout(() => sfx.bossDead(), 700)
+            g.sectorClearAt = now + 1800
           }
           setLevel(g.level); setScore(g.score); setLives(g.lives)
           pendingCapyRef.current = CAPY_DIALOG[lvl - 1] || ["You made it.", "Keep shipping."]
           const opts = pickUpgrades(g.upgrades)
           upgradeOptionsRef.current = opts
           setUpgradeOptions(opts)
-          phaseRef.current = "upgrade"; setPhase("upgrade")
+          // Transition to upgrade happens via sectorClearAt in the game loop (delayed)
         }
       }
 
@@ -1774,7 +1852,7 @@ export default function HomePage() {
                   <div style={{ fontSize:"2.25rem", marginBottom:"0.55rem" }}>🦫</div>
                   <p style={{ color:"rgba(255,255,255,0.14)", fontSize:"0.58rem", fontFamily:"monospace", letterSpacing:"0.32em", margin:"0 0 0.3rem" }}>CARRIER SIGNAL · ACTIVE</p>
                   <p style={{ color:"#966bec", fontSize:"1.2rem", fontWeight:700, letterSpacing:"0.14em", margin:"0 0 0.2rem", fontFamily:"monospace" }}>SPEC BLASTER</p>
-                  <p style={{ color:"rgba(255,255,255,0.3)", fontSize:"0.75rem", margin:0 }}>Navigate semantic collapse. Protect The Signal.</p>
+                  <AttractTagline />
                 </div>
 
                 {/* Targets legend */}
@@ -2366,8 +2444,17 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       ctx.fillStyle = "#0d0d14"; ctx.font = "bold 9px monospace"; ctx.textAlign = "center"
       ctx.fillText(b.name, b.x, b.y - 11)
       ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(b.x - 42, b.y + 4, 84, 7)
-      ctx.fillStyle = hpPct > 0.5 ? "#4ade80" : hpPct > 0.25 ? "#facc15" : "#f87171"
-      ctx.fillRect(b.x - 42, b.y + 4, 84 * hpPct, 7)
+      const hpBarCol = hpPct > 0.5 ? "#4ade80" : hpPct > 0.25 ? "#facc15" : "#f87171"
+      if (hpPct <= 0.2 && hpPct > 0) {
+        // Critical flash: pulsing red glow on HP bar
+        ctx.save()
+        ctx.shadowColor = "#f87171"; ctx.shadowBlur = 14 + 8 * Math.abs(Math.sin(now / 80))
+        ctx.fillStyle = hpBarCol; ctx.fillRect(b.x - 42, b.y + 4, 84 * hpPct, 7)
+        ctx.restore()
+      } else {
+        ctx.fillStyle = hpBarCol
+        ctx.fillRect(b.x - 42, b.y + 4, 84 * hpPct, 7)
+      }
       // segment markers at 25%, 50%, 75%
       ctx.fillStyle = "rgba(0,0,0,0.5)"
       for (const pct of [0.25, 0.5, 0.75]) ctx.fillRect(b.x - 42 + 84 * pct - 0.5, b.y + 4, 1, 7)
@@ -3265,6 +3352,27 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll }: 
         />
       </div>
     </div>
+  )
+}
+
+// ── Attract screen typewriter tagline ────────────────────────────────────
+function AttractTagline() {
+  const FULL = "Navigate semantic collapse.\nProtect The Signal."
+  const [text, setText] = useState("")
+  useEffect(() => {
+    let i = 0; let cancelled = false
+    function tick() {
+      if (cancelled) return
+      i++; setText(FULL.slice(0, i))
+      if (i < FULL.length) setTimeout(tick, 38)
+    }
+    const t = setTimeout(tick, 1200)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [])
+  return (
+    <p style={{ color:"rgba(255,255,255,0.3)", fontSize:"0.75rem", margin:0, whiteSpace:"pre-line", minHeight:"2.4em", fontFamily:"monospace" }}>
+      {text}{text.length < FULL.length ? <span className="cursor-blink">|</span> : null}
+    </p>
   )
 }
 
