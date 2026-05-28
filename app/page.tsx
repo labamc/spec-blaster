@@ -7,7 +7,7 @@ const GW = 600
 const GH = 420
 const PLAYER_Y = GH - 50
 const MAX_LIVES = 3
-const WORDS_TO_BOSS = 18
+const WORDS_TO_BOSS = 12
 const MAX_WORDS_NORMAL = 8    // hard cap on words on-screen outside boss fight
 const MAX_WORDS_ENDLESS = 10  // endless allows a bit more pressure, still manageable
 const MAX_COMBO = 30          // combo display and multiplier cap
@@ -822,9 +822,9 @@ export default function HomePage() {
       if (!g.bossWarn && !g.boss) {
         // Pre-boss surge: last 3 kills before boss, modest 20% faster spawn
         const preBossSurge = !g.endless && !g.boss && g.wordsKilled >= WORDS_TO_BOSS - 3
-        // Spawn interval: sector 1 ~1300ms, sector 4 ~820ms. Endless scales more gently.
-        const baseInterval = Math.max(400, 1500 - g.level * 160 - (g.endless ? Math.floor(g.score / 1200) * 20 : 0))
-        const interval = preBossSurge ? Math.floor(baseInterval * 0.82) : baseInterval
+        // Spawn interval: sector 1 ~1080ms, sector 4 ~720ms — tighter from the start
+        const baseInterval = Math.max(380, 1200 - g.level * 120 - (g.endless ? Math.floor(g.score / 1200) * 20 : 0))
+        const interval = preBossSurge ? Math.floor(baseInterval * 0.78) : baseInterval
         // Hard word cap — never overwhelm the screen
         const wordCap = g.endless ? MAX_WORDS_ENDLESS : MAX_WORDS_NORMAL
         const liveWords = g.words.filter(w => w.type !== "powerup").length
@@ -832,8 +832,8 @@ export default function HomePage() {
           g.lastWord = now
           const roll = Math.random()
           let type: Word["type"] = "story", text = ""
-          if (roll < 0.14)      { type = "bug";     text = BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)] }
-          else if (roll < 0.21) { type = "powerup"; text = POWERUP_WORDS[Math.floor(Math.random() * POWERUP_WORDS.length)] }
+          if (roll < 0.18)      { type = "bug";     text = BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)] }
+          else if (roll < 0.25) { type = "powerup"; text = POWERUP_WORDS[Math.floor(Math.random() * POWERUP_WORDS.length)] }
           else {
             const accentPool = !g.endless ? SECTOR_ACCENT_WORDS[g.level - 1] : null
             // Pre-boss buildup: force sector accent words in the last 4 slots before boss
@@ -848,18 +848,19 @@ export default function HomePage() {
           // claude_design scales: base 12% slower → lv2 20% → lv3 28%
           const designLv = g.activeAgents.includes("claude_design") ? 1 + (g.agentUpgrades.claude_design ?? 0) : 0
           const designMul = designLv >= 3 ? 0.72 : designLv >= 2 ? 0.80 : designLv >= 1 ? 0.88 : 1
-          // Speed: sector 1 ~1.55, sector 4 ~2.2, endless capped at 3.5 (readable but threatening)
-          const rawSpd = (1.3 + g.level * 0.22 + (g.endless ? Math.floor(g.score / 1200) * 0.08 : 0))
+          // Speed: sector 1 ~1.65, sector 4 ~2.3, endless capped at 3.5
+          const rawSpd = (1.4 + g.level * 0.22 + (g.endless ? Math.floor(g.score / 1200) * 0.08 : 0))
           const spd2 = Math.min(rawSpd, 3.5) * slowFactor * designMul
           const br = Math.random()
           let beh: Behavior = "fall"
           if (type !== "powerup") {
-            if      (g.level >= 4 && br < 0.20) beh = "sine"
-            else if (g.level >= 3 && br < 0.30) beh = "zigzag"
-            else if (g.level >= 2 && br < 0.35) beh = "charge"
-            // Pre-boss surge: slightly more aggressive behavior in last 3 kills
-            if (preBossSurge && beh === "fall" && g.level >= 2) {
-              beh = "charge"
+            if      (g.level >= 4 && br < 0.22) beh = "sine"
+            else if (g.level >= 3 && br < 0.32) beh = "zigzag"
+            else if (g.level >= 2 && br < 0.38) beh = "charge"
+            else if (g.level >= 1 && br < 0.18) beh = "charge"  // sector 1 gets some charge too
+            // Pre-boss surge: more aggressive in last 3 kills
+            if (preBossSurge && beh === "fall") {
+              beh = g.level >= 2 ? (Math.random() < 0.5 ? "charge" : "zigzag") : "charge"
             }
           }
           const ox = 30 + Math.random() * (g.W - 60)
