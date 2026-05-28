@@ -88,6 +88,8 @@ const MINI_BOSSES = [
   { name: "TECH DEBT DEMON",  color: "#fb923c" },
   { name: "BLOCKER BOT",      color: "#f87171" },
   { name: "THE DEPENDENCY",   color: "#a3e635" },
+  { name: "THE ROADMAP",      color: "#818cf8" },
+  { name: "THE PIVOT",        color: "#f472b6" },
 ]
 
 const CAPY_DIALOG = [
@@ -95,6 +97,17 @@ const CAPY_DIALOG = [
   ["Sprint velocity: max.", "The team is aligned.", "Watch for merge conflicts."],
   ["Green pipeline.", "Tests passing.", "One boss stands between\nyou and production."],
   ["SHIPPED.", "Capy is proud.", "Endless mode unlocked.\nSurvive forever."],
+]
+
+// ── AI Agents ──────────────────────────────────────────────────────────────
+interface AgentDef { id: string; name: string; role: string; desc: string; station: string; unlockNote: string }
+const AGENT_DEFS: AgentDef[] = [
+  { id: "claude_pm",     name: "CLAUDE PM",     role: "Product",     desc: "+15% score per kill",         station: "PLANNING",  unlockNote: "Clear WAVE 1" },
+  { id: "claude_qa",     name: "CLAUDE QA",     role: "Quality",     desc: "Shield recharges 8s faster",  station: "QUALITY",   unlockNote: "Clear WAVE 2" },
+  { id: "claude_eng",    name: "CLAUDE ENG",    role: "Engineering", desc: "Fire rate +12%",              station: "BUILD",     unlockNote: "Clear WAVE 3" },
+  { id: "claude_design", name: "CLAUDE DESIGN", role: "Experience",  desc: "Words fall 12% slower",       station: "UX",        unlockNote: "Clear WAVE 4" },
+  { id: "claude_infra",  name: "CLAUDE INFRA",  role: "Operations",  desc: "Life restores at 4k pts",     station: "DEPLOY",    unlockNote: "Clear WAVE 4" },
+  { id: "claude_sec",    name: "CLAUDE SEC",    role: "Security",    desc: "2s invuln per wave start",    station: "SECURITY",  unlockNote: "100 endless kills" },
 ]
 
 // ── Audio ──────────────────────────────────────────────────────────────────
@@ -159,7 +172,7 @@ const sfx = {
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Behavior = "fall" | "charge" | "zigzag" | "sine"
-interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean; age: number }
+interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean; age: number; regenBoss?: boolean }
 interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
@@ -180,6 +193,7 @@ interface GState {
   lastLifeRegen: number; lastAutoFire: number; firstKill: boolean
   redFlash: number; whiteFlash: number; lastMiniAt: number
   pb: number; pbShown: boolean; shotsFired: number
+  activeAgents: string[]; endlessWave: number; secUnlockTriggered: boolean
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -207,6 +221,7 @@ function initState(W: number): GState {
     lastLifeRegen: 0, lastAutoFire: 0, firstKill: false,
     redFlash: 0, whiteFlash: 0, lastMiniAt: 0,
     pb: 0, pbShown: false, shotsFired: 0,
+    activeAgents: [], endlessWave: 0, secUnlockTriggered: false,
   }
 }
 
@@ -233,6 +248,9 @@ export default function HomePage() {
   const [topEntry, setTopEntry]             = useState<{handle: string; score: number} | null>(null)
   const [personalBest, setPersonalBest]     = useState(0)
   const [isTouchDevice, setIsTouchDevice]   = useState(false)
+  const [unlockedAgents, setUnlockedAgents] = useState<string[]>([])
+  const [showAgentModule, setShowAgentModule] = useState(false)
+  const unlockAgentRef = useRef<(id: string) => void>(() => {})
 
   // load leaderboard top + personal best on mount
   useEffect(() => {
@@ -241,6 +259,10 @@ export default function HomePage() {
       if (s) setTopEntry({ handle: s.handle, score: s.score })
     }).catch(() => {})
     try { setPersonalBest(parseInt(localStorage.getItem("sb_pb") || "0")) } catch {}
+    try {
+      const saved = localStorage.getItem("sb_agents")
+      if (saved) setUnlockedAgents(saved.split(",").filter(Boolean))
+    } catch {}
     setIsTouchDevice("ontouchstart" in window || navigator.maxTouchPoints > 0)
   }, [])
 
@@ -250,7 +272,9 @@ export default function HomePage() {
     const pb = personalBest
     Object.assign(g, initState(W))
     g.pb = pb; g.pbShown = pb === 0
+    g.activeAgents = [...unlockedAgents]
     g.running = true
+    setShowAgentModule(false)
     g.waveAnn = { text: `WAVE 1 · ${BOSSES[0].name}`, t: 0 }
     g.livesAtWave = MAX_LIVES
     startDrone()
@@ -260,6 +284,15 @@ export default function HomePage() {
   }
 
   upgradePickRef.current = onUpgradePick
+
+  unlockAgentRef.current = (id: string) => {
+    setUnlockedAgents(prev => {
+      if (prev.includes(id)) return prev
+      const next = [...prev, id]
+      try { localStorage.setItem("sb_agents", next.join(",")) } catch {}
+      return next
+    })
+  }
 
   function onUpgradePick(id: string) {
     const g = G.current
@@ -288,6 +321,10 @@ export default function HomePage() {
         g.waveAnn = { text: `WAVE ${g.level} · ${BOSSES[g.level-1]?.name ?? ""}`, t: 0 }
       } else {
         g.waveAnn = { text: "ENDLESS · SURVIVE", t: 0 }
+      }
+      // CLAUDE SEC: brief invuln at each wave start
+      if (g.activeAgents.includes("claude_sec")) {
+        g.invuln = true; g.invulnEnd = Date.now() + 2000
       }
       phaseRef.current = "playing"; setPhase("playing")
     }
@@ -417,9 +454,10 @@ export default function HomePage() {
 
       // shield regen upgrade
       if (g.upgrades.shield_regen) {
-        if (g.shieldRegenAt === 0) g.shieldRegenAt = now + 25000
+        const srInterval = g.activeAgents.includes("claude_qa") ? 17000 : 25000
+        if (g.shieldRegenAt === 0) g.shieldRegenAt = now + srInterval
         if (!g.shield && now > g.shieldRegenAt) {
-          g.shield = true; g.shieldEnd = now + 20000; g.shieldRegenAt = now + 25000
+          g.shield = true; g.shieldEnd = now + 20000; g.shieldRegenAt = now + srInterval
         }
       }
 
@@ -480,7 +518,8 @@ export default function HomePage() {
       }
 
       // shoot
-      const fireInterval = Math.max(75, 175 - (g.upgrades.fire_rate ?? 0) * 22)
+      const engMul = g.activeAgents.includes("claude_eng") ? 0.88 : 1
+      const fireInterval = Math.max(75, (175 - (g.upgrades.fire_rate ?? 0) * 22) * engMul)
       if (g.keys.has(" ") && now - g.lastShot > fireInterval) {
         if (g.upgrades.spray) {
           for (let a = -2; a <= 2; a++)
@@ -523,7 +562,8 @@ export default function HomePage() {
           else if (roll < 0.21) { type = "powerup"; text = POWERUP_WORDS[Math.floor(Math.random() * POWERUP_WORDS.length)] }
           else                  { text = STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)] }
           const slowFactor = Math.pow(0.85, g.upgrades.word_slow ?? 0)
-          const spd2 = (1.3 + g.level * 0.25 + (g.endless ? Math.floor(g.score / 800) * 0.12 : 0)) * slowFactor
+          const designMul = g.activeAgents.includes("claude_design") ? 0.88 : 1
+          const spd2 = (1.3 + g.level * 0.25 + (g.endless ? Math.floor(g.score / 800) * 0.12 : 0)) * slowFactor * designMul
           const br = Math.random()
           let beh: Behavior = "fall"
           if (type !== "powerup") {
@@ -555,6 +595,26 @@ export default function HomePage() {
           }
           showCapyMsg(g, "Buzzword storm.", now)
           sfx.warning()
+        }
+      }
+
+      // endless wave progression every 75 kills
+      if (g.endless) {
+        const expectedWave = Math.floor(g.wordsKilled / 75) + 1
+        if (expectedWave > g.endlessWave) {
+          g.endlessWave = expectedWave
+          if (g.endlessWave > 1) {
+            g.waveAnn = { text: `ENDLESS · WAVE ${g.endlessWave}`, t: 0 }
+            g.shake = 5
+            showCapyMsg(g, `Endless wave ${g.endlessWave}.\nStill here?`, now)
+            sfx.warning()
+          }
+        }
+        // Unlock CLAUDE SEC at 100 endless kills
+        if (!g.secUnlockTriggered && g.wordsKilled >= 100) {
+          g.secUnlockTriggered = true
+          unlockAgentRef.current("claude_sec")
+          showCapyMsg(g, "CLAUDE SEC\ncomes online.", now)
         }
       }
 
@@ -646,6 +706,21 @@ export default function HomePage() {
             g.bullets.push({ x: b.x + 30, y: b.y + 28, vy: 5, enemy: true })
           }
         }
+        // The Roadmap: periodically spawns healing words
+        if (b.name === "THE ROADMAP" && b.t % 140 === 0) {
+          const rx = 40 + Math.random() * (g.W - 80)
+          g.words.push({ x: rx, y: -18, text: "roadmap item", type: "story", spd: 0.8, beh: "fall", ph: 0, ox: rx, hp: 1, hitFlash: 0, elite: false, age: 0, regenBoss: true })
+        }
+        // The Pivot: teleports + fires 360° burst every 180 frames
+        if (b.name === "THE PIVOT" && b.t > 0 && b.t % 180 === 0) {
+          b.x = 65 + Math.random() * (g.W - 130)
+          g.shake = 4
+          for (let ai = 0; ai < 8; ai++) {
+            const ang = (ai / 8) * Math.PI * 2
+            g.bullets.push({ x: b.x, y: b.y, vx: Math.cos(ang) * 4.2, vy: Math.sin(ang) * 4.2, enemy: true })
+          }
+          spawnParticles(g, b.x, b.y, "#f472b6", "⟳", 8)
+        }
       }
 
       // move bullets
@@ -680,7 +755,12 @@ export default function HomePage() {
           w.x = Math.max(30, Math.min(g.W - 30, w.ox + Math.sin(w.ph) * 95))
         }
         if (w.y > GH + 20) {
-          if (w.type !== "powerup" && !g.invuln) loseLife(g, now)
+          if (w.regenBoss && g.boss && g.boss.hp < g.boss.maxHp) {
+            g.boss.hp = Math.min(g.boss.maxHp, g.boss.hp + 2)
+            spawnParticles(g, g.boss.x, g.boss.y, "#818cf8", "↑", 4)
+          } else if (w.type !== "powerup" && !g.invuln) {
+            loseLife(g, now)
+          }
           return false
         }
         return true
@@ -728,7 +808,8 @@ export default function HomePage() {
             const base = w.type === "bug" ? 75 : w.type === "powerup" ? 0 : 10
             const eliteMul = w.elite ? 3 : 1
             const mult = g.combo >= 3 ? 1 + (g.combo - 2) * 0.2 : 1
-            const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul)
+            const pmMul = g.activeAgents.includes("claude_pm") ? 1.15 : 1
+            const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul * pmMul)
             g.score += pts
             g.kills++; g.wordsKilled++
             // story streak "definition of done" bonus
@@ -813,6 +894,9 @@ export default function HomePage() {
                 }
                 g.running = false
                 const lvl = g.level; g.level++
+                // Unlock agents as you clear each wave
+                const agentUnlocks: Record<number, string[]> = { 1: ["claude_pm"], 2: ["claude_qa"], 3: ["claude_eng"], 4: ["claude_design", "claude_infra"] }
+                ;(agentUnlocks[lvl] ?? []).forEach(id => unlockAgentRef.current(id))
                 if (lvl === 4) {
                   g.shake = 22
                   for (let ri = 0; ri < 55; ri++) {
@@ -869,8 +953,9 @@ export default function HomePage() {
       }
 
       // endless life regen every 5000 pts
-      if (g.endless && g.score >= 5000) {
-        const lifeM = Math.floor(g.score / 5000) * 5000
+      if (g.endless && g.score >= (g.activeAgents.includes("claude_infra") ? 4000 : 5000)) {
+        const lifeStep = g.activeAgents.includes("claude_infra") ? 4000 : 5000
+        const lifeM = Math.floor(g.score / lifeStep) * lifeStep
         if (lifeM > g.lastLifeRegen && g.lives < MAX_LIVES) {
           g.lastLifeRegen = lifeM
           g.lives = Math.min(g.lives + 1, MAX_LIVES)
@@ -942,8 +1027,14 @@ export default function HomePage() {
                 <p style={{ color:"rgba(255,255,255,0.22)", fontSize:"0.7rem", marginBottom:"1.25rem", fontFamily:"monospace" }}>
                   WASD / arrows move · SPACE or click shoot
                 </p>
-                <div style={{ background:"#966bec", color:"#fff", borderRadius:"4px", padding:"0.5rem 1.25rem", fontSize:"0.85rem", fontWeight:500, display:"inline-block", marginBottom: topEntry || personalBest > 0 ? "1rem" : 0 }}>
+                <div style={{ background:"#966bec", color:"#fff", borderRadius:"4px", padding:"0.5rem 1.25rem", fontSize:"0.85rem", fontWeight:500, display:"inline-block", marginBottom:"0.75rem" }}>
                   Start game
+                </div>
+                <div style={{ marginBottom: topEntry || personalBest > 0 ? "1rem" : 0 }}>
+                  <button onClick={e => { e.stopPropagation(); setShowAgentModule(true) }}
+                    style={{ background:"transparent", border:"1px solid rgba(150,107,236,0.3)", borderRadius:"4px", padding:"0.3rem 0.85rem", color:"rgba(150,107,236,0.75)", fontSize:"0.7rem", cursor:"pointer", fontFamily:"monospace", letterSpacing:"0.1em" }}>
+                    THE STACK{unlockedAgents.length > 0 && <span style={{ marginLeft:"0.45rem", color:"#4ade80" }}>{unlockedAgents.length}</span>}
+                  </button>
                 </div>
                 {(topEntry || personalBest > 0) && (
                   <div style={{ display:"flex", gap:"1rem", justifyContent:"center", flexWrap:"wrap" }}>
@@ -981,7 +1072,11 @@ export default function HomePage() {
 
           {phase === "upgrade" && <UpgradeScreen options={upgradeOptions} onPick={onUpgradePick} />}
 
-          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} onRestart={startGame} />}
+          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} onRestart={startGame} unlockedAgents={unlockedAgents} onShowStack={() => setShowAgentModule(true)} />}
+
+          {showAgentModule && (
+            <AgentModule unlocked={unlockedAgents} onClose={() => setShowAgentModule(false)} />
+          )}
 
           <canvas ref={canvasRef} height={GH} style={{ display:"block", width:"100%", height:GH, cursor:"crosshair" }} />
         </div>
@@ -1159,7 +1254,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
 
   // words
   g.words.forEach(w => {
-    const col = w.type === "bug" ? "#fdba74" : w.type === "powerup" ? "#4ade80" : "#7dd3fc"
+    const col = w.regenBoss ? "#34d399" : w.type === "bug" ? "#fdba74" : w.type === "powerup" ? "#4ade80" : "#7dd3fc"
     const flashRed = w.hitFlash > 0
 
     const spawnAlpha = Math.min(1, w.age / 7)
@@ -1169,21 +1264,27 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       const pulse = 0.5 + 0.5 * Math.sin(now / 280)
       ctx.save(); ctx.shadowColor = "#4ade80"; ctx.shadowBlur = 10 * pulse
     }
+    if (w.regenBoss) {
+      const pulse = 0.3 + 0.7 * Math.abs(Math.sin(now / 300))
+      ctx.save(); ctx.shadowColor = "#34d399"; ctx.shadowBlur = 7 * pulse
+    }
     if (w.elite) {
       ctx.save(); ctx.shadowColor = "#f87171"; ctx.shadowBlur = 8 + 4 * Math.sin(now / 200)
     }
 
-    const wordCol = flashRed ? "#ffffff" : (w.beh === "charge" && w.type !== "powerup" ? "#fca5a5" : col)
+    const wordCol = flashRed ? "#ffffff" : (w.beh === "charge" && w.type !== "powerup" && !w.regenBoss ? "#fca5a5" : col)
     ctx.fillStyle = wordCol
     ctx.font = (w.elite ? "bold " : "") + "11px monospace"
     ctx.textAlign = "center"
 
     let prefix = ""
-    if (w.beh === "zigzag") prefix = "≈"
+    if (w.regenBoss) prefix = "◆ "
+    else if (w.beh === "zigzag") prefix = "≈"
     else if (w.beh === "sine") prefix = "~"
-    ctx.fillText((prefix ? prefix : "") + w.text, w.x, w.y)
+    ctx.fillText(prefix + w.text, w.x, w.y)
 
     if (w.type === "powerup") ctx.restore()
+    if (w.regenBoss) ctx.restore()
     if (w.elite) {
       ctx.restore()
       // HP pips
@@ -1196,12 +1297,19 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     // near-bottom danger flash
     if (w.y > GH - 80 && w.type !== "powerup") {
       const wAlpha = Math.min(0.7, (w.y - (GH - 80)) / 40) * (0.5 + 0.5 * Math.sin(now / 120))
-      ctx.globalAlpha = wAlpha; ctx.fillStyle = "#f87171"; ctx.font = "7px monospace"
-      ctx.fillText("!", w.x + w.text.length * 5.8 + 10, w.y)
+      ctx.globalAlpha = wAlpha
+      ctx.font = "7px monospace"
+      if (w.regenBoss) {
+        ctx.fillStyle = "#34d399"
+        ctx.fillText("↑HEAL", w.x + w.text.length * 5.8 + 16, w.y)
+      } else {
+        ctx.fillStyle = "#f87171"
+        ctx.fillText("!", w.x + w.text.length * 5.8 + 10, w.y)
+      }
       ctx.globalAlpha = 1; ctx.font = "11px monospace"
     }
 
-    if (w.beh === "charge" && w.type !== "powerup") {
+    if (w.beh === "charge" && w.type !== "powerup" && !w.regenBoss) {
       ctx.fillStyle = "#f87171"; ctx.font = "7px monospace"
       ctx.fillText("▼", w.x, w.y + 10)
     }
@@ -1569,7 +1677,7 @@ function UpgradeScreen({ options, onPick }: { options: UpgradeDef[]; onPick: (id
   )
 }
 
-function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isNewPB, onRestart }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; shotsFired: number; isNewPB: boolean; onRestart: () => void }) {
+function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isNewPB, onRestart, unlockedAgents, onShowStack }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; shotsFired: number; isNewPB: boolean; onRestart: () => void; unlockedAgents: string[]; onShowStack: () => void }) {
   const accuracy = shotsFired > 0 ? Math.round((kills / shotsFired) * 100) : 0
   const [handle, setHandle]         = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -1656,9 +1764,88 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
         )}
         <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"1rem", display:"flex", gap:"0.6rem", justifyContent:"center", flexWrap:"wrap" }}>
           <button onClick={onRestart} style={{ background:"transparent", border:"1px solid #4c4c51", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"#d8d7d8", cursor:"pointer", fontSize:"0.8rem" }}>Play again</button>
+          <button onClick={onShowStack} style={{ background:"transparent", border:"1px solid rgba(150,107,236,0.3)", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"rgba(150,107,236,0.8)", cursor:"pointer", fontSize:"0.8rem", fontFamily:"monospace" }}>
+            THE STACK{unlockedAgents.length > 0 && <span style={{ marginLeft:"0.35rem", color:"#4ade80", fontSize:"0.7rem" }}>{unlockedAgents.length}</span>}
+          </button>
           <a href="/leaderboard" style={{ border:"1px solid rgba(255,255,255,0.08)", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"#a09fa2", textDecoration:"none", fontSize:"0.8rem" }}>Leaderboard</a>
           {score > 0 && <button onClick={share} style={{ background:"transparent", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"#a09fa2", cursor:"pointer", fontSize:"0.8rem" }}>{copied ? "Copied ✓" : "Share"}</button>}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Agent Module (THE STACK) ───────────────────────────────────────────────
+function AgentModule({ unlocked, onClose }: { unlocked: string[]; onClose: () => void }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(13,13,20,0.97)", zIndex:20, cursor:"pointer" }}
+    >
+      <div onClick={e => e.stopPropagation()} style={{ width:"100%", maxWidth:"560px", padding:"1.5rem", cursor:"default" }}>
+
+        {/* Header */}
+        <div style={{ textAlign:"center", marginBottom:"1.5rem" }}>
+          <p style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.6rem", fontFamily:"monospace", letterSpacing:"0.22em", margin:"0 0 0.3rem" }}>AI AGENT PLATFORM</p>
+          <h2 style={{ color:"#966bec", fontSize:"1.2rem", fontWeight:700, fontFamily:"monospace", letterSpacing:"0.14em", margin:"0 0 0.4rem" }}>THE STACK</h2>
+          <p style={{ color:"#a09fa2", fontSize:"0.75rem", margin:0, lineHeight:1.6 }}>
+            Your AI-powered delivery platform.<br />
+            <span style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.68rem" }}>Clear waves to deploy agents. All active agents apply each run.</span>
+          </p>
+        </div>
+
+        {/* Agent grid */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.55rem", marginBottom:"1.5rem" }}>
+          {AGENT_DEFS.map(agent => {
+            const isUnlocked = unlocked.includes(agent.id)
+            return (
+              <div key={agent.id} style={{
+                background: isUnlocked ? "rgba(74,222,128,0.05)" : "rgba(255,255,255,0.02)",
+                border: `1px solid ${isUnlocked ? "rgba(74,222,128,0.18)" : "rgba(255,255,255,0.06)"}`,
+                borderRadius:"6px", padding:"0.85rem 0.75rem",
+                position:"relative", overflow:"hidden",
+              }}>
+                {isUnlocked && (
+                  <div style={{ position:"absolute", top:0, left:0, right:0, height:"1px", background:"linear-gradient(90deg,transparent,rgba(74,222,128,0.45),transparent)" }} />
+                )}
+                <p style={{
+                  color: isUnlocked ? "rgba(74,222,128,0.5)" : "rgba(255,255,255,0.12)",
+                  fontSize:"0.57rem", fontFamily:"monospace", letterSpacing:"0.14em", margin:"0 0 0.3rem"
+                }}>{agent.station}</p>
+                <p style={{
+                  color: isUnlocked ? "#d8d7d8" : "#505055",
+                  fontSize:"0.75rem", fontWeight:600, margin:"0 0 0.3rem", fontFamily:"monospace"
+                }}>{agent.name}</p>
+                <p style={{
+                  color: isUnlocked ? "#a09fa2" : "rgba(255,255,255,0.18)",
+                  fontSize:"0.67rem", margin:"0 0 0.4rem", lineHeight:1.55
+                }}>{agent.desc}</p>
+                {isUnlocked ? (
+                  <p style={{ color:"rgba(74,222,128,0.55)", fontSize:"0.58rem", fontFamily:"monospace", margin:0 }}>● ACTIVE</p>
+                ) : (
+                  <p style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.58rem", fontFamily:"monospace", margin:0 }}>⊗ {agent.unlockNote}</p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Footer */}
+        <div style={{ textAlign:"center" }}>
+          {unlocked.length === 0 ? (
+            <p style={{ color:"rgba(255,255,255,0.22)", fontSize:"0.72rem", margin:"0 0 1rem" }}>
+              No agents deployed. Clear <span style={{ color:"#966bec" }}>WAVE 1</span> to bring the first agent online.
+            </p>
+          ) : (
+            <p style={{ color:"rgba(74,222,128,0.55)", fontSize:"0.72rem", margin:"0 0 1rem", fontFamily:"monospace" }}>
+              {unlocked.length} of {AGENT_DEFS.length} agents active on next run
+            </p>
+          )}
+          <button onClick={onClose} style={{ background:"transparent", border:"1px solid rgba(150,107,236,0.3)", borderRadius:"4px", padding:"0.45rem 1.5rem", color:"#966bec", cursor:"pointer", fontSize:"0.8rem" }}>
+            Close
+          </button>
+        </div>
+
       </div>
     </div>
   )
