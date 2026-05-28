@@ -36,6 +36,17 @@ const STORY_WORDS = [
 ]
 const POWERUP_WORDS = ["CLARITY", "ANCHOR", "AMPLIFY", "TIMEBOX", "REBASE", "HOTFIX", "REFACTOR", "KNOWLEDGE"]
 const SDLC_PHASES = ["DISCOVER", "DEFINE", "DESIGN", "DELIVER"]
+// Sector-specific word accent pools — each sector has thematic vocabulary
+const SECTOR_ACCENT_WORDS: string[][] = [
+  // Sector 1: DISCOVER — research, empathy, hypothesis
+  ["hypothesis","user interview","pain point","insight","discovery","observe","empathize","assumption","voice of customer","problem space","ethnography","mental model","user need","open question","synthesis"],
+  // Sector 2: DEFINE — requirements, acceptance criteria, scope
+  ["acceptance criteria","given that","edge case","constraint","out of scope","definition","requirement","boundary condition","validation rule","spec doc","non-functional","signed off","handoff","success metric","north star"],
+  // Sector 3: DESIGN — systems, architecture, patterns
+  ["wireframe","component","system design","data flow","architecture","prototype","feedback loop","design token","interaction","information architecture","API contract","dependency graph","coupling","abstraction","interface"],
+  // Sector 4: DELIVER — shipping, ops, release
+  ["deploy","ship it","merge conflict","rollout","production","release notes","hotfix","rollback","on-call","incident","MTTR","SLA","canary","feature flag cleanup","post-mortem"],
+]
 const BG_CHARS = ["·","∅","→","←","⊗","△","□","◇","/","\\","{}","()","//","=>","??","##","@@"]
 
 const CAPY_PLAY_COMMENTS = [
@@ -211,7 +222,7 @@ interface GState {
   invuln: boolean; invulnEnd: number; W: number; running: boolean
   upgrades: Record<string, number>; shieldRegenAt: number
   combo: number; lastKill: number; shake: number
-  capyMsg: string; capyMsgEnd: number; nextCapyMsg: number
+  capyMsg: string; capyMsgEnd: number; capyMsgStart: number; nextCapyMsg: number
   bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null; maxCombo: number; lastStorm: number
   paused: boolean; lastMilestone: number; livesAtWave: number; py: number; storyStreak: number
   lastLifeRegen: number; lastAutoFire: number; firstKill: boolean
@@ -242,7 +253,7 @@ function initState(W: number): GState {
     invuln: false, invulnEnd: 0, W, running: false,
     upgrades: {}, shieldRegenAt: 0,
     combo: 1, lastKill: 0, shake: 0,
-    capyMsg: "", capyMsgEnd: 0, nextCapyMsg: 0,
+    capyMsg: "", capyMsgEnd: 0, capyMsgStart: 0, nextCapyMsg: 0,
     bossWarn: null, mouseX: -1, waveAnn: null, maxCombo: 1, lastStorm: 0,
     paused: false, lastMilestone: 0, livesAtWave: MAX_LIVES, py: PLAYER_Y, storyStreak: 0,
     lastLifeRegen: 0, lastAutoFire: 0, firstKill: false,
@@ -509,9 +520,13 @@ export default function HomePage() {
 
       // ambient drone pitch
       if (g.paused) { droneVol(0.008) }
+      else if (g.boss?.name === "THE VOID") {
+        // THE VOID: very deep drone with slow throb
+        dronePitch(28 + 4 * Math.sin(now / 800)); droneVol(g.boss.raged ? 0.055 : 0.045)
+      }
       else if (g.boss?.raged) { dronePitch(95 + 5 * Math.sin(now / 600)); droneVol(0.04) }
       else if (g.boss) { dronePitch(72); droneVol(0.035) }
-      else { dronePitch(52 + g.level * 4); droneVol(0.025) }
+      else { dronePitch(52 + (g.endless ? Math.min(g.endlessWave, 4) * 6 : g.level * 4)); droneVol(0.025) }
 
       // wave announce tick
       if (g.waveAnn) {
@@ -637,7 +652,15 @@ export default function HomePage() {
           let type: Word["type"] = "story", text = ""
           if (roll < 0.14)      { type = "bug";     text = BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)] }
           else if (roll < 0.21) { type = "powerup"; text = POWERUP_WORDS[Math.floor(Math.random() * POWERUP_WORDS.length)] }
-          else                  { text = STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)] }
+          else {
+            // 35% chance of sector-specific accent word in story mode (not endless)
+            const accentPool = !g.endless ? SECTOR_ACCENT_WORDS[g.level - 1] : null
+            if (accentPool && Math.random() < 0.35) {
+              text = accentPool[Math.floor(Math.random() * accentPool.length)]
+            } else {
+              text = STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)]
+            }
+          }
           const slowFactor = Math.pow(0.85, g.upgrades.word_slow ?? 0)
           const designMul = g.activeAgents.includes("claude_design") ? 0.88 : 1
           const spd2 = (1.3 + g.level * 0.25 + (g.endless ? Math.floor(g.score / 800) * 0.12 : 0)) * slowFactor * designMul
@@ -1272,6 +1295,10 @@ export default function HomePage() {
           g.lastMilestone = m
           g.particles.push({ x: canvas.width/2, y: GH/2 + 20, vx: 0, vy: -0.7, life: 1.6, glyph: `${m.toLocaleString()} pts`, col: "#facc15", sz: 14 })
           g.shake = 3
+          // Milestone fanfare: ascending tone based on milestone tier
+          const tier = milestones.indexOf(m)
+          tone(600 + tier * 80, 0.08, 0.28); setTimeout(() => tone(800 + tier * 100, 0.08, 0.32), 100)
+          setTimeout(() => tone(1000 + tier * 120, 0.15, 0.35), 200)
         }
       }
 
@@ -1529,7 +1556,12 @@ export default function HomePage() {
 
 function showCapyMsg(g: GState, msg: string, now: number) {
   g.capyMsg = msg
-  g.capyMsgEnd = now + 3800
+  g.capyMsgStart = now
+  // Scale display time by message length: longer messages linger more
+  const lineCount = msg.split("\n").length
+  const charCount = msg.replace(/\n/g, "").length
+  const displayMs = Math.max(3200, Math.min(6500, 2600 + lineCount * 520 + charCount * 18))
+  g.capyMsgEnd = now + displayMs
   g.nextCapyMsg = now + 28000
 }
 
@@ -2169,32 +2201,38 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     const fadeOut = wa.t > 75 ? Math.max(0, 1 - (wa.t - 75) / 30) : 1
     const slide   = Math.max(0, 1 - wa.t / 70) * cw * 0.25
     ctx.globalAlpha = fadeIn * fadeOut
-    ctx.fillStyle = "#966bec"
+    // color varies: void depth = purple, endless = green, sector = purple
+    const isVoidDepth = g.endless && g.endlessWave >= 5
+    const annCol = isVoidDepth ? "#a855f7" : g.endless ? "#4ade80" : "#966bec"
+    ctx.fillStyle = annCol
+    ctx.save()
+    if (isVoidDepth) { ctx.shadowColor = "#6d28d9"; ctx.shadowBlur = 18 * (0.5 + 0.5 * Math.sin(now / 100)) }
     ctx.font = "bold 17px monospace"; ctx.textAlign = "center"
     ctx.fillText(wa.text, cw/2 + slide, GH/2 - 10)
-    ctx.font = "8px monospace"
-    ctx.fillStyle = "rgba(255,255,255,0.4)"
-    ctx.fillText("SPEC BLASTER", cw/2 + slide, GH/2 + 10)
+    ctx.restore()
+    ctx.font = "8px monospace"; ctx.globalAlpha = (fadeIn * fadeOut) * 0.4
+    ctx.fillStyle = "#ffffff"
+    ctx.fillText(g.endless ? "INFINITE RECURSION" : "SPEC BLASTER", cw/2 + slide, GH/2 + 10)
     ctx.globalAlpha = 1
   }
 
   // capy in-game comment
   if (g.capyMsg) {
-    const elapsed = now - (g.capyMsgEnd - 4000)
+    const elapsed = now - g.capyMsgStart
     const remaining = g.capyMsgEnd - now
-    const a = Math.min(1, Math.min(elapsed / 400, remaining / 600))
+    const a = Math.min(1, Math.min(elapsed / 350, remaining / 550))
     if (a > 0) {
       const lines = g.capyMsg.split("\n")
-      const bw = Math.max(130, Math.max(...lines.map(l => l.length)) * 7) + 24
-      const bh = lines.length > 1 ? 42 : 28
-      const bx = 10, by = GH - 48 - bh
-      ctx.globalAlpha = a * 0.92
-      ctx.fillStyle = "#1e1e24"
-      roundRect(ctx, bx, by, bw, bh, 4); ctx.fill()
-      ctx.strokeStyle = "rgba(150,107,236,0.5)"; ctx.lineWidth = 1
-      roundRect(ctx, bx, by, bw, bh, 4); ctx.stroke()
+      const bw = Math.max(130, Math.max(...lines.map(l => l.length)) * 6.8) + 28
+      const bh = 20 + lines.length * 14
+      const bx = 10, by = GH - 50 - bh
+      ctx.globalAlpha = a * 0.94
+      ctx.fillStyle = "#15151e"
+      roundRect(ctx, bx, by, bw, bh, 5); ctx.fill()
+      ctx.strokeStyle = "rgba(150,107,236,0.45)"; ctx.lineWidth = 1
+      roundRect(ctx, bx, by, bw, bh, 5); ctx.stroke()
       ctx.fillStyle = "#f5f5f5"; ctx.font = "9px monospace"; ctx.textAlign = "left"
-      lines.forEach((ln, i) => ctx.fillText((i === 0 ? "🦫 " : "   ") + ln, bx + 8, by + 17 + i * 14))
+      lines.forEach((ln, i) => ctx.fillText((i === 0 ? "🦫 " : "   ") + ln, bx + 8, by + 15 + i * 14))
       ctx.globalAlpha = 1
     }
   }
