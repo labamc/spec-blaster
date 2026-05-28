@@ -364,41 +364,56 @@ export default function HomePage() {
     <main style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", padding:"0.5rem", background:"#0d0d14" }}>
       <div style={{ width:"100%", maxWidth:"800px" }}>
         <div style={{ marginBottom:"0.5rem", textAlign:"center" }}>
-          <h1 style={{ fontSize:"1.4rem", fontWeight:"bold", color:"#a78bfa", letterSpacing:"0.15em", fontFamily:"monospace", margin:0 }}>SPEC BLASTER</h1>
+          <h1 style={{ fontSize:"1.4rem", fontWeight:"bold", color:"#966bec", letterSpacing:"0.15em", fontFamily:"monospace", margin:0 }}>SPEC BLASTER</h1>
         </div>
         <div ref={wrapRef} style={{ position:"relative", width:"100%", borderRadius:"6px", overflow:"hidden", border:"1px solid rgba(255,255,255,0.08)" }}>
 
           {phase === "attract" && (
             <Overlay onClick={startGame}>
-              <div style={{ fontSize:"3rem", marginBottom:"0.5rem" }}>🦫</div>
-              <p style={{ color:"#a78bfa", fontFamily:"monospace", fontSize:"1rem", marginBottom:"0.4rem" }}>SPEC BLASTER</p>
-              <p style={{ color:"rgba(255,255,255,0.4)", fontFamily:"monospace", fontSize:"0.75rem", marginBottom:"1rem" }}>Shoot the vague specs. Survive the SDLC.</p>
-              <div style={{ fontFamily:"monospace", fontSize:"0.7rem", marginBottom:"1.2rem", lineHeight:1.8 }}>
-                <span style={{ color:"#fdba74" }}>■ bugs (+75)</span>{"  "}
-                <span style={{ color:"#7dd3fc" }}>■ stories (+10)</span>{"  "}
-                <span style={{ color:"#4ade80" }}>■ powerups</span>
+              <div style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"2rem 2.5rem", maxWidth:"380px" }}>
+                <div style={{ fontSize:"2.75rem", marginBottom:"0.75rem" }}>🦫</div>
+                <p style={{ color:"#966bec", fontSize:"1.1rem", fontWeight:600, marginBottom:"0.3rem", letterSpacing:"0.1em" }}>SPEC BLASTER</p>
+                <p style={{ color:"#a09fa2", fontSize:"0.8rem", marginBottom:"1.5rem" }}>Shoot the vague specs. Survive the SDLC.</p>
+                <div style={{ display:"flex", flexDirection:"column", gap:"0.4rem", marginBottom:"1.75rem", textAlign:"left" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:"0.6rem", fontSize:"0.78rem", color:"#d8d7d8" }}>
+                    <span style={{ width:8, height:8, borderRadius:"50%", background:"#fdba74", display:"inline-block", flexShrink:0 }} />
+                    bugs — <span style={{ color:"#a09fa2" }}>vague language, +75pts</span>
+                  </div>
+                  <div style={{ display:"flex", alignItems:"center", gap:"0.6rem", fontSize:"0.78rem", color:"#d8d7d8" }}>
+                    <span style={{ width:8, height:8, borderRadius:"50%", background:"#7dd3fc", display:"inline-block", flexShrink:0 }} />
+                    stories — <span style={{ color:"#a09fa2" }}>user requirements, +10pts</span>
+                  </div>
+                  <div style={{ display:"flex", alignItems:"center", gap:"0.6rem", fontSize:"0.78rem", color:"#d8d7d8" }}>
+                    <span style={{ width:8, height:8, borderRadius:"50%", background:"#4ade80", display:"inline-block", flexShrink:0 }} />
+                    powerups — <span style={{ color:"#a09fa2" }}>KNOWLEDGE · FLAG · ENGAGE · TIMEBOX</span>
+                  </div>
+                </div>
+                <div style={{ background:"#966bec", color:"#fff", borderRadius:"4px", padding:"0.5rem 1.25rem", fontSize:"0.85rem", fontWeight:500, display:"inline-block" }}>
+                  Start game
+                </div>
               </div>
-              <p style={{ color:"#a78bfa", fontFamily:"monospace", fontSize:"0.85rem" }}>[ click / tap to start ]</p>
             </Overlay>
           )}
 
           {phase === "capy" && (
             <Overlay onClick={advanceCapy}>
-              <div style={{ fontSize:"3.5rem", marginBottom:"0.75rem" }}>🦫</div>
-              <div style={{ background:"rgba(167,139,250,0.1)", border:"1px solid rgba(167,139,250,0.3)", borderRadius:"8px", padding:"0.9rem 1.4rem", marginBottom:"0.9rem", maxWidth:"340px" }}>
-                <p style={{ fontFamily:"monospace", color:"#f8fafc", fontSize:"0.9rem", lineHeight:1.7, margin:0, whiteSpace:"pre-line" }}>
-                  {capyLines[capyIdx]}
-                </p>
+              <div style={{ maxWidth:"360px" }}>
+                <div style={{ fontSize:"3rem", marginBottom:"1rem" }}>🦫</div>
+                <div className="capy-glow" style={{ background:"#1e1e24", border:"1px solid rgba(150,107,236,0.3)", borderRadius:"6px", padding:"1.1rem 1.5rem", marginBottom:"1rem" }}>
+                  <p style={{ color:"#f5f5f5", fontSize:"0.9rem", lineHeight:1.75, margin:0, whiteSpace:"pre-line" }}>
+                    {capyLines[capyIdx]}
+                  </p>
+                </div>
+                <p style={{ color:"#a09fa2", fontSize:"0.72rem", marginBottom:"0.5rem" }}>click to continue</p>
+                {level <= 4 && BOSSES[level - 1] && (
+                  <p style={{ color:"#966bec", fontSize:"0.72rem", fontWeight:500 }}>
+                    Next: {BOSSES[level - 1].name}
+                  </p>
+                )}
+                {level > 4 && (
+                  <p style={{ color:"#4ade80", fontSize:"0.72rem", fontWeight:500 }}>ENDLESS MODE</p>
+                )}
               </div>
-              <p style={{ color:"rgba(255,255,255,0.3)", fontFamily:"monospace", fontSize:"0.7rem", marginBottom:"0.4rem" }}>[ click to continue ]</p>
-              {level <= 4 && BOSSES[level - 1] && (
-                <p style={{ color:"#a78bfa", fontFamily:"monospace", fontSize:"0.7rem" }}>
-                  Next: {BOSSES[level - 1].name}
-                </p>
-              )}
-              {level > 4 && (
-                <p style={{ color:"#4ade80", fontFamily:"monospace", fontSize:"0.7rem" }}>ENDLESS MODE</p>
-              )}
             </Overlay>
           )}
 
@@ -408,9 +423,9 @@ export default function HomePage() {
 
           <canvas ref={canvasRef} height={GH} style={{ display:"block", width:"100%", height:GH }} />
         </div>
-        <div style={{ marginTop:"0.4rem", display:"flex", justifyContent:"space-between", fontSize:"0.65rem", color:"rgba(255,255,255,0.25)", fontFamily:"monospace", padding:"0 2px" }}>
-          <span>← → / A D move · SPACE shoot</span>
-          <a href="/leaderboard" style={{ color:"rgba(167,139,250,0.4)", textDecoration:"none" }}>leaderboard →</a>
+        <div style={{ marginTop:"0.4rem", display:"flex", justifyContent:"space-between", fontSize:"0.65rem", color:"#a09fa2", fontFamily:"monospace", padding:"0 2px" }}>
+          <span style={{ color:"rgba(255,255,255,0.2)" }}>← → / A D move · SPACE shoot</span>
+          <a href="/leaderboard" style={{ color:"#966bec", textDecoration:"none", opacity:0.6 }}>leaderboard →</a>
         </div>
       </div>
     </main>
@@ -442,12 +457,12 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number)
   ctx.fillStyle = "rgba(255,255,255,0.06)"
   ctx.fillRect(jx, jy, jw, 8)
   const prog = g.endless ? 1 : Math.min(1, ((g.level - 1) + (g.boss ? (1 - g.boss.hp / g.boss.maxHp) * 0.85 : 0)) / 4)
-  ctx.fillStyle = "#a78bfa"
+  ctx.fillStyle = "#966bec"
   ctx.fillRect(jx, jy, jw * prog, 8)
   ctx.font = "8px monospace"; ctx.textAlign = "center"
   SDLC_PHASES.forEach((ph, i) => {
     const lx = jx + jw * (i / 4) + jw / 8
-    ctx.fillStyle = i < g.level || g.endless ? "#a78bfa" : "rgba(255,255,255,0.18)"
+    ctx.fillStyle = i < g.level || g.endless ? "#966bec" : "rgba(255,255,255,0.18)"
     ctx.fillText(ph, lx, jy - 3)
   })
 
@@ -480,7 +495,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number)
   // bullets
   g.bullets.forEach(b => {
     if (!b.enemy) {
-      ctx.fillStyle = g.triple ? "#4ade80" : "#a78bfa"
+      ctx.fillStyle = g.triple ? "#4ade80" : "#966bec"
       ctx.fillRect(b.x - 2, b.y - 11, 4, 14)
     } else {
       ctx.fillStyle = "#f87171"
@@ -513,7 +528,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number)
 
   // HUD top-left: score + level
   ctx.textAlign = "left"; ctx.font = "12px monospace"
-  ctx.fillStyle = "#a78bfa"; ctx.fillText(g.score.toLocaleString(), 10, 20)
+  ctx.fillStyle = "#966bec"; ctx.fillText(g.score.toLocaleString(), 10, 20)
   ctx.fillStyle = "rgba(255,255,255,0.4)"
   ctx.fillText(g.endless ? "ENDLESS" : `LVL ${g.level}`, 10, 36)
 
@@ -542,7 +557,7 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 
 function Overlay({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
-    <div onClick={onClick} style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(13,13,20,0.96)", cursor:"pointer", zIndex:10 }}>
+    <div onClick={onClick} style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(20,20,26,0.97)", cursor:"pointer", zIndex:10 }}>
       <div style={{ textAlign:"center", padding:"1.5rem" }}>{children}</div>
     </div>
   )
@@ -568,12 +583,12 @@ function GameOver({ score, level, kills, onRestart }: { score: number; level: nu
   }
 
   return (
-    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(13,13,20,0.97)", zIndex:10 }}>
-      <div style={{ textAlign:"center", maxWidth:"340px", padding:"2rem" }}>
-        <div style={{ fontSize:"2.5rem", marginBottom:"0.5rem" }}>🦫</div>
-        <p style={{ color:"#f87171", fontFamily:"monospace", fontWeight:"bold", fontSize:"1.1rem", margin:"0 0 0.25rem" }}>SPEC WINS</p>
-        <p style={{ color:"rgba(255,255,255,0.35)", fontFamily:"monospace", fontSize:"0.72rem", margin:"0 0 1rem" }}>reached level {level} · {kills} specs destroyed</p>
-        <p style={{ color:"#a78bfa", fontFamily:"monospace", fontSize:"1.6rem", fontWeight:"bold", margin:"0 0 1.5rem" }}>{score.toLocaleString()}</p>
+    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(20,20,26,0.97)", zIndex:10 }}>
+      <div style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"2rem", maxWidth:"340px", width:"100%", textAlign:"center" }}>
+        <div style={{ fontSize:"2.25rem", marginBottom:"0.6rem" }}>🦫</div>
+        <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.2rem" }}>SPEC WINS</p>
+        <p style={{ color:"#a09fa2", fontSize:"0.72rem", margin:"0 0 1.25rem" }}>level {level} · {kills} specs destroyed</p>
+        <p style={{ color:"#966bec", fontSize:"1.75rem", fontWeight:700, margin:"0 0 1.5rem", fontFamily:"monospace" }}>{score.toLocaleString()}</p>
 
         {!submitted ? (
           <>
@@ -581,25 +596,25 @@ function GameOver({ score, level, kills, onRestart }: { score: number; level: nu
               value={handle} onChange={e => setHandle(e.target.value)}
               onKeyDown={e => e.key === "Enter" && submit()}
               placeholder="your handle" maxLength={20}
-              style={{ display:"block", margin:"0 auto 0.75rem", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(167,139,250,0.3)", borderRadius:"4px", color:"#f8fafc", fontFamily:"monospace", fontSize:"0.85rem", padding:"0.45rem 0.75rem", width:"180px", outline:"none", textAlign:"center" }}
+              style={{ display:"block", margin:"0 auto 0.75rem", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:"4px", color:"#f5f5f5", fontSize:"0.85rem", padding:"0.5rem 0.75rem", width:"200px", outline:"none", textAlign:"center" }}
             />
             <button onClick={submit} disabled={!handle.trim() || submitting}
-              style={{ background:"#a78bfa", color:"#0d0d14", border:"none", borderRadius:"4px", padding:"0.45rem 1.4rem", fontFamily:"monospace", fontWeight:"bold", cursor:handle.trim() ? "pointer" : "default", opacity:handle.trim() ? 1 : 0.4, marginBottom:"0.75rem", fontSize:"0.85rem" }}>
-              {submitting ? "..." : "SUBMIT SCORE"}
+              style={{ background:"#966bec", color:"#fff", border:"none", borderRadius:"4px", padding:"0.5rem 1.5rem", fontWeight:500, cursor:handle.trim() ? "pointer" : "default", opacity:handle.trim() ? 1 : 0.4, marginBottom:"1rem", fontSize:"0.85rem" }}>
+              {submitting ? "saving..." : "Submit score"}
             </button>
           </>
         ) : (
-          <p style={{ color:"#4ade80", fontFamily:"monospace", fontSize:"0.85rem", margin:"0 0 0.75rem" }}>Score saved! 🦫</p>
+          <p style={{ color:"#4ade80", fontSize:"0.85rem", margin:"0 0 1rem" }}>Score saved 🦫</p>
         )}
 
-        <div style={{ display:"flex", gap:"0.75rem", justifyContent:"center", marginTop:"0.5rem" }}>
+        <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"1rem", display:"flex", gap:"0.75rem", justifyContent:"center" }}>
           <button onClick={onRestart}
-            style={{ background:"transparent", border:"1px solid rgba(167,139,250,0.4)", borderRadius:"4px", padding:"0.4rem 1rem", color:"#a78bfa", fontFamily:"monospace", cursor:"pointer", fontSize:"0.8rem" }}>
-            PLAY AGAIN
+            style={{ background:"transparent", border:"1px solid #4c4c51", borderRadius:"4px", padding:"0.4rem 1rem", color:"#d8d7d8", cursor:"pointer", fontSize:"0.8rem" }}>
+            Play again
           </button>
           <a href="/leaderboard"
-            style={{ border:"1px solid rgba(255,255,255,0.12)", borderRadius:"4px", padding:"0.4rem 1rem", color:"rgba(255,255,255,0.4)", fontFamily:"monospace", textDecoration:"none", fontSize:"0.8rem" }}>
-            LEADERBOARD
+            style={{ border:"1px solid rgba(255,255,255,0.08)", borderRadius:"4px", padding:"0.4rem 1rem", color:"#a09fa2", textDecoration:"none", fontSize:"0.8rem" }}>
+            Leaderboard
           </a>
         </div>
       </div>
