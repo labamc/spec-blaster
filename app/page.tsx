@@ -1924,97 +1924,80 @@ export default function HomePage() {
 
           {phase === "attract" && (
             <Overlay onClick={startGame} dim={0.88}>
-              <div style={{ background:"#0d0d16", border:"1px solid rgba(150,107,236,0.32)", borderRadius:"10px", padding:"1.6rem 2rem", maxWidth:"420px", width:"100%", boxShadow:"0 0 40px rgba(150,107,236,0.12)" }}>
+              <div style={{ background:"#0d0d16", border:"1px solid rgba(150,107,236,0.35)", borderRadius:"8px", padding:"1.2rem 1.4rem", maxWidth:"360px", width:"calc(100% - 2rem)", boxShadow:"0 0 32px rgba(150,107,236,0.15)" }}>
 
                 {/* Title */}
-                <div style={{ marginBottom:"1.4rem", borderBottom:"1px solid rgba(150,107,236,0.14)", paddingBottom:"1.1rem" }}>
-                  <p style={{ color:"rgba(150,107,236,0.55)", fontSize:"0.58rem", fontFamily:"monospace", letterSpacing:"0.28em", margin:"0 0 0.4rem" }}>CARRIER SIGNAL · ACTIVE</p>
-                  <p style={{ color:"#c4b5fd", fontSize:"1.35rem", fontWeight:700, letterSpacing:"0.18em", margin:"0 0 0.5rem", fontFamily:"monospace" }}>SPEC BLASTER</p>
+                <div style={{ marginBottom:"1rem" }}>
+                  <p style={{ color:"#c4b5fd", fontSize:"1.25rem", fontWeight:700, letterSpacing:"0.16em", margin:"0 0 0.25rem", fontFamily:"monospace" }}>SPEC BLASTER</p>
                   <AttractTagline />
                 </div>
 
-                {/* What you're shooting — clear, labeled, functional */}
-                <div style={{ marginBottom:"1.2rem" }}>
-                  <p style={{ color:"rgba(255,255,255,0.5)", fontSize:"0.6rem", fontFamily:"monospace", letterSpacing:"0.16em", margin:"0 0 0.6rem" }}>WORD TYPES</p>
-                  <div style={{ display:"flex", flexDirection:"column", gap:"0.5rem" }}>
-                    {([
-                      { col:"#fb923c", label:"CORRUPTION", tag:"+75 pts", desc:"Corrupted intent. Primary threat — shoot on sight." },
-                      { col:"#7dd3fc", label:"NOISE",      tag:"+10 pts", desc:"Ghost directives. Clear the board to advance." },
-                      { col:"#4ade80", label:"ARTIFACTS",  tag:"POWER-UP", desc:"CLARITY · ANCHOR · REBASE · DEPLOY · RETRO + more" },
-                    ]).map(({ col, label, tag, desc }) => (
-                      <div key={label} style={{ display:"grid", gridTemplateColumns:"auto auto 1fr", alignItems:"start", gap:"0.5rem 0.65rem" }}>
-                        <span style={{ width:8, height:8, borderRadius:"2px", background:col, display:"inline-block", marginTop:"0.15rem", flexShrink:0 }} />
-                        <div>
-                          <span style={{ color:col, fontFamily:"monospace", fontSize:"0.7rem", fontWeight:600, letterSpacing:"0.06em" }}>{label}</span>
-                          <span style={{ color:"rgba(255,255,255,0.35)", fontFamily:"monospace", fontSize:"0.6rem", marginLeft:"0.5rem" }}>{tag}</span>
-                        </div>
-                        <span style={{ color:"rgba(255,255,255,0.45)", fontSize:"0.67rem", lineHeight:1.4 }}>{desc}</span>
-                      </div>
-                    ))}
-                  </div>
+                {/* What to shoot */}
+                <div style={{ marginBottom:"0.9rem", background:"rgba(255,255,255,0.03)", borderRadius:"5px", padding:"0.6rem 0.75rem", border:"1px solid rgba(255,255,255,0.06)" }}>
+                  {([
+                    { col:"#fb923c", label:"CORRUPTION", tag:"+75 pts", desc:"primary threat" },
+                    { col:"#7dd3fc", label:"NOISE",      tag:"+10 pts", desc:"ghost directives" },
+                    { col:"#4ade80", label:"ARTIFACTS",  tag:"POWER-UP", desc:"CLARITY · ANCHOR · REBASE + more" },
+                  ]).map(({ col, label, tag, desc }) => (
+                    <div key={label} style={{ display:"flex", alignItems:"baseline", gap:"0.5rem", marginBottom:"0.3rem" }}>
+                      <span style={{ width:7, height:7, borderRadius:"2px", background:col, display:"inline-block", flexShrink:0, position:"relative", top:"1px" }} />
+                      <span style={{ color:col, fontFamily:"monospace", fontSize:"0.68rem", fontWeight:700, flexShrink:0 }}>{label}</span>
+                      <span style={{ color:"rgba(255,255,255,0.3)", fontFamily:"monospace", fontSize:"0.58rem", flexShrink:0 }}>{tag}</span>
+                      <span style={{ color:"rgba(255,255,255,0.38)", fontSize:"0.62rem", minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{desc}</span>
+                    </div>
+                  ))}
                 </div>
 
-                {/* Controls — readable */}
-                <div style={{ borderTop:"1px solid rgba(255,255,255,0.07)", borderBottom:"1px solid rgba(255,255,255,0.07)", padding:"0.6rem 0", marginBottom:"1rem" }}>
-                  <div style={{ display:"flex", flexWrap:"wrap", gap:"0.3rem 1.1rem" }}>
-                    {[["WASD / ←→","move"],["SPACE","fire"],["hold SPACE","laser"],["M","drop mine"]].map(([k,v]) => (
-                      <span key={k} style={{ fontSize:"0.65rem", fontFamily:"monospace", color:"rgba(255,255,255,0.5)" }}>
-                        <span style={{ color:"rgba(150,107,236,0.85)" }}>{k}</span>
-                        <span style={{ color:"rgba(255,255,255,0.28)" }}> {v}</span>
-                      </span>
-                    ))}
-                  </div>
+                {/* Controls */}
+                <div style={{ display:"flex", flexWrap:"wrap", gap:"0.25rem 0.9rem", marginBottom:"0.9rem" }}>
+                  {[["WASD","move"],["SPACE","shoot"],["hold SPACE","laser"],["M","mine"]].map(([k,v]) => (
+                    <span key={k} style={{ fontSize:"0.62rem", fontFamily:"monospace", whiteSpace:"nowrap" }}>
+                      <span style={{ color:"rgba(150,107,236,0.9)" }}>{k}</span>
+                      <span style={{ color:"rgba(255,255,255,0.3)" }}> {v}</span>
+                    </span>
+                  ))}
                 </div>
 
-                {/* Sectors */}
-                <div style={{ marginBottom:"1rem" }}>
-                  <p style={{ color:"rgba(255,255,255,0.5)", fontSize:"0.6rem", fontFamily:"monospace", letterSpacing:"0.16em", margin:"0 0 0.4rem" }}>SECTORS</p>
-                  <div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
-                    {["THE RECURSION","THE DRIFT","THE FRAGMENT","THE COLLAPSE","∞ ENDLESS"].map((s, i) => (
-                      <span key={s} style={{
-                        fontSize:"0.6rem", fontFamily:"monospace",
-                        color: i === 4 ? "rgba(168,85,247,0.8)" : "rgba(255,255,255,0.4)",
-                        letterSpacing:"0.06em",
-                      }}>
-                        {s}{i < 4 ? <span style={{ color:"rgba(255,255,255,0.15)", margin:"0 0.25rem" }}>→</span> : ""}
-                      </span>
-                    ))}
-                  </div>
+                {/* Sectors — compact single line */}
+                <div style={{ display:"flex", alignItems:"center", gap:"0.2rem", flexWrap:"wrap", marginBottom:"0.9rem", fontSize:"0.58rem", fontFamily:"monospace" }}>
+                  {["RECURSION","DRIFT","FRAGMENT","COLLAPSE"].map((s, i) => (
+                    <span key={s}>
+                      <span style={{ color:"rgba(255,255,255,0.38)" }}>{s}</span>
+                      <span style={{ color:"rgba(255,255,255,0.12)", margin:"0 0.2rem" }}>→</span>
+                    </span>
+                  ))}
+                  <span style={{ color:"rgba(168,85,247,0.85)" }}>∞ ENDLESS</span>
                 </div>
 
-                {/* Crew status */}
+                {/* Crew — only show if unlocked */}
                 {unlockedAgents.length > 0 && (() => {
                   const deployed = [...AGENT_DEFS, ...MERC_AGENTS].filter(a => selectedAgents.includes(a.id) && unlockedAgents.includes(a.id))
                   return (
-                    <div style={{ marginBottom:"1rem", borderTop:"1px solid rgba(255,255,255,0.07)", paddingTop:"0.75rem" }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:"0.5rem", marginBottom:"0.45rem" }}>
-                        <span style={{ color:"rgba(255,255,255,0.5)", fontSize:"0.6rem", fontFamily:"monospace", letterSpacing:"0.16em" }}>CREW</span>
-                        <div style={{ flex:1, height:"1px", background:"rgba(255,255,255,0.07)" }} />
+                    <div style={{ marginBottom:"0.9rem", borderTop:"1px solid rgba(255,255,255,0.07)", paddingTop:"0.7rem" }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:"0.4rem", marginBottom:"0.4rem" }}>
+                        <span style={{ color:"rgba(255,255,255,0.45)", fontSize:"0.58rem", fontFamily:"monospace", letterSpacing:"0.14em" }}>CREW</span>
+                        <div style={{ flex:1, height:"1px", background:"rgba(255,255,255,0.06)" }} />
                         <button onClick={e => { e.stopPropagation(); setShowAgentModule(true) }}
-                          style={{ background:"none", border:"none", cursor:"pointer", color:"rgba(150,107,236,0.75)", fontSize:"0.6rem", fontFamily:"monospace", padding:0, letterSpacing:"0.06em" }}>
+                          style={{ background:"none", border:"none", cursor:"pointer", color:"rgba(150,107,236,0.7)", fontSize:"0.58rem", fontFamily:"monospace", padding:0 }}>
                           manage →
                         </button>
                       </div>
-                      {deployed.length > 0 ? (
-                        <div style={{ display:"flex", flexWrap:"wrap", gap:"0.35rem" }}>
-                          {deployed.map(a => {
-                            const upLv = agentUpgrades[a.id] ?? 0
-                            return (
-                              <span key={a.id} style={{
-                                background:"rgba(74,222,128,0.08)", border:"1px solid rgba(74,222,128,0.28)",
-                                borderRadius:"4px", padding:"0.2rem 0.55rem",
-                                color:"rgba(74,222,128,0.82)", fontSize:"0.62rem", fontFamily:"monospace",
-                              }}>
-                                {agentNames[a.id] ?? a.name}{upLv > 0 ? <span style={{ color:"rgba(74,222,128,0.45)", fontSize:"0.55rem" }}> lv{upLv+1}</span> : ""}
-                              </span>
-                            )
-                          })}
-                        </div>
-                      ) : (
-                        <p style={{ color:"rgba(248,113,113,0.65)", fontSize:"0.62rem", fontFamily:"monospace", margin:0 }}>
-                          ⚠ no crew deployed — earn agents by clearing sectors
-                        </p>
-                      )}
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:"0.3rem" }}>
+                        {deployed.length > 0 ? deployed.map(a => {
+                          const upLv = agentUpgrades[a.id] ?? 0
+                          return (
+                            <span key={a.id} style={{
+                              background:"rgba(74,222,128,0.07)", border:"1px solid rgba(74,222,128,0.25)",
+                              borderRadius:"3px", padding:"0.15rem 0.45rem",
+                              color:"rgba(74,222,128,0.8)", fontSize:"0.6rem", fontFamily:"monospace",
+                            }}>
+                              {agentNames[a.id] ?? a.name}{upLv > 0 ? <span style={{ opacity:0.5 }}> lv{upLv+1}</span> : ""}
+                            </span>
+                          )
+                        }) : (
+                          <span style={{ color:"rgba(248,113,113,0.6)", fontSize:"0.6rem", fontFamily:"monospace" }}>no crew active</span>
+                        )}
+                      </div>
                     </div>
                   )
                 })()}
@@ -2022,25 +2005,25 @@ export default function HomePage() {
                 {/* CTA */}
                 <button onClick={startGame} style={{
                   width:"100%", background:"#7c3aed", color:"#fff", border:"none", borderRadius:"5px",
-                  padding:"0.65rem 1.5rem", fontSize:"0.9rem", fontWeight:700, letterSpacing:"0.1em",
-                  cursor:"pointer", fontFamily:"monospace", marginBottom:"0.85rem",
-                  boxShadow:"0 0 20px rgba(124,58,237,0.35)",
+                  padding:"0.6rem", fontSize:"0.85rem", fontWeight:700, letterSpacing:"0.1em",
+                  cursor:"pointer", fontFamily:"monospace", marginBottom:"0.6rem",
+                  boxShadow:"0 0 18px rgba(124,58,237,0.4)",
                 }}>
                   LAUNCH MISSION
                 </button>
 
                 {/* Scores */}
                 {(topEntry || personalBest > 0 || personalDepthBest > 0) && (
-                  <div style={{ display:"flex", gap:"1rem", justifyContent:"center", flexWrap:"wrap" }}>
+                  <div style={{ display:"flex", gap:"0.75rem", justifyContent:"center", flexWrap:"wrap" }}>
                     {topEntry && (
-                      <p style={{ color:"rgba(253,186,116,0.7)", fontSize:"0.65rem", fontFamily:"monospace", margin:0 }}>
+                      <span style={{ color:"rgba(253,186,116,0.7)", fontSize:"0.6rem", fontFamily:"monospace" }}>
                         🏆 {topEntry.handle} · {topEntry.score.toLocaleString()}
-                      </p>
+                      </span>
                     )}
                     {personalBest > 0 && (
-                      <p style={{ color:"rgba(196,181,253,0.7)", fontSize:"0.65rem", fontFamily:"monospace", margin:0 }}>
+                      <span style={{ color:"rgba(196,181,253,0.7)", fontSize:"0.6rem", fontFamily:"monospace" }}>
                         PB · {personalBest.toLocaleString()}
-                      </p>
+                      </span>
                     )}
                     {personalDepthBest >= 2 && (
                       <p style={{ color: personalDepthBest >= 5 ? "rgba(168,85,247,0.75)" : "rgba(74,222,128,0.6)", fontSize:"0.65rem", fontFamily:"monospace", margin:0 }}>
