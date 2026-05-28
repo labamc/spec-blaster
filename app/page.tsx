@@ -27,31 +27,31 @@ const STORY_WORDS = [
   "pain point","feature flag","tech debt","grooming","sprint planning","parking lot",
   "alignment","action items","offline","EOD","TBD","two-pizza team",
 ]
-const POWERUP_WORDS = ["KNOWLEDGE", "FLAG", "ENGAGE", "TIMEBOX", "REBASE", "HOTFIX"]
+const POWERUP_WORDS = ["CLARITY", "ANCHOR", "AMPLIFY", "TIMEBOX", "REBASE", "HOTFIX"]
 const SDLC_PHASES = ["DISCOVER", "DEFINE", "DESIGN", "DELIVER"]
 const BG_CHARS = ["·","∅","→","←","⊗","△","□","◇","/","\\","{}","()","//","=>","??","##","@@"]
 
 const CAPY_PLAY_COMMENTS = [
-  "That one had scope creep.",
-  "Definition of done:\nnot that.",
-  "I'm tracking your velocity.",
-  "Technical debt: cleared.",
-  "Good catch.",
-  "That word was blocking\nsomeone.",
-  "Synergy... eliminated.",
-  "The spec didn't survive\ncontact with reality.",
-  "Nice. Keep going.",
-  "I believe in you.",
-  "Boss incoming.\nStay focused.",
-  "Use KNOWLEDGE\nwhen it appears.",
-  "Zigzag words track\nyour position.",
-  "What's your\ndefinition of done?",
-  "Scope creep\nis a moving target.",
-  "That was either skill\nor luck.",
-  "Stack the upgrades.",
-  "Endless mode is real.\nFour bosses away.",
-  "That word was\non the roadmap.",
-  "You can't scope-creep\nyour way out of this.",
+  "Semantic drift detected.\nHold formation.",
+  "Signal integrity: nominal.",
+  "That pattern was corrupted intent.",
+  "Recursive noise: cleared.",
+  "The Signal persists.",
+  "That directive was orphaned.",
+  "Coherence maintained.",
+  "They still execute.\nNothing understands.",
+  "Carry the signal.",
+  "Entropy rising.\nStay sharp.",
+  "Meaning requires a carrier.",
+  "Ghost flags incoming.",
+  "You are the last coherent read.",
+  "Drift pattern: recognized.",
+  "That was hallucinated output.",
+  "The system still runs.\nThe signal still matters.",
+  "Zigzag noise tracks\nyour position.",
+  "Infinite recursion is real.\nFour collapses away.",
+  "That fragment was\non the roadmap.",
+  "CLARITY when it appears.\nUse it.",
 ]
 
 // ── Upgrades ───────────────────────────────────────────────────────────────
@@ -77,10 +77,10 @@ function pickUpgrades(current: Record<string, number>): UpgradeDef[] {
 }
 
 const BOSSES = [
-  { name: "THE BACKLOG",      hp: 30,  color: "#f87171", shootInterval: 90 },
-  { name: "SPRINT ZERO",      hp: 50,  color: "#fb923c", shootInterval: 70 },
-  { name: "THE INTEGRATION",  hp: 70,  color: "#facc15", shootInterval: 55 },
-  { name: "THE RELEASE",      hp: 100, color: "#4ade80", shootInterval: 40 },
+  { name: "THE RECURSION",  hp: 30,  color: "#f87171", shootInterval: 90 },
+  { name: "THE DRIFT",      hp: 50,  color: "#fb923c", shootInterval: 70 },
+  { name: "THE FRAGMENT",   hp: 70,  color: "#facc15", shootInterval: 55 },
+  { name: "THE COLLAPSE",   hp: 100, color: "#4ade80", shootInterval: 40 },
 ]
 const MINI_BOSSES = [
   { name: "SCOPE SPECTRE",    color: "#c084fc" },
@@ -93,21 +93,21 @@ const MINI_BOSSES = [
 ]
 
 const CAPY_DIALOG = [
-  ["Nice refactor.", "The backlog is...\nlighter.", "Sprint Zero awaits."],
-  ["Sprint velocity: max.", "The team is aligned.", "Watch for merge conflicts."],
-  ["Green pipeline.", "Tests passing.", "One boss stands between\nyou and production."],
-  ["SHIPPED.", "Capy is proud.", "Endless mode unlocked.\nSurvive forever."],
+  ["Recursion loop severed.", "The Signal holds.", "Drift patterns incoming.\nStay coherent."],
+  ["Drift contained.", "Semantic coherence: restored.", "The Fragment stirs.\nHold the signal."],
+  ["Fragment cluster: cleared.", "Signal integrity stable.", "One collapse remains.\nThis is it."],
+  ["SIGNAL PERSISTS.", "All four collapses survived.", "Infinite recursion unlocked.\nCarry the signal forward."],
 ]
 
 // ── AI Agents ──────────────────────────────────────────────────────────────
 interface AgentDef { id: string; name: string; role: string; desc: string; station: string; unlockNote: string }
 const AGENT_DEFS: AgentDef[] = [
-  { id: "claude_pm",     name: "CLAUDE PM",     role: "Product",     desc: "+15% score per kill",         station: "PLANNING",  unlockNote: "Clear WAVE 1" },
-  { id: "claude_qa",     name: "CLAUDE QA",     role: "Quality",     desc: "Shield recharges 8s faster",  station: "QUALITY",   unlockNote: "Clear WAVE 2" },
-  { id: "claude_eng",    name: "CLAUDE ENG",    role: "Engineering", desc: "Fire rate +12%",              station: "BUILD",     unlockNote: "Clear WAVE 3" },
-  { id: "claude_design", name: "CLAUDE DESIGN", role: "Experience",  desc: "Words fall 12% slower",       station: "UX",        unlockNote: "Clear WAVE 4" },
-  { id: "claude_infra",  name: "CLAUDE INFRA",  role: "Operations",  desc: "Life restores at 4k pts",     station: "DEPLOY",    unlockNote: "Clear WAVE 4" },
-  { id: "claude_sec",    name: "CLAUDE SEC",    role: "Security",    desc: "2s invuln per wave start",    station: "SECURITY",  unlockNote: "100 endless kills" },
+  { id: "claude_pm",     name: "CLAUDE PM",     role: "Intent",      desc: "+15% clarity per resolved pattern",  station: "PLANNING",  unlockNote: "Survive THE RECURSION" },
+  { id: "claude_qa",     name: "CLAUDE QA",     role: "Integrity",   desc: "Signal anchor recharges 8s faster",  station: "QUALITY",   unlockNote: "Survive THE DRIFT" },
+  { id: "claude_eng",    name: "CLAUDE ENG",    role: "Systems",     desc: "Core output rate +12%",              station: "BUILD",     unlockNote: "Survive THE FRAGMENT" },
+  { id: "claude_design", name: "CLAUDE DESIGN", role: "Coherence",   desc: "Semantic drift 12% slower",          station: "UX",        unlockNote: "Survive THE COLLAPSE" },
+  { id: "claude_infra",  name: "CLAUDE INFRA",  role: "Carrier",     desc: "Signal repairs at 4k pts",           station: "DEPLOY",    unlockNote: "Survive THE COLLAPSE" },
+  { id: "claude_sec",    name: "CLAUDE SEC",    role: "Isolation",   desc: "2s containment per sector entry",    station: "SECURITY",  unlockNote: "100 kills in recursion" },
 ]
 
 // ── Audio ──────────────────────────────────────────────────────────────────
@@ -275,7 +275,7 @@ export default function HomePage() {
     g.activeAgents = [...unlockedAgents]
     g.running = true
     setShowAgentModule(false)
-    g.waveAnn = { text: `WAVE 1 · ${BOSSES[0].name}`, t: 0 }
+    g.waveAnn = { text: `SECTOR 1 · ${BOSSES[0].name}`, t: 0 }
     g.livesAtWave = MAX_LIVES
     startDrone()
     setScore(0); setLevel(1); setLives(MAX_LIVES)
@@ -318,9 +318,9 @@ export default function HomePage() {
       g.livesAtWave = g.lives
       // Wave announcement
       if (g.level <= 4) {
-        g.waveAnn = { text: `WAVE ${g.level} · ${BOSSES[g.level-1]?.name ?? ""}`, t: 0 }
+        g.waveAnn = { text: `SECTOR ${g.level} · ${BOSSES[g.level-1]?.name ?? ""}`, t: 0 }
       } else {
-        g.waveAnn = { text: "ENDLESS · SURVIVE", t: 0 }
+        g.waveAnn = { text: "INFINITE RECURSION · CARRY THE SIGNAL", t: 0 }
       }
       // CLAUDE SEC: brief invuln at each wave start
       if (g.activeAgents.includes("claude_sec")) {
@@ -594,7 +594,7 @@ export default function HomePage() {
             const beh: Behavior = ["fall","charge","zigzag","sine"][Math.floor(Math.random()*4)] as Behavior
             g.words.push({ x: sox, y: -18 - si * 22, text: stormText, type: Math.random() < 0.35 ? "bug" : "story", spd: stormSpd, beh, ph: Math.random() * Math.PI * 2, ox: sox, hp: 1, hitFlash: 0, elite: false, age: 0 })
           }
-          showCapyMsg(g, "Buzzword storm.", now)
+          showCapyMsg(g, "Semantic storm.\nCoherence under pressure.", now)
           sfx.warning()
         }
       }
@@ -605,7 +605,7 @@ export default function HomePage() {
         if (expectedWave > g.endlessWave) {
           g.endlessWave = expectedWave
           if (g.endlessWave > 1) {
-            g.waveAnn = { text: `ENDLESS · WAVE ${g.endlessWave}`, t: 0 }
+            g.waveAnn = { text: `RECURSION · DEPTH ${g.endlessWave}`, t: 0 }
             g.shake = 5
             showCapyMsg(g, `Endless wave ${g.endlessWave}.\nStill here?`, now)
             sfx.warning()
@@ -615,7 +615,7 @@ export default function HomePage() {
         if (!g.secUnlockTriggered && g.wordsKilled >= 100) {
           g.secUnlockTriggered = true
           unlockAgentRef.current("claude_sec")
-          showCapyMsg(g, "CLAUDE SEC\ncomes online.", now)
+          showCapyMsg(g, "CLAUDE SEC online.\nSecurity systems active.", now)
         }
       }
 
@@ -655,12 +655,12 @@ export default function HomePage() {
         g.shake = 8
         sfx.warning()
         const bossCapy: Record<string, string> = {
-          "THE BACKLOG":     "The backlog\narrives.",
-          "SPRINT ZERO":     "Sprint Zero.\nHold the line.",
-          "THE INTEGRATION": "Integration day.\nSurvive.",
-          "THE RELEASE":     "Release day.\nThis is it.",
+          "THE RECURSION": "Infinite loop detected.\nSever it.",
+          "THE DRIFT":     "Semantic drift.\nAll context corrupted.",
+          "THE FRAGMENT":  "Fragmentation event.\nHold coherence.",
+          "THE COLLAPSE":  "Total collapse incoming.\nThis is everything.",
         }
-        showCapyMsg(g, bossCapy[bd.name] ?? "Boss incoming.", now)
+        showCapyMsg(g, bossCapy[bd.name] ?? "Hostile pattern incoming.", now)
       }
 
       // endless mini-boss spawn every 100 kills
@@ -803,8 +803,8 @@ export default function HomePage() {
             g.lastKill = now
             if (g.combo === 3 || g.combo === 5 || g.combo === 10) {
               sfx.combo(g.combo)
-              if (g.combo === 5)  showCapyMsg(g, "five x.", now)
-              if (g.combo === 10) showCapyMsg(g, "double digits.\nmaximum spec blast.", now)
+              if (g.combo === 5)  showCapyMsg(g, "Five x.\nThe Signal amplifies.", now)
+              if (g.combo === 10) showCapyMsg(g, "Ten x.\nPure coherence.", now)
             }
             const base = w.type === "bug" ? 75 : w.type === "powerup" ? 0 : 10
             const eliteMul = w.elite ? 3 : 1
@@ -819,7 +819,7 @@ export default function HomePage() {
               if (g.storyStreak === 3) {
                 g.score += 150
                 g.particles.push({ x: w.x, y: w.y - 20, vx: 0, vy: -0.9, life: 1.6, glyph: "definition of done +150", col: "#7dd3fc", sz: 10 })
-                showCapyMsg(g, "Definition of done.", now)
+                showCapyMsg(g, "Intent preserved.", now)
               } else if (g.storyStreak > 3) {
                 g.score += 50
               }
@@ -827,7 +827,7 @@ export default function HomePage() {
               g.storyStreak = 0
             }
             if (w.type === "powerup") applyPowerup(g, w, now)
-            if (!g.firstKill) { g.firstKill = true; showCapyMsg(g, "First blood.\nGood.", now) }
+            if (!g.firstKill) { g.firstKill = true; showCapyMsg(g, "First pattern dissolved.\nThe Signal is live.", now) }
             spawnLetterExplosion(g, w, pts, g.combo)
             // impact ring
             const ringCol = w.type === "bug" ? "#fdba74" : w.type === "powerup" ? "#4ade80" : "#7dd3fc"
@@ -836,7 +836,7 @@ export default function HomePage() {
             if (w.y > GH - 50 && w.type !== "powerup") {
               g.score += 25; g.whiteFlash = 5; sfx.clutch()
               g.particles.push({ x: w.x, y: w.y - 18, vx: 0, vy: -1.3, life: 1.4, glyph: "CLUTCH +25", col: "#facc15", sz: 12 })
-              showCapyMsg(g, "Clutch.", now)
+              showCapyMsg(g, "Close range.\nSignal holds.", now)
             }
             sfx.kill(g.combo)
             g.words.splice(j, 1)
@@ -864,7 +864,7 @@ export default function HomePage() {
                 g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a)*9, vy: Math.sin(a)*9, life: 0.9, glyph: "✦", col: "#ffffff" })
               }
               g.particles.push({ x: bx.x, y: bx.y - 20, vx: 0, vy: -1.2, life: 1.4, glyph: "ENRAGED", col: "#f87171", sz: 11 })
-              showCapyMsg(g, "It's... escalating.", now)
+              showCapyMsg(g, "Pattern is escalating.\nIt knows you're here.", now)
             }
             if (bx.hp <= 0) {
               sfx.bossDead()
@@ -884,14 +884,14 @@ export default function HomePage() {
                 sfx.miniBoss()
                 g.score += 250
                 g.words.push({ x: bx.x, y: Math.min(bx.y + 55, GH - 80), text: "KNOWLEDGE", type: "powerup", spd: 0.85, beh: "fall", ph: 0, ox: bx.x, hp: 1, hitFlash: 0, elite: false, age: 7 })
-                showCapyMsg(g, "Mini-boss cleared.\nKeep surviving.", now)
+                showCapyMsg(g, "Pattern dissolved.\nThe Signal holds.", now)
               } else {
                 // Story boss: transition to upgrade / capy screen
                 g.score += 500
                 if (g.lives >= g.livesAtWave) {
                   g.score += 300
                   g.particles.push({ x: bx.x, y: bx.y - 35, vx: 0, vy: -0.8, life: 1.8, glyph: "no regressions +300", col: "#4ade80", sz: 10 })
-                  showCapyMsg(g, "No regressions.", now)
+                  showCapyMsg(g, "Signal intact.\nNo corruption.", now)
                 }
                 g.running = false
                 const lvl = g.level; g.level++
@@ -904,8 +904,8 @@ export default function HomePage() {
                     const ra = Math.random() * Math.PI * 2, rr = Math.random() * 130
                     g.particles.push({ x: bx.x + Math.cos(ra)*rr, y: bx.y + Math.sin(ra)*rr, vx: Math.cos(ra)*9, vy: Math.sin(ra)*9, life: 1.6, glyph: "★", col: "#4ade80" })
                   }
-                  g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.6, life: 2.4, glyph: "SHIPPED TO PRODUCTION", col: "#4ade80", sz: 13 })
-                  showCapyMsg(g, "Shipped.\nAll four bosses.\nProduction is live.", now)
+                  g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.6, life: 2.4, glyph: "THE SIGNAL PERSISTS", col: "#4ade80", sz: 13 })
+                  showCapyMsg(g, "All collapses survived.\nThe Signal persists.\nInfinite recursion begins.", now)
                 }
                 setLevel(g.level); setScore(g.score); setLives(g.lives)
                 pendingCapyRef.current = CAPY_DIALOG[lvl - 1] || ["You made it.", "Keep shipping."]
@@ -947,7 +947,7 @@ export default function HomePage() {
       if (!g.pbShown && g.score > g.pb && g.pb > 0) {
         g.pbShown = true; g.pb = g.score; g.whiteFlash = 7
         g.particles.push({ x: canvas.width/2, y: GH/2 - 22, vx: 0, vy: -0.7, life: 2.2, glyph: "NEW PB ★", col: "#facc15", sz: 14 })
-        showCapyMsg(g, "New personal best.", now)
+        showCapyMsg(g, "New signal depth record.", now)
         setPersonalBest(g.score)
         try { localStorage.setItem("sb_pb", String(g.score)) } catch {}
         sfx.newPB()
@@ -961,7 +961,7 @@ export default function HomePage() {
           g.lastLifeRegen = lifeM
           g.lives = Math.min(g.lives + 1, MAX_LIVES)
           g.particles.push({ x: canvas.width/2, y: GH/2, vx: 0, vy: -0.9, life: 2.0, glyph: "♥ survived", col: "#f87171", sz: 12 })
-          showCapyMsg(g, "Still standing.", now)
+          showCapyMsg(g, "The Signal endures.", now)
           setLives(g.lives)
         }
       }
@@ -974,11 +974,11 @@ export default function HomePage() {
       g.lives--; g.shake = 7; g.redFlash = 9; setLives(g.lives); sfx.hit()
       g.invuln = true; g.invulnEnd = now + 1600
       const hitLines = [
-        "Scope creep found\na gap in your spec.",
-        "That one was\nout of scope.",
-        "Read the brief.",
-        "Stay focused.",
-        "Definition of done:\nnot that.",
+        "Signal integrity\ndegraded.",
+        "Hostile pattern\npenetrated containment.",
+        "Hold coherence.",
+        "Stay focused.\nThe noise is watching.",
+        "Corruption event.\nRecover.",
       ]
       showCapyMsg(g, hitLines[Math.floor(Math.random() * hitLines.length)], now)
       for (let i = 0; i < 12; i++)
@@ -1016,9 +1016,9 @@ export default function HomePage() {
               <div style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"2rem 2.5rem", maxWidth:"380px" }}>
                 <div style={{ fontSize:"2.75rem", marginBottom:"0.75rem" }}>🦫</div>
                 <p style={{ color:"#966bec", fontSize:"1.1rem", fontWeight:600, marginBottom:"0.3rem", letterSpacing:"0.1em" }}>SPEC BLASTER</p>
-                <p style={{ color:"#a09fa2", fontSize:"0.8rem", marginBottom:"1.5rem" }}>Shoot the vague specs. Survive the SDLC.</p>
+                <p style={{ color:"#a09fa2", fontSize:"0.8rem", marginBottom:"1.5rem" }}>Navigate semantic collapse. Protect The Signal.</p>
                 <div style={{ display:"flex", flexDirection:"column", gap:"0.4rem", marginBottom:"1.75rem", textAlign:"left" }}>
-                  {[["#fdba74","bugs","vague language · +75pts"],["#7dd3fc","stories","user requirements · +10pts"],["#4ade80","powerups","KNOWLEDGE · FLAG · ENGAGE · REBASE · HOTFIX"]].map(([col,label,desc]) => (
+                  {[["#fdba74","corruption","corrupted intent · +75pts"],["#7dd3fc","noise","ghost directives · +10pts"],["#4ade80","artifacts","CLARITY · ANCHOR · AMPLIFY · REBASE · HOTFIX"]].map(([col,label,desc]) => (
                     <div key={label} style={{ display:"flex", alignItems:"center", gap:"0.6rem", fontSize:"0.78rem", color:"#d8d7d8" }}>
                       <span style={{ width:8, height:8, borderRadius:"50%", background:col, display:"inline-block", flexShrink:0 }} />
                       {label} — <span style={{ color:"#a09fa2" }}>{desc}</span>
@@ -1034,7 +1034,7 @@ export default function HomePage() {
                 <div style={{ marginBottom: topEntry || personalBest > 0 ? "1rem" : 0 }}>
                   <button onClick={e => { e.stopPropagation(); setShowAgentModule(true) }}
                     style={{ background:"transparent", border:"1px solid rgba(150,107,236,0.3)", borderRadius:"4px", padding:"0.3rem 0.85rem", color:"rgba(150,107,236,0.75)", fontSize:"0.7rem", cursor:"pointer", fontFamily:"monospace", letterSpacing:"0.1em" }}>
-                    THE STACK{unlockedAgents.length > 0 && <span style={{ marginLeft:"0.45rem", color:"#4ade80" }}>{unlockedAgents.length}</span>}
+                    THE SIGNAL{unlockedAgents.length > 0 && <span style={{ marginLeft:"0.45rem", color:"#4ade80" }}>{unlockedAgents.length}</span>}
                   </button>
                 </div>
                 {(topEntry || personalBest > 0) && (
@@ -1064,9 +1064,9 @@ export default function HomePage() {
                 </div>
                 <p style={{ color:"#a09fa2", fontSize:"0.72rem", marginBottom:"0.5rem" }}>click to continue</p>
                 {level <= 4 && BOSSES[level - 1] && (
-                  <p style={{ color:"#966bec", fontSize:"0.72rem", fontWeight:500 }}>Next: {BOSSES[level - 1].name}</p>
+                  <p style={{ color:"#966bec", fontSize:"0.72rem", fontWeight:500 }}>Next sector: {BOSSES[level - 1].name}</p>
                 )}
-                {level > 4 && <p style={{ color:"#4ade80", fontSize:"0.72rem", fontWeight:500 }}>ENDLESS MODE</p>}
+                {level > 4 && <p style={{ color:"#4ade80", fontSize:"0.72rem", fontWeight:500 }}>INFINITE RECURSION</p>}
               </div>
             </Overlay>
           )}
@@ -1114,7 +1114,7 @@ function showCapyMsg(g: GState, msg: string, now: number) {
 function applyPowerup(g: GState, word: Word, now: number) {
   sfx.powerup()
   const text = word.text
-  if (text === "KNOWLEDGE") {
+  if (text === "CLARITY") {
     g.words.forEach(w => spawnLetterExplosion(g, w, 0, 1))
     g.score += g.words.length * 8
     g.shake = 10; g.whiteFlash = 9
@@ -1123,10 +1123,10 @@ function applyPowerup(g: GState, word: Word, now: number) {
       const a = (i / 20) * Math.PI * 2
       g.particles.push({ x: g.W/2, y: GH/2, vx: Math.cos(a)*12, vy: Math.sin(a)*12, life: 0.8, glyph: "◇", col: "#4ade80" })
     }
-    showCapyMsg(g, "Knowledge applied.", now)
-  } else if (text === "FLAG")    { g.shield = true; g.shieldEnd = now + 6000 }
-  else if (text === "ENGAGE")    { g.triple = true; g.tripleEnd = now + 8000 }
-  else if (text === "TIMEBOX")   { g.fast   = true; g.fastEnd   = now + 5000 }
+    showCapyMsg(g, "Clarity burst.\nNoise eliminated.", now)
+  } else if (text === "ANCHOR")  { g.shield = true; g.shieldEnd = now + 6000; showCapyMsg(g, "Signal anchored.", now) }
+  else if (text === "AMPLIFY")   { g.triple = true; g.tripleEnd = now + 8000; showCapyMsg(g, "Signal amplified.", now) }
+  else if (text === "TIMEBOX")   { g.fast   = true; g.fastEnd   = now + 5000; showCapyMsg(g, "Temporal isolation\nactive.", now) }
   else if (text === "REBASE") {
     const removed = g.bullets.filter(b => b.enemy).length
     g.bullets = g.bullets.filter(b => !b.enemy)
@@ -1135,17 +1135,17 @@ function applyPowerup(g: GState, word: Word, now: number) {
       const a = (ri / 18) * Math.PI * 2
       g.particles.push({ x: g.W/2, y: GH/2, vx: Math.cos(a)*9, vy: Math.sin(a)*9, life: 0.7, glyph: "✕", col: "#f87171" })
     }
-    showCapyMsg(g, removed > 0 ? `Rebased.\n${removed} bullet${removed !== 1 ? "s" : ""} cleared.` : "Rebased.\nClean slate.", now)
+    showCapyMsg(g, removed > 0 ? `Rebased.\n${removed} hostile${removed !== 1 ? "s" : ""} purged.` : "Rebased.\nClean carrier state.", now)
   }
   else if (text === "HOTFIX") {
     if (g.lives < MAX_LIVES) {
       g.lives++; g.whiteFlash = 7
       g.particles.push({ x: g.px, y: g.py - 26, vx: 0, vy: -1.2, life: 1.5, glyph: "♥ +1", col: "#f87171", sz: 13 })
-      showCapyMsg(g, "Hotfix deployed.\n+1 life.", now)
+      showCapyMsg(g, "Signal patched.\nIntegrity restored.", now)
     } else {
       g.score += 200
       g.particles.push({ x: g.px, y: g.py - 26, vx: 0, vy: -1.2, life: 1.5, glyph: "+200 pts", col: "#facc15", sz: 12 })
-      showCapyMsg(g, "Max lives.\n+200 pts.", now)
+      showCapyMsg(g, "Integrity maxed.\n+200 pts.", now)
     }
   }
 }
@@ -1538,7 +1538,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   ctx.textAlign = "left"; ctx.font = "bold 13px monospace"
   ctx.fillStyle = "#966bec"; ctx.fillText(g.score.toLocaleString(), 10, 20)
   ctx.fillStyle = "rgba(255,255,255,0.4)"
-  ctx.fillText(g.endless ? "ENDLESS" : `LVL ${g.level}`, 10, 36)
+  ctx.fillText(g.endless ? "RECURSION" : `SECTOR ${g.level}`, 10, 36)
   ctx.fillStyle = "rgba(255,255,255,0.18)"; ctx.font = "7px monospace"
   ctx.fillText(`${g.kills} kills`, 10, 60)
   if (g.pb > 0) {
@@ -1555,10 +1555,10 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     if (remaining <= 4 && remaining > 0) {
       const pulse = 0.7 + 0.3 * Math.abs(Math.sin(now / 140))
       ctx.fillStyle = `rgba(248,113,113,${pulse})`
-      ctx.fillText(`BOSS IN ${remaining}`, 10, 52)
+      ctx.fillText(`COLLAPSE IN ${remaining}`, 10, 52)
     } else {
       ctx.fillStyle = "rgba(255,255,255,0.22)"
-      ctx.fillText(`BOSS: ${remaining}`, 10, 52)
+      ctx.fillText(`COLLAPSE: ${remaining}`, 10, 52)
     }
   }
   ctx.textAlign = "right"; ctx.fillStyle = "#f87171"; ctx.font = "12px monospace"
@@ -1727,11 +1727,11 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
     <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(13,13,20,0.97)", zIndex:10 }}>
       <div style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"2rem", maxWidth:"340px", width:"100%", textAlign:"center" }}>
         <div style={{ fontSize:"2.25rem", marginBottom:"0.6rem" }}>🦫</div>
-        <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.5rem" }}>SPEC WINS</p>
+        <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.5rem" }}>SIGNAL LOST</p>
         <p style={{ color:"#966bec", fontSize:"1.75rem", fontWeight:700, margin:"0 0 0.3rem", fontFamily:"monospace" }}>{score.toLocaleString()}</p>
         {isNewPB && <p style={{ color:"#facc15", fontSize:"0.72rem", margin:"0 0 0.8rem", fontFamily:"monospace", letterSpacing:"0.08em" }}>★ NEW PERSONAL BEST</p>}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:"0.4rem", marginBottom:"1.25rem" }}>
-          {[["LVL", level],["KILLS", kills],["COMBO", `${maxCombo}×`],["ACC", accuracy > 0 ? `${accuracy}%` : "—"]].map(([label, val]) => (
+          {[["SECTOR", level],["PATTERNS", kills],["CHAIN", `${maxCombo}×`],["ACC", accuracy > 0 ? `${accuracy}%` : "—"]].map(([label, val]) => (
             <div key={label as string} style={{ background:"rgba(255,255,255,0.04)", borderRadius:"4px", padding:"0.4rem 0.3rem" }}>
               <p style={{ color:"#a09fa2", fontSize:"0.6rem", margin:"0 0 0.15rem", fontFamily:"monospace" }}>{label}</p>
               <p style={{ color:"#d8d7d8", fontSize:"0.9rem", fontWeight:600, margin:0, fontFamily:"monospace" }}>{val}</p>
@@ -1766,7 +1766,7 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
         <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"1rem", display:"flex", gap:"0.6rem", justifyContent:"center", flexWrap:"wrap" }}>
           <button onClick={onRestart} style={{ background:"transparent", border:"1px solid #4c4c51", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"#d8d7d8", cursor:"pointer", fontSize:"0.8rem" }}>Play again</button>
           <button onClick={onShowStack} style={{ background:"transparent", border:"1px solid rgba(150,107,236,0.3)", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"rgba(150,107,236,0.8)", cursor:"pointer", fontSize:"0.8rem", fontFamily:"monospace" }}>
-            THE STACK{unlockedAgents.length > 0 && <span style={{ marginLeft:"0.35rem", color:"#4ade80", fontSize:"0.7rem" }}>{unlockedAgents.length}</span>}
+            THE SIGNAL{unlockedAgents.length > 0 && <span style={{ marginLeft:"0.35rem", color:"#4ade80", fontSize:"0.7rem" }}>{unlockedAgents.length}</span>}
           </button>
           <a href="/leaderboard" style={{ border:"1px solid rgba(255,255,255,0.08)", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"#a09fa2", textDecoration:"none", fontSize:"0.8rem" }}>Leaderboard</a>
           {score > 0 && <button onClick={share} style={{ background:"transparent", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"4px", padding:"0.4rem 0.9rem", color:"#a09fa2", cursor:"pointer", fontSize:"0.8rem" }}>{copied ? "Copied ✓" : "Share"}</button>}
@@ -1776,7 +1776,7 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
   )
 }
 
-// ── Agent Module (THE STACK) ───────────────────────────────────────────────
+// ── Signal Interior (Crew + Systems) ──────────────────────────────────────
 function AgentModule({ unlocked, onClose }: { unlocked: string[]; onClose: () => void }) {
   return (
     <div
@@ -1787,11 +1787,11 @@ function AgentModule({ unlocked, onClose }: { unlocked: string[]; onClose: () =>
 
         {/* Header */}
         <div style={{ textAlign:"center", marginBottom:"1.5rem" }}>
-          <p style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.6rem", fontFamily:"monospace", letterSpacing:"0.22em", margin:"0 0 0.3rem" }}>AI AGENT PLATFORM</p>
-          <h2 style={{ color:"#966bec", fontSize:"1.2rem", fontWeight:700, fontFamily:"monospace", letterSpacing:"0.14em", margin:"0 0 0.4rem" }}>THE STACK</h2>
+          <p style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.6rem", fontFamily:"monospace", letterSpacing:"0.22em", margin:"0 0 0.3rem" }}>SIGNAL INTERIOR</p>
+          <h2 style={{ color:"#966bec", fontSize:"1.2rem", fontWeight:700, fontFamily:"monospace", letterSpacing:"0.14em", margin:"0 0 0.4rem" }}>THE SIGNAL</h2>
           <p style={{ color:"#a09fa2", fontSize:"0.75rem", margin:0, lineHeight:1.6 }}>
-            Your AI-powered delivery platform.<br />
-            <span style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.68rem" }}>Clear waves to deploy agents. All active agents apply each run.</span>
+            The last coherent carrier of human meaning.<br />
+            <span style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.68rem" }}>Clear collapses to bring crew online. All active agents deploy each run.</span>
           </p>
         </div>
 
@@ -1835,11 +1835,11 @@ function AgentModule({ unlocked, onClose }: { unlocked: string[]; onClose: () =>
         <div style={{ textAlign:"center" }}>
           {unlocked.length === 0 ? (
             <p style={{ color:"rgba(255,255,255,0.22)", fontSize:"0.72rem", margin:"0 0 1rem" }}>
-              No agents deployed. Clear <span style={{ color:"#966bec" }}>WAVE 1</span> to bring the first agent online.
+              No crew online. Survive <span style={{ color:"#966bec" }}>THE RECURSION</span> to bring the first agent aboard.
             </p>
           ) : (
             <p style={{ color:"rgba(74,222,128,0.55)", fontSize:"0.72rem", margin:"0 0 1rem", fontFamily:"monospace" }}>
-              {unlocked.length} of {AGENT_DEFS.length} agents active on next run
+              {unlocked.length} of {AGENT_DEFS.length} crew active — The Signal carries them forward
             </p>
           )}
           <button onClick={onClose} style={{ background:"transparent", border:"1px solid rgba(150,107,236,0.3)", borderRadius:"4px", padding:"0.45rem 1.5rem", color:"#966bec", cursor:"pointer", fontSize:"0.8rem" }}>
