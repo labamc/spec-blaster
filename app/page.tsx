@@ -46,15 +46,15 @@ const CAPY_PLAY_COMMENTS = [
 // ── Upgrades ───────────────────────────────────────────────────────────────
 interface UpgradeDef { id: string; name: string; desc: string; max: number; instant?: (g: GState) => void }
 const UPGRADES: UpgradeDef[] = [
-  { id: "fire_rate",    name: "QA Cadence",          desc: "Fire 15% faster. Stacks 4×.",              max: 4 },
-  { id: "word_slow",    name: "Scope Freeze",         desc: "Words fall 15% slower. Stacks 3×.",        max: 3 },
-  { id: "score_mul",    name: "Stakeholder Approval", desc: "+20% score per kill. Stacks 3×.",          max: 3 },
-  { id: "triple",       name: "Triple Output",        desc: "Always fire 3 bullets.",                   max: 1 },
-  { id: "spray",        name: "Spray & Pray",         desc: "Fire 5 bullets in a wide arc.",            max: 1 },
-  { id: "piercing",     name: "Context Anchor",       desc: "Bullets pierce through words.",            max: 1 },
-  { id: "shield_regen", name: "Auto Firewall",        desc: "Shield recharges every 25 seconds.",       max: 1 },
-  { id: "code_review",  name: "Code Review",          desc: "Your bullets deal 2× damage to bosses.",   max: 1 },
-  { id: "extra_life",   name: "Rollback",             desc: "Restore +1 life immediately.",             max: 3,
+  { id: "fire_rate",    name: "QA Cadence",          desc: "Fire 15% faster. Stacks 4×.",             max: 4 },
+  { id: "word_slow",    name: "Scope Freeze",         desc: "Words fall 15% slower. Stacks 3×.",       max: 3 },
+  { id: "score_mul",    name: "Stakeholder Approval", desc: "+20% score per kill. Stacks 3×.",         max: 3 },
+  { id: "triple",       name: "Triple Output",        desc: "Always fire 3 bullets.",                  max: 1 },
+  { id: "spray",        name: "Spray & Pray",         desc: "Fire 5 bullets in a wide arc.",           max: 1 },
+  { id: "piercing",     name: "Context Anchor",       desc: "Bullets pierce through words.",           max: 1 },
+  { id: "shield_regen", name: "Auto Firewall",        desc: "Shield recharges every 25 seconds.",      max: 1 },
+  { id: "code_review",  name: "Code Review",          desc: "Your bullets deal 2× damage to bosses.",  max: 1 },
+  { id: "extra_life",   name: "Rollback",             desc: "Restore +1 life immediately.",            max: 3,
     instant: (g) => { g.lives = Math.min(g.lives + 1, MAX_LIVES + 2) } },
 ]
 
@@ -106,16 +106,18 @@ const sfx = {
   powerup:  () => { tone(600, 0.08, 0.3); setTimeout(() => tone(900, 0.08, 0.3), 90); setTimeout(() => tone(1200, 0.15, 0.3), 180) },
   combo:    (n: number) => tone(800 + n * 80, 0.12, 0.3),
   hit:      () => tone(160, 0.4, 0.35, "sawtooth"),
+  elite:    () => { tone(300, 0.15, 0.3, "sawtooth"); setTimeout(() => tone(250, 0.2, 0.3, "sawtooth"), 120) },
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Behavior = "fall" | "charge" | "zigzag" | "sine"
-interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number }
+interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean }
 interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
 interface Boss      { x: number; y: number; hp: number; maxHp: number; name: string; color: string; dir: number; t: number; phase: number }
 interface BossWarn  { name: string; color: string; t: number; letters: Array<{ ch: string; x: number; y: number; tx: number; ty: number }> }
+interface WaveAnn   { text: string; t: number }
 interface GState {
   px: number; lives: number; score: number; kills: number; level: number; endless: boolean
   words: Word[]; bullets: Bullet[]; particles: Particle[]; bg: BgGlyph[]; boss: Boss | null
@@ -125,26 +127,30 @@ interface GState {
   upgrades: Record<string, number>; shieldRegenAt: number
   combo: number; lastKill: number; shake: number
   capyMsg: string; capyMsgEnd: number; nextCapyMsg: number
-  bossWarn: BossWarn | null; mouseX: number
+  bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null
+}
+
+function makeBg(W: number): BgGlyph[] {
+  return Array.from({ length: 22 }, () => ({
+    x: Math.random() * W, y: Math.random() * GH,
+    vy: 0.15 + Math.random() * 0.25,
+    a: 0.04 + Math.random() * 0.06,
+    ch: BG_CHARS[Math.floor(Math.random() * BG_CHARS.length)],
+  }))
 }
 
 function initState(W: number): GState {
   return {
     px: W / 2, lives: MAX_LIVES, score: 0, kills: 0, level: 1, endless: false,
     words: [], bullets: [], particles: [], boss: null,
-    bg: Array.from({ length: 22 }, () => ({
-      x: Math.random() * W, y: Math.random() * GH,
-      vy: 0.15 + Math.random() * 0.25,
-      a: 0.04 + Math.random() * 0.06,
-      ch: BG_CHARS[Math.floor(Math.random() * BG_CHARS.length)],
-    })),
+    bg: makeBg(W),
     keys: new Set(), lastShot: 0, lastWord: 0, wordsKilled: 0, bossSpawned: false,
     shield: false, shieldEnd: 0, triple: false, tripleEnd: 0, fast: false, fastEnd: 0,
     invuln: false, invulnEnd: 0, W, running: false,
     upgrades: {}, shieldRegenAt: 0,
     combo: 1, lastKill: 0, shake: 0,
     capyMsg: "", capyMsgEnd: 0, nextCapyMsg: 0,
-    bossWarn: null, mouseX: -1,
+    bossWarn: null, mouseX: -1, waveAnn: null,
   }
 }
 
@@ -198,6 +204,12 @@ export default function HomePage() {
       capyIdxRef.current = 0; setCapyIdx(0)
       const g = G.current
       g.running = true; g.bossSpawned = false; g.wordsKilled = 0
+      // Wave announcement
+      if (g.level <= 4) {
+        g.waveAnn = { text: `WAVE ${g.level} · ${BOSSES[g.level-1]?.name ?? ""}`, t: 0 }
+      } else {
+        g.waveAnn = { text: "ENDLESS · SURVIVE", t: 0 }
+      }
       phaseRef.current = "playing"; setPhase("playing")
     }
   }
@@ -207,6 +219,8 @@ export default function HomePage() {
     const wrap   = wrapRef.current
     if (!canvas || !wrap) return
     const ctx = canvas.getContext("2d")!
+    // attract demo: seed some words
+    const g = G.current
 
     function resize() {
       const w = Math.min(wrap!.offsetWidth, 800)
@@ -254,9 +268,29 @@ export default function HomePage() {
     function loop() {
       rafRef.current = requestAnimationFrame(loop)
       const g = G.current
+      const now = Date.now()
+
+      // Attract demo mode
+      if (phaseRef.current === "attract") {
+        g.px = g.W/2 + Math.sin(now / 2800) * 90
+        if (now - g.lastWord > 1100) {
+          g.lastWord = now
+          const r = Math.random()
+          let type: Word["type"] = "story"
+          let text = STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)]
+          if (r < 0.25)      { type = "bug"; text = BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)] }
+          else if (r < 0.32) { type = "powerup"; text = POWERUP_WORDS[Math.floor(Math.random() * POWERUP_WORDS.length)] }
+          const ox = 40 + Math.random() * (g.W - 80)
+          g.words.push({ x: ox, y: -18, text, type, spd: 0.65 + Math.random() * 0.35, beh: "fall", ph: 0, ox, hp: 1, hitFlash: 0, elite: false })
+        }
+        g.words = g.words.filter(w => { w.y += w.spd; return w.y < GH + 20 })
+        g.bg.forEach(b => { b.y += b.vy; if (b.y > GH + 10) { b.y = -10; b.x = Math.random() * g.W } })
+        draw(ctx, g, canvas.width, now, true)
+        return
+      }
+
       if (!g.running) return
 
-      const now = Date.now()
       const spd = g.fast && now < g.fastEnd ? 8 : 5
 
       // expire powerups
@@ -275,6 +309,12 @@ export default function HomePage() {
 
       // combo decay
       if (now - g.lastKill > 1300 && g.combo > 1) g.combo = 1
+
+      // wave announce tick
+      if (g.waveAnn) {
+        g.waveAnn.t++
+        if (g.waveAnn.t >= 105) g.waveAnn = null
+      }
 
       // capy in-game comments
       if (g.nextCapyMsg === 0) g.nextCapyMsg = now + 22000 + Math.random() * 14000
@@ -324,7 +364,7 @@ export default function HomePage() {
       }
 
       // spawn words (not during boss warning)
-      if (!g.bossWarn && ((!g.boss) || g.endless)) {
+      if (!g.bossWarn && (!g.boss || g.endless)) {
         const interval = Math.max(360, 1600 - g.level * 180 - (g.endless ? Math.floor(g.score / 600) * 40 : 0))
         if (now - g.lastWord > interval) {
           g.lastWord = now
@@ -343,7 +383,9 @@ export default function HomePage() {
             else if (g.level >= 2 && br < 0.45) beh = "charge"
           }
           const ox = 30 + Math.random() * (g.W - 60)
-          g.words.push({ x: ox, y: -18, text, type, spd: spd2, beh, ph: Math.random() * Math.PI * 2, ox })
+          // Elite words in endless: 3 HP, worth 3× score, slightly slower
+          const isElite = g.endless && type !== "powerup" && Math.random() < 0.12
+          g.words.push({ x: ox, y: -18, text, type, spd: spd2 * (isElite ? 0.7 : 1), beh, ph: Math.random() * Math.PI * 2, ox, hp: isElite ? 3 : 1, hitFlash: 0, elite: isElite })
         }
       }
 
@@ -351,13 +393,11 @@ export default function HomePage() {
       if (g.bossWarn) {
         const bw = g.bossWarn
         bw.t++
-        // lerp letters toward target
         bw.letters.forEach(l => {
           l.x += (l.tx - l.x) * 0.14
           l.y += (l.ty - l.y) * 0.14
         })
         if (bw.t === 85) {
-          // letters fully assembled — spawn actual boss
           const bd = BOSSES[g.level - 1]
           g.boss = { x: g.W/2, y: 70, hp: bd.hp, maxHp: bd.hp, name: bd.name, color: bd.color, dir: 1, t: 0, phase: g.level }
           g.bossWarn = null
@@ -365,7 +405,7 @@ export default function HomePage() {
         }
       }
 
-      // spawn boss warning (replaces direct spawn)
+      // spawn boss warning
       if (!g.boss && !g.bossWarn && !g.bossSpawned && !g.endless && g.wordsKilled >= WORDS_TO_BOSS) {
         g.bossSpawned = true; g.words = []
         const bd = BOSSES[g.level - 1]
@@ -421,6 +461,7 @@ export default function HomePage() {
       // move words (with behaviors)
       g.words = g.words.filter(w => {
         w.y += w.spd
+        if (w.hitFlash > 0) w.hitFlash--
         if (w.beh === "charge") {
           const dx = g.px - w.x
           w.x += Math.sign(dx) * Math.min(Math.abs(dx) * 0.04, 2.2)
@@ -460,20 +501,29 @@ export default function HomePage() {
           const w = g.words[j]
           const hw = w.text.length * 5.5 + 8
           if (Math.abs(b.x - w.x) < hw && Math.abs(b.y - w.y) < 14) {
+            if (!g.upgrades.piercing) g.bullets.splice(i, 1)
+            if (w.hp > 1) {
+              // elite word takes a hit
+              w.hp--; w.hitFlash = 10; sfx.elite()
+              spawnParticles(g, w.x, w.y, "#f87171", "✦", 3)
+              if (g.upgrades.piercing) { break } else { continue outer }
+            }
+            // kill
             const elapsed = now - g.lastKill
             g.combo = elapsed < 1300 ? g.combo + 1 : 1
             g.lastKill = now
             if (g.combo === 3 || g.combo === 5 || g.combo === 10) sfx.combo(g.combo)
             const base = w.type === "bug" ? 75 : w.type === "powerup" ? 0 : 10
+            const eliteMul = w.elite ? 3 : 1
             const mult = g.combo >= 3 ? 1 + (g.combo - 2) * 0.2 : 1
-            const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult)
+            const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul)
             g.score += pts
             g.kills++; g.wordsKilled++
             if (w.type === "powerup") applyPowerup(g, w, now)
             spawnLetterExplosion(g, w, pts, g.combo)
             sfx.kill(g.combo)
             g.words.splice(j, 1)
-            if (g.upgrades.piercing) { break } else { g.bullets.splice(i, 1); continue outer }
+            if (g.upgrades.piercing) { break } else { continue outer }
           }
         }
       }
@@ -527,7 +577,7 @@ export default function HomePage() {
       }
 
       setScore(g.score); setLives(g.lives)
-      draw(ctx, g, canvas.width, now)
+      draw(ctx, g, canvas.width, now, false)
     }
 
     function loseLife(g: GState, now: number) {
@@ -560,7 +610,7 @@ export default function HomePage() {
         <div ref={wrapRef} style={{ position:"relative", width:"100%", borderRadius:"6px", overflow:"hidden", border:"1px solid rgba(255,255,255,0.08)" }}>
 
           {phase === "attract" && (
-            <Overlay onClick={startGame}>
+            <Overlay onClick={startGame} dim={0.88}>
               <div style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"2rem 2.5rem", maxWidth:"380px" }}>
                 <div style={{ fontSize:"2.75rem", marginBottom:"0.75rem" }}>🦫</div>
                 <p style={{ color:"#966bec", fontSize:"1.1rem", fontWeight:600, marginBottom:"0.3rem", letterSpacing:"0.1em" }}>SPEC BLASTER</p>
@@ -573,7 +623,7 @@ export default function HomePage() {
                     </div>
                   ))}
                 </div>
-                <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.7rem", marginBottom:"1.25rem", fontFamily:"monospace" }}>
+                <p style={{ color:"rgba(255,255,255,0.22)", fontSize:"0.7rem", marginBottom:"1.25rem", fontFamily:"monospace" }}>
                   arrows / WASD move · SPACE or click shoot
                 </p>
                 <div style={{ background:"#966bec", color:"#fff", borderRadius:"4px", padding:"0.5rem 1.25rem", fontSize:"0.85rem", fontWeight:500, display:"inline-block" }}>
@@ -584,7 +634,7 @@ export default function HomePage() {
           )}
 
           {phase === "capy" && (
-            <Overlay onClick={advanceCapy}>
+            <Overlay onClick={advanceCapy} dim={0.97}>
               <div style={{ maxWidth:"360px" }}>
                 <div style={{ fontSize:"3rem", marginBottom:"1rem" }}>🦫</div>
                 <div className="capy-glow" style={{ background:"#1e1e24", border:"1px solid rgba(150,107,236,0.3)", borderRadius:"6px", padding:"1.1rem 1.5rem", marginBottom:"1rem" }}>
@@ -668,7 +718,7 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number)
   }
 }
 
-function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number) {
+function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number, attractMode: boolean) {
   // screen shake
   let shook = false
   if (g.shake > 0) {
@@ -690,55 +740,61 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number)
     ctx.fillText(b.ch, b.x, b.y)
   }); ctx.globalAlpha = 1
 
-  // journey bar
-  const jy = GH - 20, jx = 16, jw = cw - 32
-  ctx.fillStyle = "rgba(255,255,255,0.06)"; ctx.fillRect(jx, jy, jw, 8)
-  const prog = g.endless ? 1 : Math.min(1, ((g.level - 1) + (g.boss ? (1 - g.boss.hp/g.boss.maxHp)*0.85 : 0)) / 4)
-  ctx.fillStyle = "#966bec"; ctx.fillRect(jx, jy, jw * prog, 8)
-  ctx.font = "8px monospace"; ctx.textAlign = "center"
-  SDLC_PHASES.forEach((ph, i) => {
-    const lx = jx + jw*(i/4) + jw/8
-    ctx.fillStyle = i < g.level || g.endless ? "#966bec" : "rgba(255,255,255,0.18)"
-    ctx.fillText(ph, lx, jy - 3)
-  })
+  if (!attractMode) {
+    // journey bar
+    const jy = GH - 20, jx = 16, jw = cw - 32
+    ctx.fillStyle = "rgba(255,255,255,0.06)"; ctx.fillRect(jx, jy, jw, 8)
+    const prog = g.endless ? 1 : Math.min(1, ((g.level - 1) + (g.boss ? (1 - g.boss.hp/g.boss.maxHp)*0.85 : 0)) / 4)
+    ctx.fillStyle = "#966bec"; ctx.fillRect(jx, jy, jw * prog, 8)
+    ctx.font = "8px monospace"; ctx.textAlign = "center"
+    SDLC_PHASES.forEach((ph, i) => {
+      const lx = jx + jw*(i/4) + jw/8
+      ctx.fillStyle = i < g.level || g.endless ? "#966bec" : "rgba(255,255,255,0.18)"
+      ctx.fillText(ph, lx, jy - 3)
+    })
+  }
 
   // words
   g.words.forEach(w => {
     const col = w.type === "bug" ? "#fdba74" : w.type === "powerup" ? "#4ade80" : "#7dd3fc"
-    const warnZone = w.y > GH - 80 && w.type !== "powerup"
-    const wordCol = w.beh === "charge" && w.type !== "powerup" ? "#fca5a5" : col
+    const flashRed = w.hitFlash > 0
 
-    // powerup glow
     if (w.type === "powerup") {
       const pulse = 0.5 + 0.5 * Math.sin(now / 280)
-      ctx.save()
-      ctx.shadowColor = "#4ade80"
-      ctx.shadowBlur = 10 * pulse
+      ctx.save(); ctx.shadowColor = "#4ade80"; ctx.shadowBlur = 10 * pulse
+    }
+    if (w.elite) {
+      ctx.save(); ctx.shadowColor = "#f87171"; ctx.shadowBlur = 8 + 4 * Math.sin(now / 200)
     }
 
+    const wordCol = flashRed ? "#ffffff" : (w.beh === "charge" && w.type !== "powerup" ? "#fca5a5" : col)
     ctx.fillStyle = wordCol
-    ctx.font = "11px monospace"; ctx.textAlign = "center"
+    ctx.font = (w.elite ? "bold " : "") + "11px monospace"
+    ctx.textAlign = "center"
 
-    // behavior prefix
     let prefix = ""
     if (w.beh === "zigzag") prefix = "≈"
     else if (w.beh === "sine") prefix = "~"
-
-    const displayText = prefix ? `${prefix}${w.text}` : w.text
-    ctx.fillText(displayText, w.x, w.y)
+    ctx.fillText((prefix ? prefix : "") + w.text, w.x, w.y)
 
     if (w.type === "powerup") ctx.restore()
-
-    // warn flash for near-miss words
-    if (warnZone) {
-      const wAlpha = Math.min(0.7, (w.y - (GH - 80)) / 40) * (0.5 + 0.5 * Math.sin(now / 120))
-      ctx.globalAlpha = wAlpha
-      ctx.fillStyle = "#f87171"
-      ctx.fillText("!", w.x + w.text.length * 5.8 + 10, w.y)
-      ctx.globalAlpha = 1
+    if (w.elite) {
+      ctx.restore()
+      // HP pips
+      for (let i = 0; i < w.hp; i++) {
+        ctx.fillStyle = "#f87171"
+        ctx.fillRect(w.x - 8 + i * 8, w.y + 4, 5, 3)
+      }
     }
 
-    // charger down-arrow
+    // near-bottom danger flash
+    if (w.y > GH - 80 && w.type !== "powerup") {
+      const wAlpha = Math.min(0.7, (w.y - (GH - 80)) / 40) * (0.5 + 0.5 * Math.sin(now / 120))
+      ctx.globalAlpha = wAlpha; ctx.fillStyle = "#f87171"; ctx.font = "7px monospace"
+      ctx.fillText("!", w.x + w.text.length * 5.8 + 10, w.y)
+      ctx.globalAlpha = 1; ctx.font = "11px monospace"
+    }
+
     if (w.beh === "charge" && w.type !== "powerup") {
       ctx.fillStyle = "#f87171"; ctx.font = "7px monospace"
       ctx.fillText("▼", w.x, w.y + 10)
@@ -771,38 +827,19 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number)
     const fadeIn  = Math.min(1, bw.t / 18)
     const fadeOut = bw.t > 65 ? Math.max(0, 1 - (bw.t - 65) / 20) : 1
     const alpha = fadeIn * fadeOut
-
-    // colored overlay flash
-    ctx.globalAlpha = alpha * 0.18
-    ctx.fillStyle = bw.color
-    ctx.fillRect(0, 0, cw, GH)
-    ctx.globalAlpha = 1
-
-    // border pulse
-    ctx.globalAlpha = alpha * 0.6
-    ctx.strokeStyle = bw.color
-    ctx.lineWidth = 2
-    ctx.strokeRect(1, 1, cw - 2, GH - 2)
-    ctx.lineWidth = 1
-    ctx.globalAlpha = 1
-
-    // letters assembling
+    ctx.globalAlpha = alpha * 0.18; ctx.fillStyle = bw.color
+    ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1
+    ctx.globalAlpha = alpha * 0.6; ctx.strokeStyle = bw.color; ctx.lineWidth = 2
+    ctx.strokeRect(1, 1, cw - 2, GH - 2); ctx.lineWidth = 1; ctx.globalAlpha = 1
     ctx.font = "bold 26px monospace"; ctx.textAlign = "center"
     bw.letters.forEach((l, i) => {
-      ctx.save()
-      ctx.globalAlpha = alpha * Math.min(1, (bw.t - i * 2) / 20)
+      ctx.save(); ctx.globalAlpha = alpha * Math.min(1, (bw.t - i * 2) / 20)
       ctx.shadowColor = bw.color; ctx.shadowBlur = 18
-      ctx.fillStyle = bw.color
-      ctx.fillText(l.ch, l.x, l.y)
-      ctx.restore()
+      ctx.fillStyle = bw.color; ctx.fillText(l.ch, l.x, l.y); ctx.restore()
     })
-
-    // "INCOMING" label below
     if (bw.t < 70) {
-      ctx.globalAlpha = alpha * 0.65
-      ctx.fillStyle = "#f5f5f5"; ctx.font = "8px monospace"
-      ctx.fillText("⚠  BOSS INCOMING  ⚠", cw/2, GH/2 + 38)
-      ctx.globalAlpha = 1
+      ctx.globalAlpha = alpha * 0.65; ctx.fillStyle = "#f5f5f5"; ctx.font = "8px monospace"
+      ctx.fillText("⚠  BOSS INCOMING  ⚠", cw/2, GH/2 + 38); ctx.globalAlpha = 1
     }
   }
 
@@ -815,9 +852,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number)
         grad.addColorStop(0, bulletCol)
         grad.addColorStop(1, "rgba(0,0,0,0)")
         ctx.fillStyle = grad
-      } catch {
-        ctx.fillStyle = bulletCol
-      }
+      } catch { ctx.fillStyle = bulletCol }
       ctx.fillRect(b.x - 2, b.y - 11, 4, 22)
     } else {
       ctx.fillStyle = "#f87171"
@@ -826,19 +861,31 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number)
   })
 
   // player ship
-  const flash = g.invuln && Math.floor(now/90) % 2 === 0
-  if (!flash) {
-    ctx.fillStyle = g.shield ? "#4ade80" : "#e2e8f0"
+  if (!attractMode) {
+    const flash = g.invuln && Math.floor(now/90) % 2 === 0
+    if (!flash) {
+      ctx.fillStyle = g.shield ? "#4ade80" : "#e2e8f0"
+      ctx.beginPath()
+      ctx.moveTo(g.px, PLAYER_Y - 18)
+      ctx.lineTo(g.px - 13, PLAYER_Y + 7)
+      ctx.lineTo(g.px + 13, PLAYER_Y + 7)
+      ctx.closePath(); ctx.fill()
+      if (g.shield) {
+        ctx.strokeStyle = "rgba(74,222,128,0.55)"; ctx.lineWidth = 2
+        ctx.beginPath(); ctx.arc(g.px, PLAYER_Y - 5, 24, 0, Math.PI*2); ctx.stroke()
+        ctx.lineWidth = 1
+      }
+    }
+  } else {
+    // Demo ship: ghostly
+    ctx.globalAlpha = 0.18
+    ctx.fillStyle = "#966bec"
     ctx.beginPath()
     ctx.moveTo(g.px, PLAYER_Y - 18)
     ctx.lineTo(g.px - 13, PLAYER_Y + 7)
     ctx.lineTo(g.px + 13, PLAYER_Y + 7)
     ctx.closePath(); ctx.fill()
-    if (g.shield) {
-      ctx.strokeStyle = "rgba(74,222,128,0.55)"; ctx.lineWidth = 2
-      ctx.beginPath(); ctx.arc(g.px, PLAYER_Y - 5, 24, 0, Math.PI*2); ctx.stroke()
-      ctx.lineWidth = 1
-    }
+    ctx.globalAlpha = 1
   }
 
   // particles
@@ -857,6 +904,8 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number)
     }
   }); ctx.globalAlpha = 1
 
+  if (attractMode) { if (shook) ctx.restore(); return }
+
   // combo display
   if (g.combo >= 3) {
     ctx.globalAlpha = Math.max(0, 1 - (now - g.lastKill) / 1200)
@@ -865,6 +914,22 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number)
     ctx.font = `bold ${Math.min(22, 14 + g.combo)}px monospace`
     ctx.textAlign = "center"; ctx.fillStyle = comboCol
     ctx.fillText(comboStr, cw/2, GH/2 - 30)
+    ctx.globalAlpha = 1
+  }
+
+  // wave announcement
+  if (g.waveAnn) {
+    const wa = g.waveAnn
+    const fadeIn  = Math.min(1, wa.t / 15)
+    const fadeOut = wa.t > 75 ? Math.max(0, 1 - (wa.t - 75) / 30) : 1
+    const slide   = Math.max(0, 1 - wa.t / 70) * cw * 0.25
+    ctx.globalAlpha = fadeIn * fadeOut
+    ctx.fillStyle = "#966bec"
+    ctx.font = "bold 17px monospace"; ctx.textAlign = "center"
+    ctx.fillText(wa.text, cw/2 + slide, GH/2 - 10)
+    ctx.font = "8px monospace"
+    ctx.fillStyle = "rgba(255,255,255,0.4)"
+    ctx.fillText("SPEC BLASTER", cw/2 + slide, GH/2 + 10)
     ctx.globalAlpha = 1
   }
 
@@ -889,25 +954,23 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number)
     }
   }
 
-  // HUD: score + level
+  // HUD
   ctx.textAlign = "left"; ctx.font = "12px monospace"
   ctx.fillStyle = "#966bec"; ctx.fillText(g.score.toLocaleString(), 10, 20)
   ctx.fillStyle = "rgba(255,255,255,0.4)"
   ctx.fillText(g.endless ? "ENDLESS" : `LVL ${g.level}`, 10, 36)
-
-  // HUD: lives + active powerups (top right)
   ctx.textAlign = "right"; ctx.fillStyle = "#f87171"; ctx.font = "12px monospace"
   ctx.fillText("♥".repeat(g.lives) + "♡".repeat(Math.max(0, MAX_LIVES - g.lives)), cw - 10, 20)
   let pwY = 36; ctx.font = "8px monospace"; ctx.textAlign = "right"
-  if (g.shield)                          { ctx.fillStyle = "#4ade80"; ctx.fillText("SHIELD", cw-10, pwY); pwY += 12 }
-  if (g.triple || g.upgrades.triple)     { ctx.fillStyle = "#4ade80"; ctx.fillText("ENGAGE", cw-10, pwY); pwY += 12 }
-  if (g.fast)                            { ctx.fillStyle = "#4ade80"; ctx.fillText("TIMEBOX", cw-10, pwY); pwY += 12 }
+  if (g.shield)                      { ctx.fillStyle = "#4ade80"; ctx.fillText("SHIELD",  cw-10, pwY); pwY += 12 }
+  if (g.triple || g.upgrades.triple) { ctx.fillStyle = "#4ade80"; ctx.fillText("ENGAGE",  cw-10, pwY); pwY += 12 }
+  if (g.fast)                        { ctx.fillStyle = "#4ade80"; ctx.fillText("TIMEBOX", cw-10, pwY) }
 
-  // HUD: active permanent upgrades (bottom-right, above journey bar)
+  // Active permanent upgrades list
+  const jy = GH - 20
   const activeUpgrades = UPGRADES.filter(u => u.id !== "extra_life" && (g.upgrades[u.id] ?? 0) > 0)
   if (activeUpgrades.length > 0) {
-    let uy = jy - 8
-    ctx.textAlign = "right"; ctx.font = "7px monospace"
+    let uy = jy - 8; ctx.textAlign = "right"; ctx.font = "7px monospace"
     activeUpgrades.slice().reverse().forEach(u => {
       const count = g.upgrades[u.id]
       ctx.fillStyle = "rgba(150,107,236,0.55)"
@@ -930,9 +993,9 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 
 // ── UI sub-components ──────────────────────────────────────────────────────
 
-function Overlay({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+function Overlay({ children, onClick, dim }: { children: React.ReactNode; onClick: () => void; dim: number }) {
   return (
-    <div onClick={onClick} style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(20,20,26,0.97)", cursor:"pointer", zIndex:10 }}>
+    <div onClick={onClick} style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:`rgba(13,13,20,${dim})`, cursor:"pointer", zIndex:10 }}>
       <div style={{ textAlign:"center", padding:"1.5rem" }}>{children}</div>
     </div>
   )
@@ -940,7 +1003,7 @@ function Overlay({ children, onClick }: { children: React.ReactNode; onClick: ()
 
 function UpgradeScreen({ options, onPick }: { options: UpgradeDef[]; onPick: (id: string) => void }) {
   return (
-    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(20,20,26,0.97)", zIndex:10 }}>
+    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(13,13,20,0.97)", zIndex:10 }}>
       <div style={{ width:"100%", maxWidth:"580px", padding:"1.5rem" }}>
         <p style={{ textAlign:"center", color:"#a09fa2", fontSize:"0.72rem", fontFamily:"monospace", marginBottom:"1.25rem", letterSpacing:"0.12em" }}>CHOOSE UPGRADE</p>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.75rem" }}>
@@ -979,7 +1042,7 @@ function GameOver({ score, level, kills, onRestart }: { score: number; level: nu
   }
 
   return (
-    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(20,20,26,0.97)", zIndex:10 }}>
+    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(13,13,20,0.97)", zIndex:10 }}>
       <div style={{ background:"#1e1e24", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"6px", padding:"2rem", maxWidth:"340px", width:"100%", textAlign:"center" }}>
         <div style={{ fontSize:"2.25rem", marginBottom:"0.6rem" }}>🦫</div>
         <p style={{ color:"#f87171", fontWeight:600, fontSize:"1rem", margin:"0 0 0.2rem" }}>SPEC WINS</p>
