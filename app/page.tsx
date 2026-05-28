@@ -155,7 +155,7 @@ interface GState {
   capyMsg: string; capyMsgEnd: number; nextCapyMsg: number
   bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null; maxCombo: number; lastStorm: number
   paused: boolean; lastMilestone: number; livesAtWave: number; py: number; storyStreak: number
-  lastLifeRegen: number; lastAutoFire: number
+  lastLifeRegen: number; lastAutoFire: number; firstKill: boolean
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -180,7 +180,7 @@ function initState(W: number): GState {
     capyMsg: "", capyMsgEnd: 0, nextCapyMsg: 0,
     bossWarn: null, mouseX: -1, waveAnn: null, maxCombo: 1, lastStorm: 0,
     paused: false, lastMilestone: 0, livesAtWave: MAX_LIVES, py: PLAYER_Y, storyStreak: 0,
-    lastLifeRegen: 0, lastAutoFire: 0,
+    lastLifeRegen: 0, lastAutoFire: 0, firstKill: false,
   }
 }
 
@@ -687,6 +687,7 @@ export default function HomePage() {
               g.storyStreak = 0
             }
             if (w.type === "powerup") applyPowerup(g, w, now)
+            if (!g.firstKill) { g.firstKill = true; showCapyMsg(g, "First blood.\nGood.", now) }
             spawnLetterExplosion(g, w, pts, g.combo)
             // clutch kill: word within 50px of bottom
             if (w.y > GH - 50 && w.type !== "powerup") {
@@ -1181,13 +1182,12 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     }
   } else {
     // Demo ship: ghostly
-    ctx.globalAlpha = 0.18
-    ctx.fillStyle = "#966bec"
-    ctx.beginPath()
-    ctx.moveTo(g.px, g.py - 18)
-    ctx.lineTo(g.px - 13, g.py + 7)
-    ctx.lineTo(g.px + 13, g.py + 7)
-    ctx.closePath(); ctx.fill()
+    ctx.globalAlpha = 0.18; ctx.fillStyle = "#966bec"
+    ctx.beginPath(); ctx.moveTo(g.px, g.py - 18); ctx.lineTo(g.px - 13, g.py + 7); ctx.lineTo(g.px + 13, g.py + 7); ctx.closePath(); ctx.fill()
+    // Demo thruster
+    const atf = 0.4 + 0.6 * Math.abs(Math.sin(now / 55))
+    ctx.globalAlpha = 0.13 * atf; ctx.fillStyle = "#fb923c"
+    ctx.beginPath(); ctx.moveTo(g.px - 4, g.py + 7); ctx.lineTo(g.px + 4, g.py + 7); ctx.lineTo(g.px, g.py + 12 + atf * 8); ctx.closePath(); ctx.fill()
     ctx.globalAlpha = 1
   }
 
@@ -1306,14 +1306,21 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
 
 function drawPaused(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number) {
   draw(ctx, g, cw, now, false)
-  ctx.globalAlpha = 0.55
-  ctx.fillStyle = "#0d0d14"
-  ctx.fillRect(0, 0, cw, GH)
-  ctx.globalAlpha = 1
+  ctx.globalAlpha = 0.6; ctx.fillStyle = "#0d0d14"; ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1
   ctx.fillStyle = "#966bec"; ctx.font = "bold 18px monospace"; ctx.textAlign = "center"
-  ctx.fillText("PAUSED", cw/2, GH/2 - 8)
-  ctx.fillStyle = "rgba(255,255,255,0.3)"; ctx.font = "9px monospace"
-  ctx.fillText("press P or ESC to resume", cw/2, GH/2 + 12)
+  ctx.fillText("PAUSED", cw/2, GH/2 - 36)
+  ctx.fillStyle = "rgba(255,255,255,0.28)"; ctx.font = "9px monospace"
+  ctx.fillText("press P or ESC to resume", cw/2, GH/2 - 16)
+  const activeUpgrades = UPGRADES.filter(u => u.id !== "extra_life" && (g.upgrades[u.id] ?? 0) > 0)
+  if (activeUpgrades.length > 0) {
+    ctx.fillStyle = "rgba(150,107,236,0.4)"; ctx.font = "8px monospace"
+    ctx.fillText("upgrades:", cw/2, GH/2 + 6)
+    activeUpgrades.forEach((u, i) => {
+      const count = g.upgrades[u.id]
+      ctx.fillStyle = "rgba(150,107,236,0.65)"; ctx.font = "8px monospace"
+      ctx.fillText(count > 1 ? `${u.name} ×${count}` : u.name, cw/2, GH/2 + 20 + i * 13)
+    })
+  }
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -1363,6 +1370,18 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, isNewPB, onRest
   const [handle, setHandle]         = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted]   = useState(false)
+  const [rank, setRank]             = useState<{ pct: number; total: number } | null>(null)
+
+  useEffect(() => {
+    if (score <= 0) return
+    fetch("/api/leaderboard").then(r => r.json()).then((d: any) => {
+      const scores: number[] = (d.scores ?? []).map((s: any) => s.score as number)
+      if (scores.length > 0) {
+        const below = scores.filter(s => score > s).length
+        setRank({ pct: Math.round((below / scores.length) * 100), total: scores.length })
+      }
+    }).catch(() => {})
+  }, [])
 
   async function submit() {
     if (!handle.trim() || submitting) return
@@ -1393,8 +1412,13 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, isNewPB, onRest
           ))}
         </div>
         {upgradeCount > 0 && (
-          <p style={{ color:"rgba(150,107,236,0.6)", fontSize:"0.68rem", margin:"0 0 1rem", fontFamily:"monospace" }}>
+          <p style={{ color:"rgba(150,107,236,0.6)", fontSize:"0.68rem", margin:"0 0 0.4rem", fontFamily:"monospace" }}>
             {upgradeCount} upgrade{upgradeCount !== 1 ? "s" : ""} collected
+          </p>
+        )}
+        {rank !== null && (
+          <p style={{ color:"rgba(253,186,116,0.65)", fontSize:"0.67rem", margin:"0 0 0.9rem", fontFamily:"monospace" }}>
+            {rank.pct >= 90 ? "★ " : ""}{`top ${Math.max(1, 100 - rank.pct)}% of ${rank.total} runs`}
           </p>
         )}
         {!submitted ? (
