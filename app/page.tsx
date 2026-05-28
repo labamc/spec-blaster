@@ -94,6 +94,30 @@ function tone(freq: number, dur: number, vol = 0.25, type: OscillatorType = "squ
     osc.start(); osc.stop(ctx.currentTime + dur)
   } catch {}
 }
+// Ambient drone
+let droneOsc:  OscillatorNode | null = null
+let droneGain: GainNode | null = null
+function startDrone() {
+  const ctx = getAudio(); if (!ctx) return
+  stopDrone()
+  const osc = ctx.createOscillator(), gain = ctx.createGain()
+  osc.connect(gain); gain.connect(ctx.destination)
+  osc.type = "sine"; osc.frequency.value = 55
+  gain.gain.setValueAtTime(0.001, ctx.currentTime)
+  gain.gain.linearRampToValueAtTime(0.03, ctx.currentTime + 1.5)
+  osc.start(); droneOsc = osc; droneGain = gain
+}
+function stopDrone() {
+  if (droneGain && audioCtx) { droneGain.gain.setTargetAtTime(0.001, audioCtx.currentTime, 0.4) }
+  setTimeout(() => { try { droneOsc?.stop() } catch {} droneOsc = null; droneGain = null }, 700)
+}
+function dronePitch(freq: number) {
+  if (droneOsc && audioCtx) droneOsc.frequency.setTargetAtTime(freq, audioCtx.currentTime, 0.8)
+}
+function droneVol(vol: number) {
+  if (droneGain && audioCtx) droneGain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.5)
+}
+
 const sfx = {
   shoot:    () => tone(880, 0.07, 0.15),
   kill:     (combo = 1) => tone(1100 + combo * 60, 0.09, 0.18 + combo * 0.02),
@@ -195,6 +219,7 @@ export default function HomePage() {
     g.running = true
     g.waveAnn = { text: `WAVE 1 · ${BOSSES[0].name}`, t: 0 }
     g.livesAtWave = MAX_LIVES
+    startDrone()
     setScore(0); setLevel(1); setLives(MAX_LIVES)
     phaseRef.current = "playing"
     setPhase("playing")
@@ -346,6 +371,12 @@ export default function HomePage() {
       // combo decay
       if (now - g.lastKill > 1300 && g.combo > 1) g.combo = 1
       if (g.combo > g.maxCombo) g.maxCombo = g.combo
+
+      // ambient drone pitch
+      if (g.paused) { droneVol(0.008) }
+      else if (g.boss?.raged) { dronePitch(95 + 5 * Math.sin(now / 600)); droneVol(0.04) }
+      else if (g.boss) { dronePitch(72); droneVol(0.035) }
+      else { dronePitch(52 + g.level * 4); droneVol(0.025) }
 
       // wave announce tick
       if (g.waveAnn) {
@@ -683,7 +714,7 @@ export default function HomePage() {
       for (let i = 0; i < 12; i++)
         g.particles.push({ x: g.px, y: PLAYER_Y, vx: (Math.random()-0.5)*10, vy: -2-Math.random()*5, life: 0.9, glyph: "×", col: "#f87171" })
       if (g.lives <= 0) {
-        g.running = false
+        g.running = false; stopDrone()
         setScore(g.score); setLevel(g.level)
         try {
           const pb = parseInt(localStorage.getItem("sb_pb") || "0")
