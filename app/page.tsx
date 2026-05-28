@@ -1354,19 +1354,13 @@ export default function HomePage() {
           )}
 
           {phase === "capy" && (
-            <Overlay onClick={advanceCapy} dim={0.97}>
-              <div style={{ maxWidth:"360px" }}>
-                <div style={{ fontSize:"3rem", marginBottom:"1rem" }}>🦫</div>
-                <div className="capy-glow" style={{ background:"#1e1e24", border:"1px solid rgba(150,107,236,0.3)", borderRadius:"6px", padding:"1.1rem 1.5rem", marginBottom:"1rem" }}>
-                  <p style={{ color:"#f5f5f5", fontSize:"0.9rem", lineHeight:1.75, margin:0, whiteSpace:"pre-line" }}>{capyLines[capyIdx]}</p>
-                </div>
-                <p style={{ color:"#a09fa2", fontSize:"0.72rem", marginBottom:"0.5rem" }}>click to continue</p>
-                {level <= 4 && BOSSES[level - 1] && (
-                  <p style={{ color:"#966bec", fontSize:"0.72rem", fontWeight:500 }}>Next sector: {BOSSES[level - 1].name}</p>
-                )}
-                {level > 4 && <p style={{ color:"#4ade80", fontSize:"0.72rem", fontWeight:500 }}>INFINITE RECURSION</p>}
-              </div>
-            </Overlay>
+            <CapyScreen
+              text={capyLines[capyIdx] ?? ""}
+              lineNum={capyIdx}
+              totalLines={capyLines.length}
+              level={level}
+              onAdvance={advanceCapy}
+            />
           )}
 
           {phase === "upgrade" && <CLIScreen options={upgradeOptions} onPick={onUpgradePick} score={score} kills={G.current.kills} />}
@@ -2404,6 +2398,86 @@ function CLIScreen({ options, onPick, score, kills }: {
             caretColor:"#966bec", opacity: phase === "ready" ? 1 : 0,
           }}
         />
+      </div>
+    </div>
+  )
+}
+
+// ── Capy briefing screen with typewriter ─────────────────────────────────
+function CapyScreen({ text, lineNum, totalLines, level, onAdvance }: {
+  text: string; lineNum: number; totalLines: number; level: number; onAdvance: () => void
+}) {
+  const [displayed, setDisplayed] = useState("")
+  const [done, setDone]           = useState(false)
+  const skipRef = useRef(false)
+
+  useEffect(() => {
+    setDisplayed(""); setDone(false); skipRef.current = false
+    let i = 0
+    function tick() {
+      if (skipRef.current) return
+      i++
+      setDisplayed(text.slice(0, i))
+      if (i < text.length) setTimeout(tick, 20)
+      else setDone(true)
+    }
+    const t = setTimeout(tick, 120)
+    return () => { clearTimeout(t); skipRef.current = true }
+  }, [text, lineNum]) // lineNum ensures reset even if same text repeats
+
+  function handleClick() {
+    if (!done) { skipRef.current = true; setDisplayed(text); setDone(true) }
+    else onAdvance()
+  }
+
+  const nextBoss  = level <= 4 ? BOSSES[level - 1] : null
+  const isFinale  = level > 4
+
+  return (
+    <div onClick={handleClick}
+      style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center",
+        background:"rgba(8,8,15,0.97)", cursor:"pointer", zIndex:10 }}>
+      <div style={{ maxWidth:"380px", width:"100%", padding:"1.5rem", textAlign:"center" }}>
+
+        {/* Capybara + sector indicator */}
+        <div style={{ marginBottom:"1rem" }}>
+          <div style={{ fontSize:"2.6rem", marginBottom:"0.5rem" }}>🦫</div>
+          <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.57rem", fontFamily:"monospace",
+            letterSpacing:"0.28em", margin:0 }}>
+            {lineNum + 1} / {totalLines}
+          </p>
+        </div>
+
+        {/* Dialog box */}
+        <div className="capy-glow"
+          style={{ background:"#111118", border:"1px solid rgba(150,107,236,0.3)", borderRadius:"6px",
+            padding:"1.25rem 1.5rem", marginBottom:"1.1rem", minHeight:"4rem",
+            display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <p style={{ color:"#f5f5f5", fontSize:"0.92rem", lineHeight:1.8, margin:0,
+            whiteSpace:"pre-line", textAlign:"left" }}>
+            {displayed}
+            {!done && <span className="cursor-blink">|</span>}
+          </p>
+        </div>
+
+        {/* Prompt + next sector hint */}
+        <p style={{ color: done ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.15)",
+          fontSize:"0.7rem", margin:"0 0 0.55rem", transition:"color 0.3s",
+          fontFamily:"monospace" }}>
+          {done ? "click to continue →" : "…"}
+        </p>
+        {nextBoss && done && (
+          <p style={{ color:"#966bec", fontSize:"0.72rem", fontWeight:600,
+            fontFamily:"monospace", letterSpacing:"0.08em", margin:0 }}>
+            SECTOR {level} · {nextBoss.name}
+          </p>
+        )}
+        {isFinale && done && (
+          <p style={{ color:"#4ade80", fontSize:"0.72rem", fontWeight:600,
+            fontFamily:"monospace", letterSpacing:"0.1em", margin:0 }}>
+            ∞ INFINITE RECURSION
+          </p>
+        )}
       </div>
     </div>
   )
