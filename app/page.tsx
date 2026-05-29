@@ -1468,6 +1468,11 @@ export default function HomePage() {
             g.lastKill = now
             // Each kill defers next spawn by 300ms so bursts create visible pauses
             g.lastWord = Math.max(g.lastWord, now - 100)
+            // Per-kill chain pulse — brief edge flash confirms each link in the chain
+            if (g.combo >= 2) {
+              const pulseF = Math.min(14, 4 + Math.floor(g.combo * 0.55))
+              if (g.accentFlash < pulseF) { g.accentFlash = pulseF; g.accentFlashCol = BOSSES[Math.min(g.level - 1, 3)].color }
+            }
             if (g.combo === 3 || g.combo === 5 || g.combo === 10 || g.combo === 15 || g.combo === 20 || g.combo === 25 || g.combo === 30) {
               sfx.combo(g.combo)
               if (g.combo === 5)  { showCapyMsg(g, "Five x.\nThe Signal amplifies.", now); g.shake = 3 }
@@ -1772,10 +1777,10 @@ export default function HomePage() {
             for (let ri = 0; ri < 3; ri++) {
               g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: 0, life: 0.9 - ri * 0.18, initLife: 0.9 - ri * 0.18, glyph: "", col: ri === 0 ? "#4ade80" : ri === 1 ? "#966bec" : "#facc15", ring: true })
             }
-            g.particles.push({ x: g.W/2, y: GH/2 - 20, vx: 0, vy: -0.4, life: 3.5, glyph: "THE SIGNAL PERSISTS", col: "#4ade80", sz: 15, gravity: 0 })
-            g.particles.push({ x: g.W/2, y: GH/2 + 6, vx: 0, vy: -0.28, life: 3.0, glyph: "INFINITE RECURSION UNLOCKED", col: "#966bec", sz: 9, gravity: 0 })
-            g.particles.push({ x: g.W/2, y: GH/2 + 22, vx: 0, vy: -0.25, life: 2.5, glyph: "+500 COLLAPSE RESOLVED", col: "#facc15", sz: 10 })
-            if (noReg) g.particles.push({ x: g.W/2, y: GH/2 + 36, vx: 0, vy: -0.2, life: 2.2, glyph: "+300 CARRIER INTACT", col: "#4ade80", sz: 10 })
+            g.particles.push({ x: g.W/2, y: GH/2 - 22, vx: 0, vy: -0.4, life: 4.0, glyph: "THE SIGNAL PERSISTS", col: "#4ade80", sz: 22, gravity: 0 })
+            g.particles.push({ x: g.W/2, y: GH/2 + 8, vx: 0, vy: -0.28, life: 3.5, glyph: "INFINITE RECURSION UNLOCKED", col: "#966bec", sz: 11, gravity: 0 })
+            g.particles.push({ x: g.W/2, y: GH/2 + 26, vx: 0, vy: -0.25, life: 3.0, glyph: "+500 COLLAPSE RESOLVED", col: "#facc15", sz: 12 })
+            if (noReg) g.particles.push({ x: g.W/2, y: GH/2 + 42, vx: 0, vy: -0.2, life: 2.5, glyph: "NO REGRESSIONS  +300", col: "#4ade80", sz: 11 })
             showCapyMsg(g, "All collapses survived.\nThe Signal persists.\nInfinite recursion begins.", now)
             setTimeout(() => sfx.bossDead(), 300)
             setTimeout(() => sfx.bossDead(), 650)
@@ -1801,14 +1806,14 @@ export default function HomePage() {
             for (let ri = 0; ri < 2; ri++) {
               g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0, life: 1.4 - ri * 0.4, initLife: 1.4 - ri * 0.4, glyph: "", col: ri === 0 ? clearCol : "#fbbf24", ring: true })
             }
-            // Sector clear text — gravity 0 so they float up steadily
-            g.particles.push({ x: g.W/2, y: GH/2 - 14, vx: 0, vy: -0.35, life: 3.5, glyph: sectorNames[lvl] ?? "", col: "#966bec", sz: 13, gravity: 0 })
-            g.particles.push({ x: g.W/2, y: GH/2 + 6,  vx: 0, vy: -0.25, life: 3.0, glyph: `+500 ${bx.name} DEFEATED`, col: "#facc15", sz: 10, gravity: 0 })
-            if (noReg) g.particles.push({ x: g.W/2, y: GH/2 + 22, vx: 0, vy: -0.18, life: 2.8, glyph: "+300 CARRIER INTACT", col: "#4ade80", sz: 10, gravity: 0 })
+            // Sector clear text — big and earned
+            g.particles.push({ x: g.W/2, y: GH/2 - 18, vx: 0, vy: -0.32, life: 3.8, glyph: sectorNames[lvl] ?? "", col: clearCol, sz: 20, gravity: 0 })
+            g.particles.push({ x: g.W/2, y: GH/2 + 10, vx: 0, vy: -0.22, life: 3.2, glyph: `${bx.name} · SEVERED`, col: "#facc15", sz: 12, gravity: 0 })
+            if (noReg) g.particles.push({ x: g.W/2, y: GH/2 + 26, vx: 0, vy: -0.16, life: 2.8, glyph: "NO REGRESSIONS  +800", col: "#4ade80", sz: 11, gravity: 0 })
             const nextSector = lvl + 1
             const nextBoss = BOSSES[nextSector - 1]
             if (nextBoss) {
-              g.particles.push({ x: g.W/2, y: GH/2 + (noReg ? 38 : 22), vx: 0, vy: -0.14, life: 2.5, glyph: `SECTOR ${nextSector} · ${nextBoss.name}`, col: "rgba(150,107,236,0.6)", sz: 9, gravity: 0 })
+              g.particles.push({ x: g.W/2, y: GH/2 + (noReg ? 42 : 26), vx: 0, vy: -0.12, life: 2.6, glyph: `▸ SECTOR ${nextSector} · ${nextBoss.name}`, col: "rgba(200,180,255,0.7)", sz: 10, gravity: 0 })
             }
             // Extra boss dead fanfare for later sectors
             if (lvl >= 2) setTimeout(() => sfx.bossDead(), 350)
@@ -3241,14 +3246,18 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   ctx.fillText(pauseHint, 10, GH - 24)
 
   // combo display
-  if (g.combo >= 3) {
-    ctx.globalAlpha = Math.max(0, 1 - (now - g.lastKill) / 1200)
-    const comboStr = g.combo >= 10 ? `${g.combo}× CHAIN!` : g.combo >= 5 ? `${g.combo}× CHAIN` : `${g.combo}× combo`
-    const comboCol = g.combo >= 10 ? "#facc15" : g.combo >= 5 ? "#fb923c" : "#966bec"
-    ctx.font = `bold ${Math.min(22, 14 + g.combo)}px monospace`
+  if (g.combo >= 2) {
+    const comboAge = now - g.lastKill
+    ctx.globalAlpha = Math.max(0, 1 - comboAge / 1200)
+    const comboStr = g.combo >= 10 ? `${g.combo}× CHAIN!` : g.combo >= 5 ? `${g.combo}× CHAIN` : g.combo >= 3 ? `${g.combo}×` : `×${g.combo}`
+    const comboCol = g.combo >= 20 ? "#facc15" : g.combo >= 10 ? "#fb923c" : g.combo >= 5 ? "#c4b5fd" : BOSSES[Math.min(g.level - 1, 3)].color
+    const comboSz  = g.combo >= 20 ? 28 : g.combo >= 10 ? 24 : g.combo >= 5 ? 20 : g.combo >= 3 ? 17 : 13
+    ctx.save()
+    ctx.shadowColor = comboCol; ctx.shadowBlur = 8 + g.combo * 0.6
+    ctx.font = `bold ${comboSz}px monospace`
     ctx.textAlign = "center"; ctx.fillStyle = comboCol
-    ctx.fillText(comboStr, cw/2, GH/2 - 30)
-    ctx.globalAlpha = 1
+    ctx.fillText(comboStr, cw/2, GH/2 - 32)
+    ctx.restore(); ctx.globalAlpha = 1
   }
 
   // wave announcement
