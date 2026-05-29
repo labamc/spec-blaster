@@ -1058,7 +1058,7 @@ export default function HomePage() {
           l.x += (l.tx - l.x) * 0.06
           l.y += (l.ty - l.y) * 0.06
         })
-        if (bw.t === 170) {
+        if (bw.t >= 170) {
           const bd = BOSSES[g.level - 1]
           g.boss = { x: g.W/2, y: 70, hp: bd.hp, maxHp: bd.hp, name: bd.name, color: bd.color, dir: 1, t: 0, phase: g.level, raged: false, halfTriggered: false }
           g.bossWarn = null
@@ -1627,34 +1627,45 @@ export default function HomePage() {
         g.accentFlash = 18; g.accentFlashCol = bx.color
         // Core particle burst — scaled by sector
         spawnParticles(g, bx.x, bx.y, bx.color, "★", g.endless ? 28 : 44)
-        // Three shockwave rings — slow and visible
+        // Three shockwave rings — staggered, snappy
         for (let ri = 0; ri < 3; ri++) {
           g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0,
-            life: 1.4 - ri * 0.3, initLife: 1.4 - ri * 0.3,
+            life: 0.65 - ri * 0.12, initLife: 0.65 - ri * 0.12,
             glyph: "", col: ri === 1 ? "#fbbf24" : bx.color, ring: true })
         }
-        // Boss name letters — scatter in all directions, each one independent
+        // Boss name letters — true 360° explosive scatter, each letter independent
         bx.name.split("").forEach((ch, i2) => {
-          const spread = bx.name.length / 2
-          const charX = bx.x + (i2 - spread) * 9
-          // Random angle biased upward (±117° from straight up) — true scatter
-          const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.3
-          const spd = 2.8 + Math.random() * 2.8
-          const lf = 1.4 + Math.random() * 0.8
+          const angle = Math.random() * Math.PI * 2           // full circle — no bias
+          const spd = 5 + Math.random() * 6                   // 5–11 px/frame burst velocity
+          const lf = 0.48 + Math.random() * 0.36             // 0.48–0.84 (400–700ms at 60fps)
           g.particles.push({
-            x: charX, y: bx.y,
+            x: bx.x + (Math.random() - 0.5) * 52,           // spread across boss footprint
+            y: bx.y + (Math.random() - 0.5) * 20,
             vx: Math.cos(angle) * spd,
             vy: Math.sin(angle) * spd,
             life: lf, initLife: lf,
             glyph: ch, col: bx.color,
-            rot: (Math.random() - 0.5) * 1.8,
-            rotV: (Math.random() - 0.5) * 0.12,
-            gravity: 0.035,
-            friction: 0.99,
+            rot: (Math.random() - 0.5) * Math.PI * 2,       // full random start rotation
+            rotV: (Math.random() - 0.5) * 0.22,             // fast tumble
+            gravity: 0.09 + Math.random() * 0.09,           // 0.09–0.18 — heavy dramatic arcs
+            friction: 0.95 + Math.random() * 0.02,
           })
         })
-        // Central impact glyph — hovers, boss color
-        g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: -0.15, life: 2.5, initLife: 2.5, glyph: "✕", col: bx.color, sz: 24, rot: 0, rotV: 0, gravity: 0 })
+        // Debris sparks — amber + boss color, radial burst
+        for (let di = 0; di < 22; di++) {
+          const a = Math.random() * Math.PI * 2
+          const spd2 = 2.5 + Math.random() * 5.5
+          const lf2 = 0.26 + Math.random() * 0.28
+          g.particles.push({
+            x: bx.x + (Math.random() - 0.5) * 32,
+            y: bx.y + (Math.random() - 0.5) * 14,
+            vx: Math.cos(a) * spd2, vy: Math.sin(a) * spd2,
+            life: lf2, initLife: lf2,
+            glyph: di % 3 === 0 ? "✦" : "·",
+            col: di % 2 === 0 ? "#fbbf24" : bx.color,
+            rot: 0, rotV: 0, gravity: 0.13, friction: 0.91,
+          })
+        }
         g.boss = null; g.mines = [] // clear mines on boss death
         if (g.endless) {
           sfx.miniBoss()
