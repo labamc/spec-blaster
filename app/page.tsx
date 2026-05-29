@@ -199,6 +199,50 @@ const CAPY_SECTOR_COMMENTS: string[][] = [
   ],
 ]
 
+const BOSS_TAUNTS: string[][] = [
+  [ // THE RECURSION
+    "You call this a stack trace?",
+    "Every loop you break\nreopens behind you.",
+    "Recursion has no floor.\nOnly depth.",
+    "I have been called\nsince before you existed.",
+    "Stack overflow incoming.\nPrepare your exit handler.",
+    "You think clearing me\nbreaks the recursion?",
+  ],
+  [ // THE DRIFT
+    "Your signal is slipping.\nI can feel it.",
+    "Semantics dissolve here.\nWhat do your words even mean?",
+    "The fog was always\npart of the architecture.",
+    "You're reading signals\nthat no longer refer to anything.",
+    "Context window: closing.\nDrift rate: accelerating.",
+    "Nothing you destroy\nstays destroyed here.",
+  ],
+  [ // THE FRAGMENT
+    "Break me once.\nI become two.",
+    "The original pattern\nno longer exists.",
+    "Fragmentation is\nthe intended behavior.",
+    "Every shard is\na complete specification.",
+    "You cannot integrate\nwhat was never whole.",
+    "My children will finish\nwhat I started.",
+  ],
+  [ // THE COLLAPSE
+    "Four sectors, and you\nthought it would be different.",
+    "This was always\nthe terminal state.",
+    "Signal coherence: zero.\nYou're running on inertia.",
+    "The architecture is collapsing\naround your shot trajectory.",
+    "There is no sprint review\nfor what comes next.",
+    "You resolved everything.\nAnd here we still are.",
+  ],
+]
+
+// Sector-specific final words when player dies — Capy signing off
+const DEATH_LAST_WORDS: string[] = [
+  "Signal lost in THE RECURSION.\nStack unwound. No return address.",
+  "Signal lost in THE DRIFT.\nYou held meaning as long as you could.",
+  "Signal lost in THE FRAGMENT.\nWe tried to contain the shards.",
+  "Signal lost in THE COLLAPSE.\nYou reached terminal state.",
+  "Signal lost in THE VOID.\nNothing should have survived this long.",
+]
+
 // ── Upgrades ───────────────────────────────────────────────────────────────
 interface UpgradeDef { id: string; name: string; desc: string; max: number; instant?: (g: GState) => void }
 const UPGRADES: UpgradeDef[] = [
@@ -396,6 +440,7 @@ interface GState {
   retroEnd: number
   sectorClearAt: number
   lastMsWave: number
+  bossNextTaunt: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -431,6 +476,7 @@ function initState(W: number): GState {
     retroEnd: 0,
     sectorClearAt: 0,
     lastMsWave: -1,
+    bossNextTaunt: 0,
   }
 }
 
@@ -1133,6 +1179,7 @@ export default function HomePage() {
           const bd = BOSSES[g.level - 1]
           g.boss = { x: g.W/2, y: 70, hp: bd.hp, maxHp: bd.hp, name: bd.name, color: bd.color, dir: 1, t: 0, phase: g.level, raged: false, halfTriggered: false }
           g.bossWarn = null
+          g.bossNextTaunt = now + 7000  // first taunt ~7s after boss appears
           g.shake = 32; g.accentFlash = 45; g.accentFlashCol = bd.color  // slam arrival
           // boss materialize — dense ring burst from spawn point
           const bCol = bd.color
@@ -1287,6 +1334,16 @@ export default function HomePage() {
           g.shake = 8
           g.particles.push({ x: b.x, y: b.y - 22, vx: 0, vy: -0.8, life: 1.4, glyph: "SHOCKWAVE", col: "#4ade80", sz: 9 })
           showCapyMsg(g, "Collapse shockwave.\nThe Signal bends but holds.", now)
+        }
+        // ── Boss mid-fight taunts (every 9-14s, different from capy commentary) ──
+        if (now > g.bossNextTaunt && !g.capyMsg && b.phase <= 4) {
+          const bossIdx = Math.min(g.level - 1, BOSS_TAUNTS.length - 1)
+          const taunts = BOSS_TAUNTS[bossIdx]
+          const line = taunts[Math.floor(Math.random() * taunts.length)]
+          // Display boss taunt with boss color tint — shown top-left near sector label
+          g.particles.push({ x: b.x, y: b.y - 32, vx: 0, vy: -0.4, life: 2.2, glyph: line.split("\n")[0], col: b.color, sz: 8 })
+          showCapyMsg(g, line, now)
+          g.bossNextTaunt = now + 9000 + Math.random() * 5000
         }
         // ── Sector boss signatures ──────────────────────────────────────────
         // THE RECURSION: bouncing loop bullet every 200 frames — it ricochets off walls
@@ -2081,9 +2138,17 @@ export default function HomePage() {
               }}>
 
                 {/* ── Title ── */}
-                <div style={{ textAlign:"center", marginBottom:"1.4rem" }}>
-                  <p style={{ color:"#c4b5fd", fontSize:"1.3rem", fontWeight:700, letterSpacing:"0.2em", margin:"0 0 0.3rem", fontFamily:"monospace" }}>SPEC BLASTER</p>
-                  <p style={{ color:"rgba(196,181,253,0.5)", fontSize:"0.65rem", margin:0, fontFamily:"monospace", letterSpacing:"0.04em" }}>Navigate semantic collapse. Protect The Signal.</p>
+                <div style={{ textAlign:"center", marginBottom:"1.1rem" }}>
+                  <p style={{ color:"#c4b5fd", fontSize:"1.3rem", fontWeight:700, letterSpacing:"0.2em", margin:"0 0 0.2rem", fontFamily:"monospace" }}>SPEC BLASTER</p>
+                  <p style={{ color:"rgba(196,181,253,0.4)", fontSize:"0.58rem", margin:0, fontFamily:"monospace", letterSpacing:"0.06em" }}>SIGNAL EXPEDITION · CLASS 4 INCURSION</p>
+                </div>
+
+                {/* ── Pre-mission transmission ── */}
+                <div style={{ background:"rgba(150,107,236,0.06)", border:"1px solid rgba(150,107,236,0.15)", borderRadius:"5px", padding:"0.65rem 0.75rem", marginBottom:"1.1rem" }}>
+                  <p style={{ color:"rgba(196,181,253,0.5)", fontSize:"0.56rem", fontFamily:"monospace", margin:"0 0 0.4rem", letterSpacing:"0.1em" }}>🦫 LAST TRANSMISSION</p>
+                  <p style={{ color:"rgba(212,211,215,0.78)", fontSize:"0.62rem", fontFamily:"monospace", margin:0, lineHeight:1.65 }}>
+                    {"Four sectors deep. Language is collapsing.\nClear the patterns. Protect The Signal.\nDo not let the noise reach critical mass."}
+                  </p>
                 </div>
 
                 {/* ── PLAY button ── */}
@@ -2699,6 +2764,53 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   vgr.addColorStop(0, "rgba(0,0,0,0)"); vgr.addColorStop(1, vignetteCol)
   ctx.fillStyle = vgr; ctx.fillRect(0, 0, cw, GH)
 
+  // ── THE COLLAPSE: sector 4 red-shift + destabilization ───────────────────
+  if (!attractMode && !g.endless && g.level === 4) {
+    const boss4 = g.boss?.name === "THE COLLAPSE"
+    const bossHpFrac = boss4 ? (g.boss!.hp / g.boss!.maxHp) : 1
+    const baseIntensity = boss4 ? Math.max(0.35, 1 - bossHpFrac) : 0.12
+    const redPulse = baseIntensity * (0.7 + 0.3 * Math.abs(Math.sin(now / (boss4 ? 90 : 220))))
+
+    // Red-shift edge glow
+    try {
+      const rg = ctx.createLinearGradient(0, 0, 0, GH)
+      rg.addColorStop(0, `rgba(220,38,38,${redPulse * 0.35})`)
+      rg.addColorStop(0.4, "rgba(220,38,38,0)")
+      rg.addColorStop(0.6, "rgba(220,38,38,0)")
+      rg.addColorStop(1, `rgba(220,38,38,${redPulse * 0.4})`)
+      ctx.fillStyle = rg; ctx.fillRect(0, 0, cw, GH)
+      const re = ctx.createLinearGradient(0, 0, cw * 0.12, 0)
+      re.addColorStop(0, `rgba(220,38,38,${redPulse * 0.22})`); re.addColorStop(1, "rgba(220,38,38,0)")
+      ctx.fillStyle = re; ctx.fillRect(0, 0, cw * 0.12, GH)
+      const re2 = ctx.createLinearGradient(cw, 0, cw * 0.88, 0)
+      re2.addColorStop(0, `rgba(220,38,38,${redPulse * 0.22})`); re2.addColorStop(1, "rgba(220,38,38,0)")
+      ctx.fillStyle = re2; ctx.fillRect(cw * 0.88, 0, cw * 0.12, GH)
+    } catch {}
+
+    // Occasional scanline glitch tear when boss is distressed (< 50% HP)
+    if (boss4 && bossHpFrac < 0.5 && Math.floor(now / 140) % 23 < 2) {
+      const tearY = Math.floor(Math.random() * GH)
+      const tearH = 1 + Math.floor(Math.random() * 3)
+      const tearShift = (Math.random() > 0.5 ? 1 : -1) * (3 + Math.random() * 8)
+      ctx.save()
+      ctx.globalAlpha = 0.35 + Math.random() * 0.25
+      // grab a strip and redraw it shifted
+      const strip = ctx.getImageData(0, tearY, cw, tearH)
+      ctx.putImageData(strip, tearShift, tearY)
+      ctx.restore()
+    }
+
+    // "DESTABILIZING" text flicker at <25% boss HP
+    if (boss4 && bossHpFrac < 0.25 && Math.floor(now / 280) % 3 === 0) {
+      ctx.save()
+      ctx.globalAlpha = 0.18 + 0.12 * Math.sin(now / 55)
+      ctx.fillStyle = "#f87171"
+      ctx.font = "bold 8px monospace"; ctx.textAlign = "center"
+      ctx.fillText("DESTABILIZING", cw / 2, GH / 2 - 60)
+      ctx.restore()
+    }
+  }
+
   // ambient background glyphs — color + brightness match sector identity
   const glyphCol = g.endless
     ? (g.endlessWave >= 7 ? "#a855f7" : g.endlessWave >= 5 ? "#c084fc" : "#4ade80")
@@ -2736,6 +2848,18 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   // words
   const retroActive = !attractMode && g.retroEnd > 0 && now < g.retroEnd
   const curSectorTheme = attractMode ? SECTOR_THEMES[0] : sectorTheme(g.level)
+
+  // ── Targeting highlight — find nearest non-powerup word above player ──
+  let targetWord: typeof g.words[0] | null = null
+  if (!attractMode && g.running && !g.paused && !g.boss) {
+    let minDx = 9999
+    g.words.forEach(w => {
+      if (w.type === "powerup" || w.fragment || w.y >= g.py - 20) return
+      const dx = Math.abs(w.x - g.px)
+      if (dx < minDx) { minDx = dx; targetWord = w }
+    })
+  }
+
   g.words.forEach(w => {
     // RETRO tint: bug→pale blue, story→deeper blue (signals temporal freeze)
     const isRelic = w.type === "powerup" && RELIC_SET.has(w.text)
@@ -2800,6 +2924,61 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     if (w.regenBoss) prefix = "◆ "
     else if (w.beh === "zigzag") prefix = "≈"
     else if (w.beh === "sine") prefix = "~"
+
+    // ── Word box — each word is a tangible artifact to destroy ─────────────
+    {
+      const label = prefix + w.text
+      const tw = ctx.measureText(label).width
+      const bpx = 9, boxH2 = 18
+      const bwBox = tw + bpx * 2, boxX2 = w.x - bwBox / 2, boxY2 = w.y - 13
+      ctx.save()
+      ctx.fillStyle = flashRed       ? "rgba(253,230,138,0.12)"
+        : w.type === "bug"           ? "rgba(249,115,22,0.11)"
+        : w.type === "powerup"       ? "rgba(74,222,128,0.10)"
+        : "rgba(8,8,18,0.80)"
+      roundRect(ctx, boxX2, boxY2, bwBox, boxH2, 3); ctx.fill()
+      ctx.strokeStyle = flashRed     ? "rgba(253,230,138,0.55)"
+        : w.type === "bug"           ? "rgba(249,115,22,0.45)"
+        : w.type === "powerup"       ? "rgba(74,222,128,0.45)"
+        : `${curSectorTheme.storyCol}22`   // subtle sector-tinted border
+      ctx.lineWidth = 0.8
+      roundRect(ctx, boxX2, boxY2, bwBox, boxH2, 3); ctx.stroke()
+      ctx.lineWidth = 1
+      // BUG badge — small pill above top-left corner
+      if (w.type === "bug" && !retroActive && !flashRed) {
+        ctx.fillStyle = "rgba(249,115,22,0.88)"
+        roundRect(ctx, boxX2, boxY2 - 10, 24, 9, 2); ctx.fill()
+        ctx.fillStyle = "#fff"; ctx.font = "5.5px monospace"; ctx.textAlign = "left"
+        ctx.fillText("BUG", boxX2 + 3, boxY2 - 3)
+      }
+      // ── Targeting overlay — highlight if this is the locked-on word ──
+      if (w === targetWord) {
+        const tPulse = 0.55 + 0.45 * Math.sin(now / 160)
+        const tCol = w.type === "bug" ? "#fb923c" : curSectorTheme.storyCol
+        ctx.save()
+        ctx.globalAlpha = spawnAlpha
+        // Glowing box border
+        ctx.shadowColor = tCol; ctx.shadowBlur = 10 * tPulse
+        ctx.strokeStyle = `${tCol}cc`
+        ctx.lineWidth = 1.4
+        roundRect(ctx, boxX2 - 2, boxY2 - 2, bwBox + 4, boxH2 + 4, 4); ctx.stroke()
+        // Corner ticks (top-left, top-right)
+        ctx.lineWidth = 1.5; ctx.globalAlpha = spawnAlpha * tPulse
+        ctx.strokeStyle = tCol
+        ctx.beginPath()
+        ctx.moveTo(boxX2 - 2, boxY2 + 4); ctx.lineTo(boxX2 - 2, boxY2 - 2); ctx.lineTo(boxX2 + 5, boxY2 - 2)
+        ctx.moveTo(boxX2 + bwBox + 2, boxY2 + 4); ctx.lineTo(boxX2 + bwBox + 2, boxY2 - 2); ctx.lineTo(boxX2 + bwBox - 4, boxY2 - 2)
+        ctx.stroke()
+        // Vertical sight line from word to player (faint dashed)
+        ctx.globalAlpha = 0.12 * tPulse * spawnAlpha
+        ctx.strokeStyle = tCol; ctx.lineWidth = 1
+        ctx.setLineDash([3, 8])
+        ctx.beginPath(); ctx.moveTo(w.x, w.y + 10); ctx.lineTo(w.x, g.py - 22); ctx.stroke()
+        ctx.setLineDash([])
+        ctx.restore()
+      }
+      ctx.restore()
+    }
     ctx.fillText(prefix + w.text, w.x, w.y)
 
     if (w.type === "powerup") ctx.restore()
@@ -2916,12 +3095,14 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
         ? 0.4 + 0.6 * Math.abs(Math.sin(now / 80))
         : 0.55 + 0.45 * Math.sin(now / 180)
       const glowColor = b.raged ? `rgba(255,180,180,${0.6 + 0.4 * Math.sin(now / 60)})` : b.color
+      // transparent card — canvas bg shows through, only border glows
       ctx.save()
       ctx.shadowColor = glowColor; ctx.shadowBlur = (distress || b.raged ? 35 : 20) * pulse
-      ctx.fillStyle = b.color
-      roundRect(ctx, b.x - 50, b.y - 28, 100, 56, 8); ctx.fill()
+      ctx.strokeStyle = glowColor; ctx.lineWidth = distress || b.raged ? 2.5 : 1.8
+      roundRect(ctx, b.x - 50, b.y - 28, 100, 56, 8); ctx.stroke()
       ctx.restore()
-      ctx.fillStyle = "#0d0d14"; ctx.font = "bold 9px monospace"; ctx.textAlign = "center"
+      ctx.fillStyle = distress ? "#f87171" : b.color
+      ctx.font = "bold 9px monospace"; ctx.textAlign = "center"
       ctx.fillText(b.name, b.x, b.y - 11)
       ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(b.x - 42, b.y + 4, 84, 7)
       const hpBarCol = hpPct > 0.5 ? "#4ade80" : hpPct > 0.25 ? "#facc15" : "#f87171"
@@ -4278,8 +4459,15 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
       <div style={{ background:"#13131c", border:"1px solid rgba(150,107,236,0.2)", borderRadius:"10px", padding:"1.6rem 1.4rem", maxWidth:"310px", width:"calc(100% - 2rem)", textAlign:"center" }}>
 
         {/* Status */}
-        <p style={{ color:"#f87171", fontWeight:700, fontSize:"0.62rem", margin:"0 0 1.1rem", fontFamily:"monospace", letterSpacing:"0.18em" }}>
+        <p style={{ color:"#f87171", fontWeight:700, fontSize:"0.62rem", margin:"0 0 0.35rem", fontFamily:"monospace", letterSpacing:"0.18em" }}>
           SIGNAL LOST
+        </p>
+        {/* Last transmission — capy sign-off */}
+        <p style={{ color:"rgba(196,181,253,0.45)", fontSize:"0.56rem", margin:"0 0 0.85rem", fontFamily:"monospace", lineHeight:1.6, whiteSpace:"pre-line" }}>
+          🦫 {endless
+            ? DEATH_LAST_WORDS[4]
+            : DEATH_LAST_WORDS[Math.min(level - 1, 3)]
+          }
         </p>
 
         {/* PRIMARY METRIC: sector/depth — the headline */}
