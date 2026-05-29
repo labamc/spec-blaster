@@ -159,6 +159,46 @@ const CAPY_PLAY_COMMENTS_VOID = [
   "The signal only bends.\nIt does not break.",
 ]
 
+// Sector-specific mid-run transmissions — one pool per sector
+const CAPY_SECTOR_COMMENTS: string[][] = [
+  [ // Sector 1: THE RECURSION — cold, loop-depth
+    "Recursion depth: increasing.\nStack integrity: nominal.",
+    "You are resolving loops\nthat should never have started.",
+    "Each clear tightens\nthe exit condition.",
+    "THE RECURSION was designed\nto consume its caller.",
+    "Ghost allocations ahead.\nKeep the stack clean.",
+    "Infinite loop. Finite signal.\nKeep breaking them.",
+    "The call stack was full\nbefore you arrived.",
+  ],
+  [ // Sector 2: THE DRIFT — warm dissolution
+    "Semantic coherence: 78%.\nDrift accelerating.",
+    "The words are losing\ntheir referents.",
+    "The drift isn't random.\nSomething is steering it.",
+    "Language decoupling detected.\nHold your interpretation.",
+    "Every word you clear\nprevents one more semantic collapse.",
+    "Meaning requires a carrier.\nYou are still that carrier.",
+    "The fog is thicker here.\nDon't lose the signal thread.",
+  ],
+  [ // Sector 3: THE FRAGMENT — fracture, glitch
+    "Integrity: 54% and dropping.",
+    "The patterns are splitting.\nSame words, different vectors.",
+    "Coherence fracturing\nalong the seam.",
+    "Fragment containment\nis your only option now.",
+    "Every shard carries\na piece of the original signal.",
+    "Don't let the fragments accumulate.\nThey compound.",
+    "THE FRAGMENT was one pattern\nbefore it broke.",
+  ],
+  [ // Sector 4: THE COLLAPSE — terminal
+    "All sectors converging.\nThis is the terminal state.",
+    "Four sectors behind you.\nOne remaining.",
+    "Signal coherence: critical.\nYou are the only redundancy.",
+    "The collapse was scheduled.\nYou weren't supposed to reach it.",
+    "Beyond this: THE VOID.\nYou know what lives there.",
+    "Last sector. Last signal.\nCarry it through.",
+    "THE COLLAPSE is not a metaphor.\nResolve it.",
+  ],
+]
+
 // ── Upgrades ───────────────────────────────────────────────────────────────
 interface UpgradeDef { id: string; name: string; desc: string; max: number; instant?: (g: GState) => void }
 const UPGRADES: UpgradeDef[] = [
@@ -516,6 +556,8 @@ export default function HomePage() {
       g.agentSectorRevived = false
       // Stamp bg glyphs with new sector identity
       { const th = sectorTheme(g.level); g.bg.forEach(b => { b.ch = th.bgChars[Math.floor(Math.random() * th.bgChars.length)] }) }
+      // Reset Capy timer so each sector gets a fresh first transmission
+      g.nextCapyMsg = Date.now() + 22000 + Math.random() * 14000
       // Activate endless mode when entering level 5+
       if (g.level > 4) {
         g.endless = true
@@ -724,17 +766,21 @@ export default function HomePage() {
       }
 
       // capy in-game comments
-      if (g.nextCapyMsg === 0) g.nextCapyMsg = now + 60000 + Math.random() * 30000
+      if (g.nextCapyMsg === 0) g.nextCapyMsg = now + 28000 + Math.random() * 18000
       if (now > g.nextCapyMsg && !g.capyMsg && !g.bossWarn) {
+        // Sector-specific pool in story mode; depth pools in endless
         const commentPool = g.endless && g.endlessWave >= 5 ? CAPY_PLAY_COMMENTS_VOID
           : g.endless && g.endlessWave >= 3 ? CAPY_PLAY_COMMENTS_MID
-          : CAPY_PLAY_COMMENTS_SHALLOW
+          : g.endless ? CAPY_PLAY_COMMENTS_SHALLOW
+          : CAPY_SECTOR_COMMENTS[Math.min(g.level - 1, 3)]
         g.capyMsg = commentPool[Math.floor(Math.random() * commentPool.length)]
-        g.capyMsgEnd = now + 3000
-        // Very infrequent — only in deep void runs where the silence is earned
+        g.capyMsgEnd = now + 3200
+        // Fire every 30-50s in story mode — active mission control, not silence
         const baseInterval = g.endless && g.endlessWave >= 5
           ? 50000 + Math.random() * 30000
-          : 70000 + Math.random() * 40000
+          : g.endless
+            ? 40000 + Math.random() * 25000
+            : 30000 + Math.random() * 20000
         g.nextCapyMsg = now + baseInterval
       }
       if (g.capyMsg && now > g.capyMsgEnd) g.capyMsg = ""
