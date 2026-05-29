@@ -1764,16 +1764,30 @@ export default function HomePage() {
             g.bullets.splice(i, 1)
             sfx.bossHit()
             spawnParticles(g, bx.x + (Math.random()-0.5)*40, bx.y, bx.color, "✦", 4)
-            // boss rage at 50% HP
+            // boss rage at 50% HP — sector-specific enrage ceremony
             if (!bx.halfTriggered && bx.hp <= bx.maxHp / 2) {
-              bx.halfTriggered = true; bx.raged = true; g.shake = 10
-              for (let ri = 0; ri < 22; ri++) {
-                const a = (ri / 22) * Math.PI * 2
-                g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a)*11, vy: Math.sin(a)*11, life: 0.6, glyph: ri % 2 === 0 ? "✦" : "×", col: ri % 3 === 0 ? "#fbbf24" : bx.color })
+              bx.halfTriggered = true; bx.raged = true
+              g.shake = 18; g.redFlash = 12; g.whiteFlash = 6
+              g.accentFlash = 20; g.accentFlashCol = "#f87171"
+              for (let ri = 0; ri < 36; ri++) {
+                const a = (ri / 36) * Math.PI * 2
+                const spd = 6 + Math.random() * 10
+                g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd,
+                  life: 0.7 + Math.random() * 0.4, glyph: ri % 3 === 0 ? "✦" : ri % 3 === 1 ? "×" : "·",
+                  col: ri % 4 === 0 ? "#fbbf24" : ri % 4 === 1 ? "#f87171" : bx.color })
               }
-              g.particles.push({ x: bx.x, y: bx.y - 20, vx: 0, vy: -1.2, life: 1.6, glyph: "ENRAGED", col: "#f87171", sz: 12 })
-              g.accentFlash = 12; g.accentFlashCol = "#f87171"
-              showCapyMsg(g, "Pattern is escalating.\nIt knows you're here.", now)
+              // 3 expanding rings
+              for (let ri = 0; ri < 3; ri++)
+                g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0, life: 0.9 - ri * 0.22, initLife: 0.9 - ri * 0.22, glyph: "", col: ri === 0 ? "#f87171" : ri === 1 ? bx.color : "#fbbf24", ring: true })
+              g.particles.push({ x: bx.x, y: bx.y - 24, vx: 0, vy: -1.0, life: 2.2, glyph: "ESCALATING", col: "#f87171", sz: 13, gravity: 0 })
+              const enrageLines: Record<string, string> = {
+                "THE RECURSION":  "Recursion depth: maximum.\nNo exit condition remains.",
+                "THE DRIFT":      "Semantic coherence: zero.\nThe drift is complete.",
+                "THE FRAGMENT":   "Fragmentation: terminal.\nEvery shard has teeth now.",
+                "THE COLLAPSE":   "This is what collapse looks like.\nThere is no sector after this.",
+              }
+              showCapyMsg(g, enrageLines[bx.name] ?? "Pattern is escalating.\nIt knows you're here.", now)
+              g.bossNextTaunt = now + 4000  // force next taunt quickly after enrage
               sfx.rage()
             }
             // boss critical at 20% HP — red edge pulse, final push feeling
@@ -2099,12 +2113,27 @@ export default function HomePage() {
         spawnParticles(g, g.boss.x, g.boss.y, "#e879f9", "★", 8)
         sfx.bossHit()
         if (!g.boss.halfTriggered && g.boss.hp <= g.boss.maxHp / 2) {
-          g.boss.halfTriggered = true; g.boss.raged = true; g.shake = 8
-          for (let ri = 0; ri < 18; ri++) {
-            const a = (ri / 18) * Math.PI * 2
-            g.particles.push({ x: g.boss.x, y: g.boss.y, vx: Math.cos(a)*9, vy: Math.sin(a)*9, life: 0.6, glyph: "✦", col: "#fbbf24" })
+          const bx2 = g.boss
+          bx2.halfTriggered = true; bx2.raged = true
+          g.shake = 18; g.redFlash = 12; g.whiteFlash = 6
+          g.accentFlash = 20; g.accentFlashCol = "#f87171"
+          for (let ri = 0; ri < 36; ri++) {
+            const a = (ri / 36) * Math.PI * 2
+            const spd = 6 + Math.random() * 10
+            g.particles.push({ x: bx2.x, y: bx2.y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd, life: 0.7 + Math.random() * 0.4, glyph: ri % 3 === 0 ? "✦" : "×", col: ri % 4 === 0 ? "#fbbf24" : bx2.color })
           }
-          showCapyMsg(g, "Pattern is escalating.\nIt knows you're here.", now)
+          for (let ri = 0; ri < 3; ri++)
+            g.particles.push({ x: bx2.x, y: bx2.y, vx: 0, vy: 0, life: 0.9 - ri * 0.22, initLife: 0.9 - ri * 0.22, glyph: "", col: ri === 0 ? "#f87171" : bx2.color, ring: true })
+          g.particles.push({ x: bx2.x, y: bx2.y - 24, vx: 0, vy: -1.0, life: 2.2, glyph: "ESCALATING", col: "#f87171", sz: 13, gravity: 0 })
+          const enrageLines2: Record<string, string> = {
+            "THE RECURSION":  "Recursion depth: maximum.\nNo exit condition remains.",
+            "THE DRIFT":      "Semantic coherence: zero.\nThe drift is complete.",
+            "THE FRAGMENT":   "Fragmentation: terminal.\nEvery shard has teeth now.",
+            "THE COLLAPSE":   "This is what collapse looks like.\nThere is no sector after this.",
+          }
+          showCapyMsg(g, enrageLines2[bx2.name] ?? "Pattern is escalating.\nIt knows you're here.", now)
+          g.bossNextTaunt = now + 4000
+          sfx.rage()
         }
       }
       g.laserFireEnd = now + 320
@@ -2958,8 +2987,6 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     const spawnFlash = w.age < 12 ? Math.max(0, 1 - w.age / 12) : 0
     ctx.globalAlpha = spawnAlpha
 
-    // No spawn glow — crisp text at spawn is enough
-
     if (w.type === "powerup") {
       const pulse = 0.5 + 0.5 * Math.sin(now / 280)
       const glowCol = isRelic ? "#fde68a" : "#4ade80"
@@ -3046,7 +3073,16 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       }
       ctx.restore()
     }
-    ctx.fillText(prefix + w.text, w.x, w.y)
+    // Apply spawn glow to the text itself
+    if (spawnFlash > 0 && w.type !== "powerup" && !w.regenBoss && !w.elite) {
+      ctx.save()
+      ctx.shadowColor = w.type === "bug" ? "#f97316" : curSectorTheme.storyCol
+      ctx.shadowBlur = spawnFlash * 10
+      ctx.fillText(prefix + w.text, w.x, w.y)
+      ctx.restore()
+    } else {
+      ctx.fillText(prefix + w.text, w.x, w.y)
+    }
 
     if (w.type === "powerup") ctx.restore()
     if (w.regenBoss) ctx.restore()
@@ -3167,6 +3203,44 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       ctx.shadowColor = glowColor; ctx.shadowBlur = (distress || b.raged ? 35 : 20) * pulse
       ctx.strokeStyle = glowColor; ctx.lineWidth = distress || b.raged ? 2.5 : 1.8
       roundRect(ctx, b.x - 50, b.y - 28, 100, 56, 8); ctx.stroke()
+      ctx.restore()
+      // Boss emblem — unique visual identity per boss
+      ctx.save()
+      ctx.globalAlpha = (0.22 + 0.12 * Math.sin(now / 220)) * (distress ? 0.6 : 1)
+      ctx.fillStyle = b.color; ctx.textAlign = "center"
+      if (b.name === "THE RECURSION") {
+        // Spinning recursion symbol
+        const ang = now / 800
+        ctx.font = "bold 18px monospace"
+        ctx.save(); ctx.translate(b.x, b.y - 2); ctx.rotate(ang); ctx.fillText("⊗", 0, 0); ctx.restore()
+        ctx.font = "7px monospace"; ctx.globalAlpha *= 0.5
+        ctx.fillText("∞", b.x - 18, b.y + 10); ctx.fillText("∞", b.x + 18, b.y + 10)
+      } else if (b.name === "THE DRIFT") {
+        // Flowing drift wave
+        ctx.font = "12px monospace"; ctx.globalAlpha *= 0.8
+        for (let di = 0; di < 5; di++) {
+          const dx = (di - 2) * 18
+          const dy = Math.sin((now / 300) + di * 0.8) * 4
+          ctx.fillText("~", b.x + dx, b.y + dy)
+        }
+      } else if (b.name === "THE FRAGMENT") {
+        // Scattered fragments
+        ctx.font = "10px monospace"
+        const frags = ["⌁","⋈","⌁","·","⋈"]
+        frags.forEach((f, fi) => {
+          const fx = b.x + (fi - 2) * 16 + Math.sin(now / 200 + fi) * 3
+          const fy = b.y - 2 + Math.cos(now / 180 + fi) * 4
+          ctx.fillText(f, fx, fy)
+        })
+      } else if (b.name === "THE COLLAPSE") {
+        // Converging triangles
+        const s = 0.8 + 0.2 * Math.sin(now / 150)
+        ctx.font = `${Math.round(20 * s)}px monospace`
+        ctx.fillText("◈", b.x, b.y)
+        ctx.globalAlpha *= 0.4; ctx.font = "8px monospace"
+        const cols = ["▽","▽","▽"]
+        cols.forEach((c, ci) => ctx.fillText(c, b.x + (ci - 1) * 20, b.y + 14))
+      }
       ctx.restore()
       ctx.fillStyle = distress ? "#f87171" : b.color
       ctx.font = "bold 9px monospace"; ctx.textAlign = "center"
