@@ -326,7 +326,7 @@ const sfx = {
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Behavior = "fall" | "charge" | "zigzag" | "sine"
-interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean; age: number; regenBoss?: boolean }
+interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean; age: number; regenBoss?: boolean; fragment?: boolean }
 interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean; cluster?: boolean; col?: string; bounce?: boolean; drift?: number; splitAt?: number }
 interface Mine      { x: number; y: number; age: number; armAt: number }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number }
@@ -1402,7 +1402,7 @@ export default function HomePage() {
           if (w.regenBoss && g.boss && g.boss.hp < g.boss.maxHp) {
             g.boss.hp = Math.min(g.boss.maxHp, g.boss.hp + 2)
             spawnParticles(g, g.boss.x, g.boss.y, "#818cf8", "↑", 4)
-          } else if (w.type !== "powerup" && !g.invuln) {
+          } else if (w.type !== "powerup" && !w.fragment && !g.invuln) {
             loseLife(g, now)
           }
           return false
@@ -1485,7 +1485,7 @@ export default function HomePage() {
             const dataMul = 1 + dataLv * 0.10
             const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul * pmMul * dataMul)
             g.score += pts
-            g.kills++; g.wordsKilled++
+            g.kills++; if (!w.fragment) g.wordsKilled++
             // "one kill to boss" capy warning (non-endless only)
             if (!g.endless && !g.boss && g.wordsKilled === WORDS_TO_BOSS - 1) {
               const bossName = BOSSES[Math.min(g.level - 1, 3)].name
@@ -2386,6 +2386,25 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number)
     const sz       = combo >= 20 ? 16 : combo >= 10 ? 14 : combo >= 5 ? 12 : 10
     g.particles.push({ x: word.x, y: word.y - 16, vx: 0, vy: -1.3 * energy, life: 1.2, glyph: label, col: popCol, sz })
   }
+
+  // Fragment mechanic: 35% of non-powerup, non-fragment kills leave a letter cluster
+  // The cluster holds together on screen and requires a second shot to clear
+  if (!word.fragment && word.type !== "powerup" && word.text.length >= 3 && Math.random() < 0.35) {
+    const maxFrag = Math.min(4, word.text.length - 1)
+    const fragLen = 2 + Math.floor(Math.random() * (maxFrag - 1))
+    const fragStart = Math.floor(Math.random() * (word.text.length - fragLen))
+    const fragText = word.text.slice(fragStart, fragStart + fragLen)
+    const fragX = word.x + (Math.random()-0.5) * 35
+    g.words.push({
+      x: fragX, y: word.y - 5,
+      text: fragText, type: word.type,
+      spd: 0.25 + Math.random() * 0.15,
+      beh: "fall", ph: 0, ox: fragX,
+      hp: 1, hitFlash: 0,
+      elite: false, age: 0,
+      fragment: true,
+    })
+  }
 }
 
 function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number, attractMode: boolean) {
@@ -2549,6 +2568,22 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       : (retroActive ? "#a5f3fc" : "#7dd3fc")
     const flashRed = w.hitFlash > 0
 
+    // Fragments: held-together letter cluster needing a second shot
+    if (w.fragment) {
+      const fragPulse = 0.45 + 0.25 * Math.sin(now / 180)
+      ctx.save()
+      ctx.globalAlpha = fragPulse
+      ctx.shadowColor = col; ctx.shadowBlur = 6 * fragPulse
+      ctx.fillStyle = col; ctx.font = "10px monospace"; ctx.textAlign = "center"
+      ctx.fillText("⌁" + w.text, w.x, w.y)
+      // small underline dot to signal "needs another hit"
+      ctx.fillStyle = col; ctx.globalAlpha = fragPulse * 0.5
+      ctx.beginPath(); ctx.arc(w.x, w.y + 5, 1.5, 0, Math.PI * 2); ctx.fill()
+      ctx.restore()
+      ctx.globalAlpha = 1
+      return
+    }
+
     const spawnAlpha = Math.min(1, w.age / 7)
     // Brief spawn flash: extra glow for age 0-12
     const spawnFlash = w.age < 12 ? Math.max(0, 1 - w.age / 12) : 0
@@ -2612,8 +2647,8 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       }
     }
 
-    // near-bottom danger flash
-    if (w.y > GH - 80 && w.type !== "powerup") {
+    // near-bottom danger flash (not for fragments — they don't hurt you)
+    if (w.y > GH - 80 && w.type !== "powerup" && !w.fragment) {
       const wAlpha = Math.min(0.7, (w.y - (GH - 80)) / 40) * (0.5 + 0.5 * Math.sin(now / 120))
       ctx.globalAlpha = wAlpha
       ctx.font = "7px monospace"
