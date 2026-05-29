@@ -431,7 +431,7 @@ interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: bo
 interface Mine      { x: number; y: number; age: number; armAt: number }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number; gravity?: number; friction?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
-interface Boss      { x: number; y: number; hp: number; maxHp: number; name: string; color: string; dir: number; t: number; phase: number; raged: boolean; halfTriggered: boolean; hitFlash?: number }
+interface Boss      { x: number; y: number; hp: number; maxHp: number; name: string; color: string; dir: number; t: number; phase: number; raged: boolean; halfTriggered: boolean; quarterTriggered?: boolean; hitFlash?: number }
 interface BossWarn  { name: string; color: string; t: number; letters: Array<{ ch: string; x: number; y: number; tx: number; ty: number }> }
 interface WaveAnn   { text: string; t: number }
 interface GState {
@@ -901,6 +901,19 @@ export default function HomePage() {
           vx: (Math.random()-0.5)*0.8, vy: 0.7 + Math.random()*1.4,
           life: 0.18, glyph: "·",
           col: Math.random() < 0.6 ? "#fb923c" : "#7c3aed",
+        })
+      }
+      // MAX_COMBO aura — ship radiates golden signal particles in all directions
+      if (g.combo >= 30 && Math.random() < 0.4) {
+        const ang = Math.random() * Math.PI * 2
+        const dist = 8 + Math.random() * 10
+        g.particles.push({
+          x: g.px + Math.cos(ang) * dist, y: (g.py - 5) + Math.sin(ang) * dist,
+          vx: Math.cos(ang) * (0.4 + Math.random() * 0.7),
+          vy: Math.sin(ang) * (0.4 + Math.random() * 0.7) - 0.3,
+          life: 0.45 + Math.random() * 0.35,
+          glyph: Math.random() < 0.25 ? "✦" : "·",
+          col: Math.random() < 0.6 ? "#facc15" : "#fde68a",
         })
       }
 
@@ -1716,6 +1729,21 @@ export default function HomePage() {
               showCapyMsg(g, `One pattern left.\n${bossName} is incoming.\nBe ready.`, now)
               sfx.warning()
             }
+            // Sector midpoint — narrative beat at halfway through each sector
+            if (!g.endless && !g.boss && g.wordsKilled === Math.floor(WORDS_TO_BOSS / 2)) {
+              const midMsgs: Record<number, string> = {
+                1: "Halfway through the loops.\nThe recursion is deepening.",
+                2: "Six echoes dissolved.\nThe drift shifts its weight.",
+                3: "Halfway.\nThe fragments are multiplying.",
+                4: "Six signals silenced.\nThe collapse accelerates.",
+              }
+              const midMsg = midMsgs[g.level]
+              if (midMsg) {
+                showCapyMsg(g, midMsg, now)
+                const sCol = BOSSES[Math.min(g.level - 1, 3)].color
+                g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: -0.45, life: 1.8, glyph: "· · ·", col: `${sCol}88`, sz: 11, gravity: 0 })
+              }
+            }
             // story streak "definition of done" bonus
             if (w.type === "story") {
               g.storyStreak++
@@ -1822,6 +1850,26 @@ export default function HomePage() {
             // boss critical at 20% HP — red edge pulse, final push feeling
             if (bx.hp <= Math.floor(bx.maxHp * 0.2) && bx.hp > 0 && bx.raged) {
               g.redFlash = Math.max(g.redFlash, 2)
+            }
+            // boss 25% HP milestone — brief narrative beat, signals you're close
+            if (!bx.quarterTriggered && bx.hp <= Math.floor(bx.maxHp * 0.25) && bx.hp > 0) {
+              bx.quarterTriggered = true
+              g.shake = 8; g.accentFlash = 12; g.accentFlashCol = bx.color
+              for (let qi = 0; qi < 18; qi++) {
+                const qa = (qi / 18) * Math.PI * 2
+                g.particles.push({ x: bx.x, y: bx.y,
+                  vx: Math.cos(qa) * (3 + Math.random() * 3.5), vy: Math.sin(qa) * (3 + Math.random() * 3.5) - 0.5,
+                  life: 0.55 + Math.random() * 0.3,
+                  glyph: qi % 3 === 0 ? "×" : "·", col: qi % 2 === 0 ? bx.color : "#f87171" })
+              }
+              g.particles.push({ x: bx.x, y: bx.y - 30, vx: 0, vy: -0.7, life: 1.9, glyph: "CRITICAL", col: "#f87171", sz: 12, gravity: 0 })
+              const critLines: Record<string, string> = {
+                "THE RECURSION": "Stack depth: critical.\nOne final loop remains.",
+                "THE DRIFT":     "Semantic coherence: residual.\nThe drift is failing.",
+                "THE FRAGMENT":  "Final shards scattering.\nClose the gap.",
+                "THE COLLAPSE":  "The collapse is fracturing.\nYou are almost through.",
+              }
+              showCapyMsg(g, critLines[bx.name] ?? "Critical. Finish it.", now)
             }
           }
         }
@@ -3480,9 +3528,17 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
         const bulletCol = g.upgrades.spray ? "#22d3ee" : (g.triple || g.upgrades.triple) ? "#4ade80" : "#966bec"
         ctx.save()
         ctx.shadowColor = bulletCol; ctx.shadowBlur = 8
+        // Comet tail — faint glowing dots trailing behind the bullet for velocity feel
+        ctx.globalAlpha = 0.18; ctx.fillStyle = bulletCol
+        ctx.beginPath(); ctx.arc(b.x, b.y + 7, 2.2, 0, Math.PI * 2); ctx.fill()
+        ctx.globalAlpha = 0.08
+        ctx.beginPath(); ctx.arc(b.x, b.y + 15, 1.5, 0, Math.PI * 2); ctx.fill()
+        ctx.globalAlpha = 1
+        // Main bullet shaft
         try {
-          const grad = ctx.createLinearGradient(b.x, b.y, b.x, b.y + 22)
-          grad.addColorStop(0, bulletCol)
+          const grad = ctx.createLinearGradient(b.x, b.y - 11, b.x, b.y + 11)
+          grad.addColorStop(0, "#ffffff")
+          grad.addColorStop(0.25, bulletCol)
           grad.addColorStop(1, "rgba(0,0,0,0)")
           ctx.fillStyle = grad
         } catch { ctx.fillStyle = bulletCol }
@@ -3595,8 +3651,9 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   })
 
   // player motion trail
+  const isMaxCombo = !attractMode && g.combo >= 30
   if (!attractMode && g.trail.length > 1) {
-    // Trail color: shield overrides, otherwise sector-tinted
+    // Trail color: MAX_COMBO → gold, shield → green, else sector-tinted
     const sectorBossCol = BOSSES[Math.min(g.level - 1, BOSSES.length - 1)].color
     const sectorRgb = g.endless ? "150,107,236"
       : sectorBossCol === "#f87171" ? "248,113,113"
@@ -3604,13 +3661,14 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       : sectorBossCol === "#facc15" ? "250,204,21"
       : sectorBossCol === "#4ade80" ? "74,222,128"
       : "150,107,236"
-    const trailCol = g.shield ? "74,222,128" : sectorRgb
+    const trailCol = isMaxCombo ? "250,204,21" : g.shield ? "74,222,128" : sectorRgb
     g.trail.forEach((pt, i) => {
       const age = g.trail.length - 1 - i
-      const alpha = (1 - age / g.trail.length) * 0.22
-      const r = 4 * (1 - age / g.trail.length)
+      const alpha = (1 - age / g.trail.length) * (isMaxCombo ? 0.38 : 0.22)
+      const r = (isMaxCombo ? 5.5 : 4) * (1 - age / g.trail.length)
       ctx.save()
       ctx.globalAlpha = alpha
+      if (isMaxCombo) { ctx.shadowColor = "#facc15"; ctx.shadowBlur = 5 }
       ctx.fillStyle = `rgb(${trailCol})`
       ctx.beginPath(); ctx.arc(pt.x, pt.y - 5, r, 0, Math.PI * 2); ctx.fill()
       ctx.restore()
@@ -3637,26 +3695,51 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
           const r2 = r1 + 10 + 4 * Math.sin(now / 180 + 1)
           ctx.beginPath(); ctx.arc(g.px, g.py - 5, r2, 0, Math.PI * 2); ctx.stroke()
         }
+        if (isMaxCombo) {
+          // Outer rotating segmented ring — THE SIGNAL asserts itself
+          const r3 = r1 + 24 + 3 * Math.sin(now / 150 + 2)
+          const rotAng = now / 550
+          ctx.save()
+          ctx.globalAlpha = haloA * 1.1
+          ctx.strokeStyle = "#fde68a"; ctx.lineWidth = 1.6
+          ctx.shadowColor = "#facc15"; ctx.shadowBlur = 16
+          ctx.translate(g.px, g.py - 5); ctx.rotate(rotAng)
+          for (let ai = 0; ai < 3; ai++) {
+            const start = ai * (Math.PI * 2 / 3)
+            const end = start + Math.PI * 2 / 3 * 0.68
+            ctx.beginPath(); ctx.arc(0, 0, r3, start, end); ctx.stroke()
+          }
+          ctx.restore()
+        }
         ctx.restore()
       }
-      const glowCol = g.shield ? "#4ade80" : "#966bec"
+      const glowCol = isMaxCombo ? "#facc15" : g.shield ? "#4ade80" : "#966bec"
       ctx.save()
       ctx.shadowColor = glowCol
-      ctx.shadowBlur = 10 + 4 * Math.sin(now / 400)
-      ctx.fillStyle = g.shield ? "#4ade80" : "#a5b4fc"
+      ctx.shadowBlur = isMaxCombo
+        ? 22 + 7 * Math.sin(now / 170)
+        : 10 + 4 * Math.sin(now / 400)
+      ctx.fillStyle = isMaxCombo ? "#facc15" : g.shield ? "#4ade80" : "#a5b4fc"
       ctx.beginPath()
       ctx.moveTo(g.px, g.py - 18)
       ctx.lineTo(g.px - 13, g.py + 7)
       ctx.lineTo(g.px + 13, g.py + 7)
       ctx.closePath(); ctx.fill()
+      if (isMaxCombo) {
+        // bright white nose tip — ship tip burns white-hot at THE SIGNAL
+        ctx.globalAlpha = 0.55 + 0.45 * Math.abs(Math.sin(now / 110))
+        ctx.fillStyle = "#ffffff"
+        ctx.beginPath(); ctx.arc(g.px, g.py - 15, 2.8, 0, Math.PI * 2); ctx.fill()
+      }
       ctx.restore()
       // thruster flame
       const tf = 0.45 + 0.55 * Math.abs(Math.sin(now / 55))
-      ctx.save(); ctx.globalAlpha = 0.78 * tf
-      ctx.fillStyle = "#fb923c"
-      ctx.beginPath(); ctx.moveTo(g.px - 5, g.py + 7); ctx.lineTo(g.px + 5, g.py + 7); ctx.lineTo(g.px, g.py + 13 + tf * 10); ctx.closePath(); ctx.fill()
-      ctx.globalAlpha = 0.5 * tf; ctx.fillStyle = "#fde68a"
-      ctx.beginPath(); ctx.moveTo(g.px - 2, g.py + 7); ctx.lineTo(g.px + 2, g.py + 7); ctx.lineTo(g.px, g.py + 10 + tf * 6); ctx.closePath(); ctx.fill()
+      ctx.save(); ctx.globalAlpha = (isMaxCombo ? 0.92 : 0.78) * tf
+      if (isMaxCombo) { ctx.shadowColor = "#facc15"; ctx.shadowBlur = 14 }
+      ctx.fillStyle = isMaxCombo ? "#fde68a" : "#fb923c"
+      ctx.beginPath(); ctx.moveTo(g.px - 5, g.py + 7); ctx.lineTo(g.px + 5, g.py + 7); ctx.lineTo(g.px, g.py + 13 + tf * (isMaxCombo ? 13 : 10)); ctx.closePath(); ctx.fill()
+      ctx.globalAlpha = 0.5 * tf; ctx.fillStyle = isMaxCombo ? "#ffffff" : "#fde68a"
+      ctx.beginPath(); ctx.moveTo(g.px - 2, g.py + 7); ctx.lineTo(g.px + 2, g.py + 7); ctx.lineTo(g.px, g.py + 10 + tf * (isMaxCombo ? 8 : 6)); ctx.closePath(); ctx.fill()
       ctx.restore()
       if (g.shield) {
         ctx.strokeStyle = "rgba(74,222,128,0.55)"; ctx.lineWidth = 2
