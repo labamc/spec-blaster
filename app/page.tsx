@@ -38,6 +38,9 @@ const STORY_WORDS = [
   "out of scope","draft PR","WIP","needs design","open question",
 ]
 const POWERUP_WORDS = ["CLARITY", "ANCHOR", "AMPLIFY", "TIMEBOX", "REBASE", "HOTFIX", "REFACTOR", "KNOWLEDGE", "DEPLOY", "RETROSPECTIVE"]
+// Rare relics — Diablo-style drops, ~1% chance, dramatically powerful
+const RARE_RELICS = ["ARCHIVE CORE", "ORPHANED FLAG", "CONTEXT SHARD", "SEMANTIC RELIC", "RAG ENGINE"]
+const RELIC_SET   = new Set(RARE_RELICS)
 // Bug words that split into fragments on death (level 3+ or endless)
 const SPLIT_WORDS = new Set(["scope creep","hallucinated output","undefined behavior","silent failure","breaking change","premature optimization"])
 const SDLC_PHASES = ["DISCOVER", "DEFINE", "DESIGN", "DELIVER"]
@@ -397,8 +400,9 @@ export default function HomePage() {
   const upgradeOptionsRef                   = useRef<UpgradeDef[]>([])
   const upgradePickRef                      = useRef<((id: string) => void) | null>(null)
   const [topEntry, setTopEntry]             = useState<{handle: string; score: number} | null>(null)
-  const [personalBest, setPersonalBest]         = useState(0)
+  const [personalBest, setPersonalBest]           = useState(0)
   const [personalDepthBest, setPersonalDepthBest] = useState(0)
+  const [personalSectorBest, setPersonalSectorBest] = useState(0)
   const [isTouchDevice, setIsTouchDevice]         = useState(false)
   const [unlockedAgents, setUnlockedAgents] = useState<string[]>([])
   const [selectedAgents, setSelectedAgents] = useState<string[]>([])
@@ -415,6 +419,7 @@ export default function HomePage() {
     }).catch(() => {})
     try { setPersonalBest(parseInt(localStorage.getItem("sb_pb") || "0")) } catch {}
     try { setPersonalDepthBest(parseInt(localStorage.getItem("sb_depth_pb") || "0")) } catch {}
+    try { setPersonalSectorBest(parseInt(localStorage.getItem("sb_sector_pb") || "0")) } catch {}
     try {
       const saved = localStorage.getItem("sb_agents")
       if (saved) {
@@ -832,8 +837,9 @@ export default function HomePage() {
           g.lastWord = now
           const roll = Math.random()
           let type: Word["type"] = "story", text = ""
-          if (roll < 0.18)      { type = "bug";     text = BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)] }
-          else if (roll < 0.25) { type = "powerup"; text = POWERUP_WORDS[Math.floor(Math.random() * POWERUP_WORDS.length)] }
+          if (roll < 0.01 && g.level >= 2) { type = "powerup"; text = RARE_RELICS[Math.floor(Math.random() * RARE_RELICS.length)] }  // rare relic ~1%
+          else if (roll < 0.19) { type = "bug";     text = BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)] }
+          else if (roll < 0.26) { type = "powerup"; text = POWERUP_WORDS[Math.floor(Math.random() * POWERUP_WORDS.length)] }
           else {
             const accentPool = !g.endless ? SECTOR_ACCENT_WORDS[g.level - 1] : null
             // Pre-boss buildup: force sector accent words in the last 4 slots before boss
@@ -1902,6 +1908,13 @@ export default function HomePage() {
             }
           } catch {}
         }
+        // Save sector PB for non-endless runs
+        if (!g.endless) {
+          try {
+            const spb = parseInt(localStorage.getItem("sb_sector_pb") || "0")
+            if (g.level > spb) { localStorage.setItem("sb_sector_pb", String(g.level)); setPersonalSectorBest(g.level) }
+          } catch {}
+        }
         phaseRef.current = "over"; setPhase("over")
       }
     }
@@ -2001,19 +2014,26 @@ export default function HomePage() {
                   <span style={{ color:"rgba(150,107,236,0.8)" }}>M</span> mine
                 </p>
 
-                {/* ── Personal bests ── */}
-                {(personalBest > 0 || personalDepthBest >= 2) && (
-                  <div style={{ display:"flex", gap:"1rem", justifyContent:"center", borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"0.7rem" }}>
-                    {personalBest > 0 && (
-                      <span style={{ color:"rgba(196,181,253,0.65)", fontSize:"0.6rem", fontFamily:"monospace" }}>
-                        PB · {personalBest.toLocaleString()}
-                      </span>
-                    )}
-                    {personalDepthBest >= 2 && (
-                      <span style={{ color: personalDepthBest >= 5 ? "rgba(168,85,247,0.7)" : "rgba(74,222,128,0.65)", fontSize:"0.6rem", fontFamily:"monospace" }}>
-                        DEPTH · {personalDepthBest}{personalDepthBest >= 9 ? " ∞" : ""}
-                      </span>
-                    )}
+                {/* ── Best run — depth first ── */}
+                {(personalDepthBest >= 1 || personalSectorBest > 0 || personalBest > 0) && (
+                  <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"0.65rem" }}>
+                    <p style={{ color:"rgba(160,159,162,0.4)", fontSize:"0.54rem", fontFamily:"monospace", margin:"0 0 0.3rem", letterSpacing:"0.12em", textAlign:"center" }}>BEST RUN</p>
+                    <div style={{ display:"flex", gap:"0.9rem", justifyContent:"center", flexWrap:"wrap" }}>
+                      {personalDepthBest >= 1 ? (
+                        <span style={{ color: personalDepthBest >= 5 ? "rgba(168,85,247,0.85)" : "rgba(196,181,253,0.75)", fontSize:"0.63rem", fontFamily:"monospace" }}>
+                          THE VOID · DEPTH {personalDepthBest}{personalDepthBest >= 9 ? " ∞" : ""}
+                        </span>
+                      ) : personalSectorBest > 0 ? (
+                        <span style={{ color:"rgba(196,181,253,0.7)", fontSize:"0.63rem", fontFamily:"monospace" }}>
+                          SECTOR {personalSectorBest} reached
+                        </span>
+                      ) : null}
+                      {personalBest > 0 && (
+                        <span style={{ color:"rgba(160,159,162,0.45)", fontSize:"0.58rem", fontFamily:"monospace" }}>
+                          {personalBest.toLocaleString()} pts
+                        </span>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -2070,7 +2090,7 @@ export default function HomePage() {
             }}
           />}
 
-          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} onRestart={startGame} unlockedAgents={unlockedAgents} onShowStack={() => setShowAgentModule(true)} endless={G.current.endless} endlessDepth={G.current.endlessWave} prevDepthBest={personalDepthBest} />}
+          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} isNewSectorPB={!G.current.endless && level >= personalSectorBest} onRestart={startGame} unlockedAgents={unlockedAgents} onShowStack={() => setShowAgentModule(true)} endless={G.current.endless} endlessDepth={G.current.endlessWave} prevDepthBest={personalDepthBest} />}
 
           {showAgentModule && (
             <AgentModule unlocked={unlockedAgents} selected={selectedAgents}
@@ -2124,6 +2144,60 @@ function showCapyMsg(g: GState, msg: string, now: number) {
 function applyPowerup(g: GState, word: Word, now: number) {
   sfx.powerup()
   const text = word.text
+
+  // ── Rare Relics ────────────────────────────────────────────────────────────
+  if (RELIC_SET.has(text)) {
+    // Big flash + shake
+    g.shake = 20; g.whiteFlash = 18
+    // Gold nova burst
+    for (let i = 0; i < 32; i++) {
+      const a = (i / 32) * Math.PI * 2
+      g.particles.push({ x: word.x, y: word.y, vx: Math.cos(a)*(6+Math.random()*8), vy: Math.sin(a)*(6+Math.random()*8), life: 1.2 + Math.random()*0.4, glyph: i%4===0?"◈":"·", col: i%2===0?"#fde68a":"#fbbf24" })
+    }
+    if (text === "ARCHIVE CORE") {
+      // +1 life (or +400 pts if full)
+      if (g.lives < MAX_LIVES) {
+        g.lives++
+        g.particles.push({ x: g.px, y: g.py-28, vx:0, vy:-1.4, life:2.0, glyph:"♥ ARCHIVE CORE", col:"#fde68a", sz:13 })
+        showCapyMsg(g, "ARCHIVE CORE recovered.\nSignal integrity restored.\nThe expedition continues.", now)
+      } else {
+        g.score += 500
+        g.particles.push({ x: word.x, y: word.y-22, vx:0, vy:-1.2, life:2.0, glyph:"ARCHIVE CORE +500", col:"#fde68a", sz:13 })
+        showCapyMsg(g, "ARCHIVE CORE absorbed.\nSignal at maximum integrity.\n+500 pts.", now)
+      }
+    } else if (text === "ORPHANED FLAG") {
+      // Clear all words + shield + triple 20s
+      g.words.forEach(w => { if (w.type !== "powerup") spawnLetterExplosion(g, w, w.type==="bug"?60:20, 1) })
+      g.score += g.words.filter(w=>w.type!=="powerup").length * 30
+      g.words = g.words.filter(w => w.type === "powerup")
+      g.shield = true; g.shieldEnd = now + 20000
+      g.triple = true; g.tripleEnd = now + 20000
+      g.particles.push({ x: g.W/2, y: GH/2-18, vx:0, vy:-0.8, life:2.4, glyph:"ORPHANED FLAG · BOARD CLEAR", col:"#fde68a", sz:14 })
+      showCapyMsg(g, "ORPHANED FLAG captured.\nCorruption swept.\nAnchor + amplify: 20s.", now)
+    } else if (text === "CONTEXT SHARD") {
+      // +600 score + brief invuln
+      g.score += 600
+      g.invuln = true; g.invulnEnd = now + 4000
+      g.particles.push({ x: word.x, y: word.y-22, vx:0, vy:-1.0, life:2.2, glyph:"CONTEXT SHARD +600", col:"#fde68a", sz:13 })
+      showCapyMsg(g, "CONTEXT SHARD recovered.\nLost meaning restored.\nSignal enriched.", now)
+    } else if (text === "SEMANTIC RELIC") {
+      // All on-screen words scored + score multiplier boost
+      const bonus = g.words.filter(w=>w.type!=="powerup").length * 50
+      g.score += bonus + 300
+      g.upgrades.score_mul = (g.upgrades.score_mul ?? 0) + 1  // permanent +20% score for run
+      g.particles.push({ x: g.W/2, y: GH/2-18, vx:0, vy:-0.7, life:2.5, glyph:`SEMANTIC RELIC · +${bonus+300} · SCORE ×`, col:"#fde68a", sz:13 })
+      showCapyMsg(g, "SEMANTIC RELIC found.\nMeaning crystallized.\nScore multiplier: permanent.", now)
+    } else if (text === "RAG ENGINE") {
+      // Triple + speed + retroactive slow on all enemies
+      g.triple = true; g.tripleEnd = now + 30000
+      g.fast   = true; g.fastEnd   = now + 30000
+      g.retroEnd = now + 12000
+      g.particles.push({ x: g.W/2, y: GH/2-18, vx:0, vy:-0.8, life:2.2, glyph:"RAG ENGINE · ONLINE", col:"#fde68a", sz:14 })
+      showCapyMsg(g, "RAG ENGINE online.\nRetrieval augmented.\nTriple · Speed · Slow: 30s.", now)
+    }
+    return
+  }
+
   if (text === "CLARITY") {
     g.words.forEach(w => spawnLetterExplosion(g, w, 0, 1))
     g.score += g.words.length * 8
@@ -2374,8 +2448,10 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   const retroActive = !attractMode && g.retroEnd > 0 && now < g.retroEnd
   g.words.forEach(w => {
     // RETRO tint: bug→pale blue, story→deeper blue (signals temporal freeze)
+    const isRelic = w.type === "powerup" && RELIC_SET.has(w.text)
     const col = w.regenBoss ? "#34d399"
       : w.type === "bug" ? (retroActive ? "#93c5fd" : "#fdba74")
+      : isRelic ? "#fde68a"
       : w.type === "powerup" ? "#4ade80"
       : (retroActive ? "#a5f3fc" : "#7dd3fc")
     const flashRed = w.hitFlash > 0
@@ -2398,12 +2474,13 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
 
     if (w.type === "powerup") {
       const pulse = 0.5 + 0.5 * Math.sin(now / 280)
-      ctx.save(); ctx.shadowColor = "#4ade80"; ctx.shadowBlur = 10 * pulse
+      const glowCol = isRelic ? "#fde68a" : "#4ade80"
+      ctx.save(); ctx.shadowColor = glowCol; ctx.shadowBlur = (isRelic ? 18 : 10) * pulse
       // spawn beam: thin vertical line descending from top to word (fades with age)
       if (w.age < 55) {
         const beamAlpha = Math.max(0, (1 - w.age / 55)) * (0.18 + 0.12 * pulse)
         ctx.globalAlpha = beamAlpha * spawnAlpha
-        ctx.strokeStyle = "#4ade80"; ctx.lineWidth = 1
+        ctx.strokeStyle = glowCol; ctx.lineWidth = isRelic ? 2 : 1
         ctx.beginPath(); ctx.moveTo(w.x, 0); ctx.lineTo(w.x, w.y - 8); ctx.stroke()
         ctx.globalAlpha = spawnAlpha
       }
@@ -3660,9 +3737,7 @@ function CapyScreen({ text, lineNum, totalLines, level, onAdvance }: {
   )
 }
 
-function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isNewPB, onRestart, unlockedAgents, onShowStack, endless, endlessDepth, prevDepthBest }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; shotsFired: number; isNewPB: boolean; onRestart: () => void; unlockedAgents: string[]; onShowStack: () => void; endless?: boolean; endlessDepth?: number; prevDepthBest?: number }) {
-  const accuracy = shotsFired > 0 ? Math.round((kills / shotsFired) * 100) : 0
-  const isNewDepthPB = endless && endlessDepth != null && prevDepthBest != null && endlessDepth > prevDepthBest && endlessDepth >= 2
+function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isNewPB, isNewSectorPB, onRestart, unlockedAgents, onShowStack, endless, endlessDepth, prevDepthBest }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; shotsFired: number; isNewPB: boolean; isNewSectorPB: boolean; onRestart: () => void; unlockedAgents: string[]; onShowStack: () => void; endless?: boolean; endlessDepth?: number; prevDepthBest?: number }) {
   const [handle, setHandle] = useState(() => {
     try { return localStorage.getItem("sb_handle") ?? "" } catch { return "" }
   })
@@ -3711,18 +3786,21 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
     setSubmitting(false)
   }
 
-  // What to do next hint
+  // Expedition hint — depth-first motivation
+  const depth = endless ? (endlessDepth ?? 1) : level
   const nextHint = endless
     ? endlessDepth && endlessDepth >= 9
-      ? `Depth ${endlessDepth} — beyond the void. How much further can you go?`
+      ? "The recursion restarts. The void does not forget."
       : endlessDepth && endlessDepth >= 5
-        ? `Depth ${endlessDepth} reached. The signal gets harder every wave.`
-        : `You hit depth ${endlessDepth ?? 1} in endless mode. Push deeper.`
+        ? `Depth ${endlessDepth}. Few signals survive this far. Push further.`
+        : `Depth ${endlessDepth ?? 1} in The Void. It runs deeper.`
     : level >= 4
-      ? "Clear sector 4 to unlock endless mode — the real run starts there."
-      : level >= 3
-        ? `Sector ${level} down. Pick up upgrades between waves — they stack hard.`
-        : "Between sectors you'll get upgrade choices. Pick them wisely."
+      ? "Sector 4. Beyond The Collapse: The Void. Endless and hungry."
+      : level >= 2
+        ? `Sector ${level}. ${4 - level} sector${4-level!==1?"s":""} between you and The Void.`
+        : "Sector 1. The signal is live. The Void is 4 sectors deeper."
+
+  const isNewDepthPB = endless && endlessDepth != null && prevDepthBest != null && endlessDepth > prevDepthBest
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -3732,59 +3810,69 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
     return () => window.removeEventListener("keydown", onKey)
   }, [onRestart])
 
+  const bossNames = ["THE RECURSION","THE DRIFT","THE FRAGMENT","THE COLLAPSE"]
+  const whereFell = endless
+    ? endlessDepth && endlessDepth >= 9 ? "THE RECURSION" : "THE VOID"
+    : bossNames[level - 1] ?? "THE SIGNAL"
+
   return (
     <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(10,10,18,0.97)", zIndex:10 }}>
-      <div style={{ background:"#15151e", border:"1px solid rgba(150,107,236,0.22)", borderRadius:"8px", padding:"1.6rem 1.4rem", maxWidth:"310px", width:"calc(100% - 2rem)", textAlign:"center" }}>
+      <div style={{ background:"#13131c", border:"1px solid rgba(150,107,236,0.2)", borderRadius:"10px", padding:"1.6rem 1.4rem", maxWidth:"310px", width:"calc(100% - 2rem)", textAlign:"center" }}>
 
         {/* Status */}
-        <p style={{ color:"#f87171", fontWeight:700, fontSize:"0.7rem", margin:"0 0 0.5rem", fontFamily:"monospace", letterSpacing:"0.14em" }}>
-          {endless && endlessDepth && endlessDepth >= 9 ? "THE RECURSION CLAIMED YOU" : "SIGNAL LOST"}
+        <p style={{ color:"#f87171", fontWeight:700, fontSize:"0.62rem", margin:"0 0 1.1rem", fontFamily:"monospace", letterSpacing:"0.18em" }}>
+          SIGNAL LOST
         </p>
 
-        {/* Score */}
-        <p style={{ color:"#966bec", fontSize:"2.4rem", fontWeight:700, margin:"0 0 0.2rem", fontFamily:"monospace", lineHeight:1 }}>
-          {score.toLocaleString()}
+        {/* PRIMARY METRIC: sector/depth — the headline */}
+        <p style={{ color:"#c4b5fd", fontSize:"3rem", fontWeight:700, margin:"0 0 0.1rem", fontFamily:"monospace", lineHeight:1 }}>
+          {endless ? `DEPTH ${depth}` : `SECTOR ${level}`}
         </p>
-        {(isNewPB || isNewDepthPB) ? (
-          <p style={{ color:"#facc15", fontSize:"0.65rem", margin:"0 0 1rem", fontFamily:"monospace", letterSpacing:"0.1em" }}>
-            {isNewDepthPB ? `∅ DEPTH RECORD · ${endlessDepth}` : "★ PERSONAL BEST"}
+        <p style={{ color:"rgba(248,113,113,0.5)", fontSize:"0.58rem", margin:"0 0 0.6rem", fontFamily:"monospace", letterSpacing:"0.14em" }}>
+          {whereFell}
+        </p>
+
+        {/* Record badge */}
+        {(isNewDepthPB || isNewSectorPB || isNewPB) ? (
+          <p style={{ color:"#fde68a", fontSize:"0.62rem", margin:"0 0 1rem", fontFamily:"monospace", letterSpacing:"0.1em" }}>
+            ★ {isNewDepthPB ? "DEEPEST RUN" : isNewSectorPB ? "DEEPEST SECTOR" : "SCORE RECORD"}
           </p>
         ) : <div style={{ marginBottom:"1rem" }} />}
 
-        {/* Stats */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.45rem", marginBottom:"1.1rem" }}>
+        {/* Secondary stats — score lives here, not at the top */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.4rem", marginBottom:"1rem" }}>
           {([
-            [endless ? "DEPTH" : "SECTOR", endless ? (endlessDepth ?? 1) : level],
+            ["SCORE", score.toLocaleString()],
             ["KILLS", kills],
             ["CHAIN", `${maxCombo}×`],
           ] as [string, string|number][]).map(([label, val]) => (
-            <div key={label} style={{ background:"rgba(255,255,255,0.04)", borderRadius:"5px", padding:"0.5rem 0.25rem" }}>
-              <p style={{ color:"#d4d3d7", fontSize:"1rem", fontWeight:700, margin:"0 0 0.1rem", fontFamily:"monospace" }}>{val}</p>
-              <p style={{ color:"rgba(160,159,162,0.5)", fontSize:"0.56rem", margin:0, fontFamily:"monospace", letterSpacing:"0.07em" }}>{label}</p>
+            <div key={label} style={{ background:"rgba(255,255,255,0.04)", borderRadius:"4px", padding:"0.45rem 0.2rem" }}>
+              <p style={{ color:"rgba(212,211,215,0.85)", fontSize:"0.82rem", fontWeight:600, margin:"0 0 0.1rem", fontFamily:"monospace" }}>{val}</p>
+              <p style={{ color:"rgba(160,159,162,0.4)", fontSize:"0.54rem", margin:0, fontFamily:"monospace", letterSpacing:"0.08em" }}>{label}</p>
             </div>
           ))}
         </div>
 
-        {/* What to do next */}
-        <div style={{ background:"rgba(150,107,236,0.07)", border:"1px solid rgba(150,107,236,0.18)", borderRadius:"5px", padding:"0.55rem 0.8rem", marginBottom:"1.2rem" }}>
-          <p style={{ color:"rgba(196,181,253,0.8)", fontSize:"0.68rem", margin:0, fontFamily:"monospace", lineHeight:1.55 }}>
+        {/* Expedition hint */}
+        <div style={{ background:"rgba(150,107,236,0.07)", border:"1px solid rgba(150,107,236,0.13)", borderRadius:"5px", padding:"0.5rem 0.75rem", marginBottom:"1.1rem" }}>
+          <p style={{ color:"rgba(196,181,253,0.75)", fontSize:"0.65rem", margin:0, fontFamily:"monospace", lineHeight:1.6 }}>
             {nextHint}
           </p>
         </div>
 
-        {/* Primary CTA */}
+        {/* Primary CTA — "push deeper" framing */}
         <button onClick={onRestart}
-          style={{ display:"block", width:"100%", background:"rgba(150,107,236,0.9)", border:"none", borderRadius:"6px", padding:"0.75rem", color:"#fff", fontSize:"0.85rem", fontWeight:700, cursor:"pointer", marginBottom:"0.55rem", letterSpacing:"0.08em", fontFamily:"monospace" }}>
-          PLAY AGAIN  <span style={{ opacity:0.55, fontSize:"0.62rem" }}>ENTER</span>
+          style={{ display:"block", width:"100%", background:"linear-gradient(135deg,#7c3aed,#6d28d9)", border:"none", borderRadius:"6px", padding:"0.78rem", color:"#fff", fontSize:"0.85rem", fontWeight:700, cursor:"pointer", marginBottom:"0.5rem", letterSpacing:"0.1em", fontFamily:"monospace", boxShadow:"0 0 20px rgba(124,58,237,0.4)" }}>
+          PUSH DEEPER <span style={{ opacity:0.45, fontSize:"0.6rem" }}>ENTER</span>
         </button>
 
-        {/* Secondary — crew */}
+        {/* THE SIGNAL crew */}
         <button onClick={onShowStack}
-          style={{ display:"block", width:"100%", background:"transparent", border:"1px solid rgba(150,107,236,0.22)", borderRadius:"6px", padding:"0.55rem", color:"rgba(196,181,253,0.65)", fontSize:"0.72rem", cursor:"pointer", fontFamily:"monospace", letterSpacing:"0.06em" }}>
+          style={{ display:"block", width:"100%", background:"transparent", border:"1px solid rgba(150,107,236,0.18)", borderRadius:"6px", padding:"0.5rem", color:"rgba(196,181,253,0.6)", fontSize:"0.7rem", cursor:"pointer", fontFamily:"monospace", letterSpacing:"0.07em" }}>
           THE SIGNAL
           {unlockedAgents.length > 0
-            ? <span style={{ marginLeft:"0.45rem", color:"#4ade80", fontSize:"0.62rem" }}>{unlockedAgents.length} deployed</span>
-            : <span style={{ marginLeft:"0.45rem", opacity:0.45, fontSize:"0.62rem" }}>crew</span>
+            ? <span style={{ marginLeft:"0.4rem", color:"#4ade80", fontSize:"0.6rem" }}>{unlockedAgents.length} deployed</span>
+            : <span style={{ marginLeft:"0.4rem", opacity:0.4, fontSize:"0.6rem" }}>crew</span>
           }
         </button>
 
