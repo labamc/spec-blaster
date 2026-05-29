@@ -848,7 +848,7 @@ export default function HomePage() {
         const interval = preBossSurge ? Math.floor(baseInterval * 0.78) : baseInterval
         // Hard word cap — never overwhelm the screen
         const wordCap = g.endless ? MAX_WORDS_ENDLESS : MAX_WORDS_NORMAL
-        const liveWords = g.words.filter(w => w.type !== "powerup").length
+        const liveWords = g.words.filter(w => w.type !== "powerup" && !w.fragment).length
         if (now - g.lastWord > interval && liveWords < wordCap) {
           g.lastWord = now
           const roll = Math.random()
@@ -900,7 +900,7 @@ export default function HomePage() {
           const slowFactor = Math.pow(0.85, g.upgrades.word_slow ?? 0)
           const stormSpd = Math.min((1.5 + g.level * 0.25) * slowFactor, 3.2)
           // Storm: 5 words capped to not exceed MAX_WORDS_ENDLESS
-          const stormSlots = Math.max(0, MAX_WORDS_ENDLESS - g.words.filter(w => w.type !== "powerup").length)
+          const stormSlots = Math.max(0, MAX_WORDS_ENDLESS - g.words.filter(w => w.type !== "powerup" && !w.fragment).length)
           const stormCount = Math.min(5, stormSlots)
           for (let si = 0; si < stormCount; si++) {
             const stormText = Math.random() < 0.4
@@ -1605,7 +1605,7 @@ export default function HomePage() {
                   if (Math.hypot(ww.x - mine.x, ww.y - mine.y) < blastR) {
                     spawnLetterExplosion(g, ww, 0, 1)
                     g.score += ww.type === "bug" ? 75 : 10
-                    g.kills++; g.wordsKilled++; chain++
+                    g.kills++; if (!ww.fragment) g.wordsKilled++; chain++
                   }
                 }
                 g.words = g.words.filter(ww => Math.hypot(ww.x - mine.x, ww.y - mine.y) >= blastR)
@@ -1860,7 +1860,7 @@ export default function HomePage() {
           const pts = Math.floor((w.type === "bug" ? 75 : 10) * mult * pmMul)
           spawnLetterExplosion(g, w, pts, g.combo)
           g.score += pts
-          g.kills++; g.wordsKilled++; beamKills++
+          g.kills++; if (!w.fragment) g.wordsKilled++; beamKills++
           g.words.splice(wi, 1)
         }
       }
@@ -2344,11 +2344,11 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number)
     const startX = word.x - totalW/2 + i*charW + charW/2
     const dx = startX - word.x
     // Lateral: outward from center + random scatter, scaled by energy
-    const vxBase = dx * 0.55 + (Math.random()-0.5) * 10
-    // Vertical: strong upward burst so gravity arcs them dramatically
-    const vyBase = -5 - Math.random() * 9
-    // Life 1.5–2.2s so letters travel the full arc before fading
-    const lf = 1.5 + Math.random() * 0.7
+    const vxBase = dx * 0.40 + (Math.random()-0.5) * 7
+    // Vertical: upward burst — gravity will arc them back down visibly
+    const vyBase = -3 - Math.random() * 6
+    // Life 1.2–1.7s — long enough to see the arc, not so long they dominate
+    const lf = 1.2 + Math.random() * 0.5
     g.particles.push({
       x: startX, y: word.y,
       vx: vxBase * energy,
@@ -2356,7 +2356,7 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number)
       life: lf, initLife: lf,
       glyph: ch, col,
       rot: (Math.random()-0.5) * 2.4,
-      rotV: (Math.random()-0.5) * 0.22,
+      rotV: (Math.random()-0.5) * 0.20,
     })
   })
 
@@ -3037,7 +3037,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     if (p.rot !== undefined) {
       // initLife set → size scales from big-to-zero (letter explosions)
       // otherwise → old formula: shrinks to 7px minimum
-      const sz = p.sz ?? (p.initLife ? Math.max(0, 22 * p.life / p.initLife) : Math.max(7, 13 * p.life))
+      const sz = p.sz ?? (p.initLife ? Math.max(0, 18 * p.life / p.initLife) : Math.max(7, 13 * p.life))
       ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot)
       ctx.font = `${sz}px monospace`; ctx.textAlign = "center"
       ctx.fillText(p.glyph, 0, 0); ctx.restore()
