@@ -308,7 +308,7 @@ type Behavior = "fall" | "charge" | "zigzag" | "sine"
 interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean; age: number; regenBoss?: boolean; fragment?: boolean }
 interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean; cluster?: boolean; col?: string; bounce?: boolean; drift?: number; splitAt?: number; kind?: "spray"|"triple"|"homing"|"laser"|"mine" }
 interface Mine      { x: number; y: number; age: number; armAt: number }
-interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number }
+interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number; gravity?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
 interface Boss      { x: number; y: number; hp: number; maxHp: number; name: string; color: string; dir: number; t: number; phase: number; raged: boolean; halfTriggered: boolean }
 interface BossWarn  { name: string; color: string; t: number; letters: Array<{ ch: string; x: number; y: number; tx: number; ty: number }> }
@@ -1399,7 +1399,7 @@ export default function HomePage() {
 
       // particles
       g.particles = g.particles.filter(p => {
-        p.x += p.vx; p.y += p.vy; p.vy += 0.14; p.life -= 0.022
+        p.x += p.vx; p.y += p.vy; p.vy += (p.gravity ?? 0.14); p.life -= 0.022
         if (p.rotV !== undefined) p.rot = (p.rot ?? 0) + p.rotV
         return p.life > 0
       })
@@ -2355,10 +2355,11 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
       const lf    = 2.0 + Math.random() * 1.0
       g.particles.push({
         x: word.x, y: word.y,
-        vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd - 1.0,
+        vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd - 0.5,
         life: lf, initLife: lf,
         glyph: ch, col,
-        rot: (Math.random()-0.5) * 2.0, rotV: (Math.random()-0.5) * 0.18,
+        rot: (Math.random()-0.5) * 2.0, rotV: (Math.random()-0.5) * 0.12,
+        gravity: 0.04,
       })
     })
     // Heavy blast ring
@@ -2375,33 +2376,41 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
       g.particles.push({
         x: startX, y: word.y,
         vx: dx * 0.55 + (Math.random()-0.5) * 3.5,
-        vy: -0.4 - Math.random() * 1.0,   // barely up — stays in view longer
+        vy: -0.4 - Math.random() * 1.0,
         life: lf, initLife: lf,
         glyph: ch, col,
-        rot: (Math.random()-0.5) * 1.2, rotV: (Math.random()-0.5) * 0.08,
+        rot: (Math.random()-0.5) * 1.2, rotV: (Math.random()-0.5) * 0.05,
+        gravity: 0.03,
       })
     })
     // Thin horizontal ring
     g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.5, initLife: 0.5, glyph:"", col, ring: true })
 
   } else {
-    // ── DEFAULT — gentle upward arc ───────────────────────────────────────
-    const energy = 1 + Math.min(combo, 20) * 0.055
+    // ── DEFAULT — radial blow-apart, light gravity, letters stay legible ──
+    // Letters scatter outward in all directions from the hit point.
+    // Canvas gravity is gentle — letters drift down, not crash.
+    const energy = 1 + Math.min(combo, 20) * 0.04
     chars.forEach((ch, i) => {
       const startX = word.x - totalW/2 + i*charW + charW/2
       const dx = startX - word.x
-      const lf = 2.5 + Math.random() * 1.0
+      const lf = 3.5 + Math.random() * 1.5
+      // Lateral: position-based spread outward from word center
+      const vx = dx * 0.30 + (Math.random()-0.5) * 1.8
+      // Vertical: random radial — some go up, some sideways, some slightly down
+      const vy = (Math.random() - 0.55) * 2.8   // biased slightly upward but truly radial
       g.particles.push({
         x: startX, y: word.y,
-        vx: (dx * 0.22 + (Math.random()-0.5) * 2.8) * energy,
-        vy: (-1.2 - Math.random() * 2.2) * energy,
+        vx: vx * energy, vy: vy * energy,
         life: lf, initLife: lf,
         glyph: ch, col,
-        rot: (Math.random()-0.5) * 1.8, rotV: (Math.random()-0.5) * 0.14,
+        rot: (Math.random()-0.5) * 0.8,    // subtle tilt — stays readable
+        rotV: (Math.random()-0.5) * 0.03,  // slow spin — letter shape holds
+        gravity: 0.032,                    // light — drifts down, doesn't crash
       })
     })
-    // Impact ring
-    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.55, initLife: 0.55, glyph:"", col, ring: true })
+    // Minimal impact ring
+    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.45, initLife: 0.45, glyph:"", col, ring: true })
   }
 
   // Sparks scale to letter count — not combo
