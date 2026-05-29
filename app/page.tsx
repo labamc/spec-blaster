@@ -1634,8 +1634,11 @@ export default function HomePage() {
         return true
       })
 
-      // background glyphs (speed up during boss)
-      const bgSpeedMul = g.boss ? (g.boss.raged ? 3.5 : 2.0) : 1
+      // background glyphs (speed up during boss; ramp pre-boss as threat builds)
+      const preBossRamp = (!g.boss && !g.endless && !g.bossWarn)
+        ? 1 + 0.65 * (g.wordsKilled / WORDS_TO_BOSS)
+        : 1
+      const bgSpeedMul = g.boss ? (g.boss.raged ? 3.5 : 2.0) : g.bossWarn ? 1.8 : preBossRamp
       g.bg.forEach(b => {
         b.y += b.vy * bgSpeedMul
         if (b.y > GH + 10) { b.y = -10; b.x = Math.random() * g.W }
@@ -2960,11 +2963,15 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
 
   // vignette — intensifies with boss presence; tinted per sector in story mode
   const isVoidPresent = g.boss?.name === "THE VOID"
+  // Vignette ramps up gradually as wordsKilled approaches the boss threshold
+  const preBossDepth = (!attractMode && !g.boss && !g.endless)
+    ? Math.sqrt(Math.min(1, g.wordsKilled / WORDS_TO_BOSS)) * 0.12
+    : 0
   const vignetteStr = isVoidPresent
     ? 0.75 + 0.1 * Math.sin(now / 400)
     : g.boss
       ? 0.62 + 0.06 * Math.sin(now / 300)
-      : 0.5
+      : 0.5 + preBossDepth
   const { vigR, vigG, vigB } = (!attractMode && !g.endless)
     ? sectorTheme(g.level)
     : { vigR: 0, vigG: 0, vigB: 0 }
@@ -3022,13 +3029,22 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     }
   }
 
-  // ambient background glyphs — color + brightness match sector identity
+  // ambient background glyphs — brightness scales with sector depth and boss proximity
   const glyphCol = g.endless
     ? (g.endlessWave >= 7 ? "#a855f7" : g.endlessWave >= 5 ? "#c084fc" : "#4ade80")
     : BOSSES[Math.min(Math.max(g.level - 1, 0), 3)].color
+  // Sector intensity: sector 1 calm → sector 4 oppressive
+  const sectorBrightness = attractMode ? 1.6
+    : g.endless ? 2.0
+    : [1.4, 1.65, 1.95, 2.4][Math.min(g.level - 1, 3)] ?? 1.6
+  // Pre-boss ramp: glyphs get 20% brighter in the last 4 patterns before boss
+  const preBossGlyphRamp = (!attractMode && !g.boss && !g.bossWarn && !g.endless)
+    ? 1 + 0.2 * Math.max(0, (g.wordsKilled - (WORDS_TO_BOSS - 4)) / 4)
+    : 1
+  const glyphBrightness = sectorBrightness * preBossGlyphRamp
   ctx.font = "10px monospace"; ctx.textAlign = "center"
   g.bg.forEach(b => {
-    ctx.globalAlpha = b.a * 1.6   // slightly more visible — sector glyphs should read
+    ctx.globalAlpha = Math.min(0.32, b.a * glyphBrightness)
     ctx.fillStyle = attractMode ? "#966bec" : glyphCol
     ctx.fillText(b.ch, b.x, b.y)
   }); ctx.globalAlpha = 1
@@ -3952,10 +3968,19 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       ctx.fillText(wa.text, cw/2 + slide, GH/2)
     }
     ctx.restore()
-    // Subtle game-title footer
-    ctx.font = "7px monospace"; ctx.globalAlpha = alpha * 0.28
-    ctx.fillStyle = "#c4b5fd"; ctx.textAlign = "center"
-    ctx.fillText(g.endless ? "INFINITE RECURSION" : "SPEC BLASTER", cw/2, GH/2 + 26)
+    // Sector-specific flavor tagline — sets the narrative tone at entry
+    const sectorTaglines = [
+      "where loops consume themselves",
+      "where meaning decouples from signal",
+      "where coherence breaks apart",
+      "where all noise converges",
+    ]
+    const sectorTagline = g.endless
+      ? "recursion has no floor"
+      : sectorTaglines[Math.min(g.level - 1, 3)] ?? "SPEC BLASTER"
+    ctx.font = "7px monospace"; ctx.globalAlpha = alpha * 0.35
+    ctx.fillStyle = annCol; ctx.textAlign = "center"
+    ctx.fillText(sectorTagline, cw/2, GH/2 + 28)
     ctx.globalAlpha = 1
   }
 
@@ -3970,9 +3995,14 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       const bh = 18 + lines.length * 13
       // Top-right corner — well clear of the player ship at the bottom
       const bx = cw - bw - 8, by = 52
-      // During boss fight: border tints to boss color — feels like a transmission intercept
+      // Border tints: boss color during taunts, sector color for ambient comms
       const isBossTaunt = !!(g.boss && g.boss.phase <= 4)
-      const capyBorderCol = isBossTaunt ? `${g.boss!.color}55` : "rgba(150,107,236,0.35)"
+      const sectorCapyCol = (!attractMode && !g.endless)
+        ? sectorTheme(g.level).storyCol
+        : "#966bec"
+      const capyBorderCol = isBossTaunt
+        ? `${g.boss!.color}55`
+        : `${sectorCapyCol}44`
       ctx.globalAlpha = a * 0.72
       ctx.fillStyle = "#15151e"
       roundRect(ctx, bx, by, bw, bh, 5); ctx.fill()
