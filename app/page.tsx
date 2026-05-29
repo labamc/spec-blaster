@@ -141,21 +141,21 @@ const CAPY_PLAY_COMMENTS_VOID = [
 // ── Upgrades ───────────────────────────────────────────────────────────────
 interface UpgradeDef { id: string; name: string; desc: string; max: number; instant?: (g: GState) => void }
 const UPGRADES: UpgradeDef[] = [
-  { id: "fire_rate",    name: "QA Cadence",          desc: "Fire 15% faster. Stacks 4×.",             max: 4 },
-  { id: "word_slow",    name: "Scope Freeze",         desc: "Words fall 15% slower. Stacks 3×.",       max: 3 },
-  { id: "score_mul",    name: "Stakeholder Approval", desc: "+20% score per kill. Stacks 3×.",         max: 3 },
-  { id: "triple",       name: "Triple Output",        desc: "Always fire 3 bullets.",                  max: 1 },
-  { id: "spray",        name: "Spray & Pray",         desc: "Fire 5 bullets in a wide arc.",           max: 1 },
-  { id: "piercing",     name: "Context Anchor",       desc: "Bullets pierce through words.",           max: 1 },
-  { id: "shield_regen", name: "Auto Firewall",        desc: "Shield recharges every 25 seconds.",      max: 1 },
-  { id: "code_review",  name: "Code Review",          desc: "Your bullets deal 2× damage to bosses.",  max: 1 },
-  { id: "homing",       name: "Sprint Velocity",       desc: "Bullets gently curve toward words.",       max: 1 },
-  { id: "extra_life",   name: "Rollback",             desc: "Restore +1 life immediately.",            max: 3,
+  { id: "fire_rate",    name: "Signal Amplifier",    desc: "Pulse rate +15% — fires faster through the noise. Stacks 4×.",     max: 4 },
+  { id: "word_slow",    name: "Temporal Anchor",      desc: "Pattern descent –15% — more time to read the noise. Stacks 3×.", max: 3 },
+  { id: "score_mul",    name: "Depth Resonance",      desc: "Each resolved pattern echoes deeper — +20% signal gain. Stacks 3×.", max: 3 },
+  { id: "triple",       name: "Trifork Protocol",     desc: "Every pulse fires as a 3-shot burst. Triple throughput.",         max: 1 },
+  { id: "spray",        name: "Scatter Burst",        desc: "5-shot wide spread. Clears dense columns of noise.",             max: 1 },
+  { id: "piercing",     name: "Penetration Drive",    desc: "Signal punches through every pattern in its column.",            max: 1 },
+  { id: "shield_regen", name: "Adaptive Firewall",    desc: "Carrier shield auto-recharges every 25s. Passive defense.",     max: 1 },
+  { id: "code_review",  name: "Critical Analysis",    desc: "Signal deals 2× damage to collapse entities — bosses.",         max: 1 },
+  { id: "homing",       name: "Gravity Field",        desc: "Pulses bend toward nearest pattern. Self-correcting aim.",      max: 1 },
+  { id: "extra_life",   name: "Rollback",             desc: "Restore +1 carrier integrity immediately.",                     max: 3,
     instant: (g) => { g.lives = Math.min(g.lives + 1, MAX_LIVES + 2) } },
-  { id: "auto_fire",    name: "Daily Stand-Up",        desc: "Auto-fires at the nearest word every 3s.", max: 1 },
-  { id: "laser",        name: "Laser Pulse",           desc: "Hold SPACE to charge beam. Release to fire a column.", max: 1 },
-  { id: "cluster",      name: "Chain Reaction",        desc: "Each kill spawns 4 shrapnel that hit nearby patterns.", max: 1 },
-  { id: "mine",         name: "Mine Layer",            desc: "M key drops proximity mines. Max 3 active.", max: 1 },
+  { id: "auto_fire",    name: "Autopilot Mode",       desc: "AI targets nearest pattern every 3s. Hands-free suppression.",  max: 1 },
+  { id: "laser",        name: "Coherence Beam",       desc: "Hold SPACE to charge. Release for a full-column elimination burst.", max: 1 },
+  { id: "cluster",      name: "Cascade Protocol",     desc: "Each kill seeds shrapnel that propagates to nearby patterns.", max: 1 },
+  { id: "mine",         name: "Depth Charge",         desc: "Deploy proximity detonators [M]. Max 3 active.",               max: 1 },
 ]
 
 function pickUpgrades(current: Record<string, number>): UpgradeDef[] {
@@ -3014,7 +3014,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   // Pause hint (bottom left, very subtle)
   ctx.textAlign = "left"; ctx.font = "7px monospace"
   ctx.fillStyle = "rgba(255,255,255,0.12)"
-  const pauseHint = g.upgrades.mine ? "P: pause · M: mine" : "P: pause"
+  const pauseHint = g.upgrades.mine ? "P: pause · M: depth charge" : "P: pause"
   ctx.fillText(pauseHint, 10, GH - 24)
 
   // combo display
