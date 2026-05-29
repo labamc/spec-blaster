@@ -2402,29 +2402,27 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
     g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.5, initLife: 0.5, glyph:"", col, ring: true })
 
   } else {
-    // ── DEFAULT — friction-based debris ──────────────────────────────────
-    // Letters burst apart then decelerate sharply — travel 20-40px max,
-    // then hang as readable characters before slowly drifting down.
-    // No letter becomes motion blur. Each one is legible semantic debris.
+    // ── DEFAULT — burst apart, arc, drift ────────────────────────────────
+    // Letters fly outward from their positions with a real upward burst.
+    // friction=0.99 (not 0.91) — so deceleration is imperceptible, no freeze.
+    // gravity pulls them into a natural arc. Life varies 2–4.5s for staggered fade.
     chars.forEach((ch, i) => {
       const startX = word.x - totalW/2 + i*charW + charW/2
       const dx = startX - word.x
-      const lf = 4.0 + Math.random() * 1.5
-      // Initial burst — moderate speed, friction will kill it in ~30px
-      const vx = dx * 0.28 + (Math.random()-0.5) * 1.2
-      const vy = (Math.random() - 0.52) * 2.0  // radial: up/sideways/slightly down
+      const vx = dx * 0.07 + (Math.random()-0.5) * 1.6   // radial + random spread
+      const vy = -0.8 - Math.random() * 1.6               // upward burst
+      const lf = 2.0 + Math.random() * 2.5
       g.particles.push({
         x: startX, y: word.y,
         vx, vy,
         life: lf, initLife: lf,
         glyph: ch, col,
-        rot: (Math.random()-0.5) * 0.5,   // very slight tilt — stays a letter
-        rotV: (Math.random()-0.5) * 0.015, // almost no spin
-        gravity: 0.016,   // very light — letters drift down slowly after stopping
-        friction: 0.91,   // decelerates to ~0 in ~40px, then gravity takes over
+        rot: (Math.random()-0.5) * 0.8,
+        rotV: (Math.random()-0.5) * 0.045,
+        gravity: 0.025,
+        friction: 0.99,
       })
     })
-    // Minimal impact ring
     g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.45, initLife: 0.45, glyph:"", col, ring: true })
   }
 
