@@ -718,17 +718,17 @@ export default function HomePage() {
       }
 
       // capy in-game comments
-      if (g.nextCapyMsg === 0) g.nextCapyMsg = now + 22000 + Math.random() * 14000
+      if (g.nextCapyMsg === 0) g.nextCapyMsg = now + 60000 + Math.random() * 30000
       if (now > g.nextCapyMsg && !g.capyMsg && !g.bossWarn) {
         const commentPool = g.endless && g.endlessWave >= 5 ? CAPY_PLAY_COMMENTS_VOID
           : g.endless && g.endlessWave >= 3 ? CAPY_PLAY_COMMENTS_MID
           : CAPY_PLAY_COMMENTS_SHALLOW
         g.capyMsg = commentPool[Math.floor(Math.random() * commentPool.length)]
-        g.capyMsgEnd = now + 4000
-        // Comments come faster in deep void — the silence between them means something
+        g.capyMsgEnd = now + 3000
+        // Very infrequent — only in deep void runs where the silence is earned
         const baseInterval = g.endless && g.endlessWave >= 5
-          ? 14000 + Math.random() * 8000
-          : 20000 + Math.random() * 15000
+          ? 50000 + Math.random() * 30000
+          : 70000 + Math.random() * 40000
         g.nextCapyMsg = now + baseInterval
       }
       if (g.capyMsg && now > g.capyMsgEnd) g.capyMsg = ""
@@ -2168,7 +2168,7 @@ function showCapyMsg(g: GState, msg: string, now: number) {
   // Scale display time by message length: longer messages linger more
   const lineCount = msg.split("\n").length
   const charCount = msg.replace(/\n/g, "").length
-  const displayMs = Math.max(3200, Math.min(6500, 2600 + lineCount * 520 + charCount * 18))
+  const displayMs = Math.max(2200, Math.min(4500, 1800 + lineCount * 380 + charCount * 12))
   g.capyMsgEnd = now + displayMs
   g.nextCapyMsg = now + 28000
 }
@@ -3073,16 +3073,17 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     const a = Math.min(1, Math.min(elapsed / 350, remaining / 550))
     if (a > 0) {
       const lines = g.capyMsg.split("\n")
-      const bw = Math.max(130, Math.max(...lines.map(l => l.length)) * 6.8) + 28
-      const bh = 20 + lines.length * 14
-      const bx = 10, by = GH - 50 - bh
-      ctx.globalAlpha = a * 0.94
+      const bw = Math.max(120, Math.max(...lines.map(l => l.length)) * 6.4) + 22
+      const bh = 18 + lines.length * 13
+      // Top-right corner — well clear of the player ship at the bottom
+      const bx = cw - bw - 8, by = 52
+      ctx.globalAlpha = a * 0.72
       ctx.fillStyle = "#15151e"
       roundRect(ctx, bx, by, bw, bh, 5); ctx.fill()
-      ctx.strokeStyle = "rgba(150,107,236,0.45)"; ctx.lineWidth = 1
+      ctx.strokeStyle = "rgba(150,107,236,0.35)"; ctx.lineWidth = 1
       roundRect(ctx, bx, by, bw, bh, 5); ctx.stroke()
-      ctx.fillStyle = "#f5f5f5"; ctx.font = "9px monospace"; ctx.textAlign = "left"
-      lines.forEach((ln, i) => ctx.fillText((i === 0 ? "🦫 " : "   ") + ln, bx + 8, by + 15 + i * 14))
+      ctx.fillStyle = "#f5f5f5"; ctx.font = "8px monospace"; ctx.textAlign = "left"
+      lines.forEach((ln, i) => ctx.fillText((i === 0 ? "🦫 " : "   ") + ln, bx + 7, by + 13 + i * 13))
       ctx.globalAlpha = 1
     }
   }
@@ -3791,6 +3792,15 @@ function CapyScreen({ text, lineNum, totalLines, level, onAdvance }: {
     return () => window.removeEventListener("keydown", handler)
   }, [done]) // eslint-disable-line
 
+  // Auto-advance 2.5s after typewriter completes — no Enter required
+  const onAdvanceRef = useRef(onAdvance)
+  onAdvanceRef.current = onAdvance
+  useEffect(() => {
+    if (!done) return
+    const id = setTimeout(() => onAdvanceRef.current(), 2500)
+    return () => clearTimeout(id)
+  }, [done]) // eslint-disable-line
+
   const nextBoss  = level <= 4 ? BOSSES[level - 1] : null
   const isFinale  = level > 4
 
@@ -3825,7 +3835,7 @@ function CapyScreen({ text, lineNum, totalLines, level, onAdvance }: {
         <p style={{ color: done ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.15)",
           fontSize:"0.7rem", margin:"0 0 0.55rem", transition:"color 0.3s",
           fontFamily:"monospace" }}>
-          {done ? "click to continue →" : "…"}
+          {done ? "click to skip  ·  auto →" : "…"}
         </p>
         {nextBoss && done && (
           <p style={{ color:"#966bec", fontSize:"0.72rem", fontWeight:600,
