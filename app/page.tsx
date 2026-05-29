@@ -1635,7 +1635,7 @@ export default function HomePage() {
           // Random angle biased upward (±117° from straight up) — true scatter
           const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.3
           const spd = 2.8 + Math.random() * 2.8
-          const lf = 0.8 + Math.random() * 0.4
+          const lf = 1.4 + Math.random() * 0.8
           g.particles.push({
             x: charX, y: bx.y,
             vx: Math.cos(angle) * spd,
@@ -2935,7 +2935,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
 
   // player ship
   if (!attractMode) {
-    const flash = g.invuln && Math.floor(now/90) % 2 === 0
+    const flash = g.invuln && Math.floor(now/220) % 2 === 0
     if (!flash) {
       // Combo halo — rings expand around player when combo >= 5
       if (g.combo >= 5) {
@@ -2959,7 +2959,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       ctx.save()
       ctx.shadowColor = glowCol
       ctx.shadowBlur = 10 + 4 * Math.sin(now / 400)
-      ctx.fillStyle = g.shield ? "#4ade80" : "#e2e8f0"
+      ctx.fillStyle = g.shield ? "#4ade80" : "#a5b4fc"
       ctx.beginPath()
       ctx.moveTo(g.px, g.py - 18)
       ctx.lineTo(g.px - 13, g.py + 7)
