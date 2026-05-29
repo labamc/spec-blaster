@@ -57,6 +57,27 @@ const SECTOR_ACCENT_WORDS: string[][] = [
 ]
 const BG_CHARS = ["·","∅","→","←","⊗","△","□","◇","/","\\","{}","()","//","=>","??","##","@@"]
 
+// Per-sector visual identity — tint, word color, ambient glyphs, vignette hint
+const SECTOR_THEMES = [
+  // Sector 1: THE RECURSION — cold code depth, recursive loops
+  { tint: "#1a1858", tintA: 0.10, storyCol: "#c8d4f8",
+    bgChars: ["→","⊗","//","∞","{}","()","=>","??",";;","∅","∞","→"],
+    vigR: 0, vigG: 0, vigB: 24 },
+  // Sector 2: THE DRIFT — warm dissolution, meaning bleeding away
+  { tint: "#2e1600", tintA: 0.10, storyCol: "#f0dbb8",
+    bgChars: ["~","·","…","≈","–","—","○","◌","∿","~","·","≈"],
+    vigR: 24, vigG: 9, vigB: 0 },
+  // Sector 3: THE FRAGMENT — fracture, glitch, yellow-white
+  { tint: "#201800", tintA: 0.10, storyCol: "#e8e5b2",
+    bgChars: ["░","▓","|","¦","//","\\","□","△","▪","▫","░","|"],
+    vigR: 20, vigG: 16, vigB: 0 },
+  // Sector 4: THE COLLAPSE — terminal signal, deep forest
+  { tint: "#001e08", tintA: 0.12, storyCol: "#ccebd8",
+    bgChars: ["▼","×","✕","▲","░","◇","↓","↑","▼","×","✕","▲"],
+    vigR: 0, vigG: 20, vigB: 8 },
+]
+function sectorTheme(level: number) { return SECTOR_THEMES[Math.min(level - 1, 3)] }
+
 // Depth-stratified play comments — capy calibrates to recursion depth
 const CAPY_PLAY_COMMENTS_SHALLOW = [
   "Semantic drift detected.\nHold formation.",
@@ -441,6 +462,8 @@ export default function HomePage() {
     g.running = true
     setShowAgentModule(false)
     g.waveAnn = { text: `SECTOR 1 · ${BOSSES[0].name}`, t: 0 }
+    // Stamp bg glyphs with sector 1 identity
+    { const t1 = sectorTheme(1); g.bg.forEach(b => { b.ch = t1.bgChars[Math.floor(Math.random() * t1.bgChars.length)] }) }
     g.livesAtWave = MAX_LIVES
     startDrone()
     setScore(0); setLevel(1); setLives(MAX_LIVES)
@@ -491,6 +514,8 @@ export default function HomePage() {
       g.running = true; g.bossSpawned = false; g.wordsKilled = 0
       g.livesAtWave = g.lives; g.sectorClearAt = 0; g.lastMsWave = -1
       g.agentSectorRevived = false
+      // Stamp bg glyphs with new sector identity
+      { const th = sectorTheme(g.level); g.bg.forEach(b => { b.ch = th.bgChars[Math.floor(Math.random() * th.bgChars.length)] }) }
       // Activate endless mode when entering level 5+
       if (g.level > 4) {
         g.endless = true
@@ -2366,7 +2391,7 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
   const chars = word.text.split("")
   const isBug = word.type === "bug"
   const isPow = word.type === "powerup"
-  const col   = isBug ? "#f97316" : isPow ? "#4ade80" : "#e2e8f0"
+  const col   = isBug ? "#f97316" : isPow ? "#4ade80" : sectorTheme(g.level).storyCol
   const charW = 6.8, totalW = chars.length * charW
 
   if (style === "laser") {
@@ -2519,7 +2544,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   ctx.fillStyle = "#0d0d14"
   ctx.fillRect(0, 0, cw, GH)
 
-  // level tint overlay — shifts with recursion depth in endless mode
+  // level tint overlay — per-sector identity in story mode, depth-shift in endless
   if (!attractMode) {
     let tintCol: string
     let tintStr: number
@@ -2529,8 +2554,8 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       else if (d >= 3) { tintCol = "#7c3aed"; tintStr = 0.05 }
       else { tintCol = "#4ade80"; tintStr = 0.04 }
     } else {
-      tintCol = BOSSES[Math.min(g.level - 1, 3)].color
-      tintStr = 0.04
+      const st = sectorTheme(g.level)
+      tintCol = st.tint; tintStr = st.tintA
     }
     ctx.globalAlpha = tintStr; ctx.fillStyle = tintCol
     ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1
@@ -2606,27 +2631,30 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     }
   }
 
-  // vignette — intensifies with boss presence, turns deep purple-black for THE VOID
+  // vignette — intensifies with boss presence; tinted per sector in story mode
   const isVoidPresent = g.boss?.name === "THE VOID"
   const vignetteStr = isVoidPresent
     ? 0.75 + 0.1 * Math.sin(now / 400)
     : g.boss
       ? 0.62 + 0.06 * Math.sin(now / 300)
       : 0.5
+  const { vigR, vigG, vigB } = (!attractMode && !g.endless)
+    ? sectorTheme(g.level)
+    : { vigR: 0, vigG: 0, vigB: 0 }
   const vignetteCol = isVoidPresent
     ? `rgba(6,0,18,${vignetteStr})`
-    : `rgba(0,0,0,${vignetteStr})`
+    : `rgba(${vigR},${vigG},${vigB},${vignetteStr})`
   const vgr = ctx.createRadialGradient(cw/2, GH*0.55, GH*0.15, cw/2, GH*0.55, Math.max(cw, GH)*0.78)
   vgr.addColorStop(0, "rgba(0,0,0,0)"); vgr.addColorStop(1, vignetteCol)
   ctx.fillStyle = vgr; ctx.fillRect(0, 0, cw, GH)
 
-  // ambient background glyphs
+  // ambient background glyphs — color + brightness match sector identity
   const glyphCol = g.endless
     ? (g.endlessWave >= 7 ? "#a855f7" : g.endlessWave >= 5 ? "#c084fc" : "#4ade80")
     : BOSSES[Math.min(Math.max(g.level - 1, 0), 3)].color
   ctx.font = "10px monospace"; ctx.textAlign = "center"
   g.bg.forEach(b => {
-    ctx.globalAlpha = b.a
+    ctx.globalAlpha = b.a * 1.6   // slightly more visible — sector glyphs should read
     ctx.fillStyle = attractMode ? "#966bec" : glyphCol
     ctx.fillText(b.ch, b.x, b.y)
   }); ctx.globalAlpha = 1
@@ -2656,6 +2684,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
 
   // words
   const retroActive = !attractMode && g.retroEnd > 0 && now < g.retroEnd
+  const curSectorTheme = attractMode ? SECTOR_THEMES[0] : sectorTheme(g.level)
   g.words.forEach(w => {
     // RETRO tint: bug→pale blue, story→deeper blue (signals temporal freeze)
     const isRelic = w.type === "powerup" && RELIC_SET.has(w.text)
@@ -2663,7 +2692,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       : w.type === "bug" ? (retroActive ? "#fbbf24" : "#f97316")
       : isRelic ? "#fde68a"
       : w.type === "powerup" ? "#4ade80"
-      : (retroActive ? "#bae6fd" : "#e2e8f0")
+      : (retroActive ? "#bae6fd" : curSectorTheme.storyCol)
     const flashRed = w.hitFlash > 0
 
     // Fragments: held-together letter cluster needing a second shot
