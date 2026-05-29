@@ -1077,7 +1077,7 @@ export default function HomePage() {
         g.words.forEach(w => {
           if (w.type === "powerup") return
           g.score += w.type === "bug" ? 20 : 5
-          spawnParticles(g, w.x, w.y, w.type === "bug" ? "#fb923c" : "#7dd3fc", "↑", 2)
+          spawnParticles(g, w.x, w.y, w.type === "bug" ? "#f97316" : "#e2e8f0", "↑", 2)
         })
         g.words = g.words.filter(w => w.type === "powerup")
         const bd = BOSSES[g.level - 1]
@@ -1132,7 +1132,7 @@ export default function HomePage() {
           g.words.forEach(w => {
             if (w.type === "powerup") return
             g.score += w.type === "bug" ? 20 : 5
-            spawnParticles(g, w.x, w.y, w.type === "bug" ? "#fb923c" : "#7dd3fc", "↑", 2)
+            spawnParticles(g, w.x, w.y, w.type === "bug" ? "#f97316" : "#e2e8f0", "↑", 2)
           })
           g.words = g.words.filter(w => w.type === "powerup")
           g.shake = isVoid ? 14 : 8; sfx.warning()
@@ -1490,7 +1490,7 @@ export default function HomePage() {
             const killStyle = b.kind === "spray" ? "spray" : b.kind === "homing" ? "homing" : "default"
             spawnLetterExplosion(g, w, pts, g.combo, killStyle)
             // impact ring — powerup gets triple cascading rings
-            const ringCol = w.type === "bug" ? "#fdba74" : w.type === "powerup" ? "#4ade80" : "#7dd3fc"
+            const ringCol = w.type === "bug" ? "#f97316" : w.type === "powerup" ? "#4ade80" : "#e2e8f0"
             if (w.type === "powerup") {
               g.particles.push({ x: w.x, y: w.y, vx: 0, vy: 0, life: 0.65, initLife: 0.65, glyph: "", col: "#4ade80", ring: true })
               g.particles.push({ x: w.x, y: w.y, vx: 0, vy: 0, life: 0.52, initLife: 0.52, glyph: "", col: "#86efac", ring: true })
@@ -2324,7 +2324,7 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
   const chars = word.text.split("")
   const isBug = word.type === "bug"
   const isPow = word.type === "powerup"
-  const col   = isBug ? "#fdba74" : isPow ? "#4ade80" : "#7dd3fc"
+  const col   = isBug ? "#f97316" : isPow ? "#4ade80" : "#e2e8f0"
   const charW = 6.8, totalW = chars.length * charW
 
   if (style === "laser") {
@@ -2499,7 +2499,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   if (!attractMode && g.retroEnd > 0 && now < g.retroEnd) {
     const retroFade = Math.min(1, (g.retroEnd - now) / 1200)
     ctx.globalAlpha = 0.06 * retroFade
-    ctx.fillStyle = "#7dd3fc"; ctx.fillRect(0, 0, cw, GH)
+    ctx.fillStyle = "#bae6fd"; ctx.fillRect(0, 0, cw, GH)
     ctx.globalAlpha = 1
   }
 
@@ -2606,10 +2606,10 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     // RETRO tint: bug→pale blue, story→deeper blue (signals temporal freeze)
     const isRelic = w.type === "powerup" && RELIC_SET.has(w.text)
     const col = w.regenBoss ? "#34d399"
-      : w.type === "bug" ? (retroActive ? "#93c5fd" : "#fdba74")
+      : w.type === "bug" ? (retroActive ? "#fbbf24" : "#f97316")
       : isRelic ? "#fde68a"
       : w.type === "powerup" ? "#4ade80"
-      : (retroActive ? "#a5f3fc" : "#7dd3fc")
+      : (retroActive ? "#bae6fd" : "#e2e8f0")
     const flashRed = w.hitFlash > 0
 
     // Fragments: held-together letter cluster needing a second shot
@@ -2633,16 +2633,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     const spawnFlash = w.age < 12 ? Math.max(0, 1 - w.age / 12) : 0
     ctx.globalAlpha = spawnAlpha
 
-    if (spawnFlash > 0 && w.type !== "powerup") {
-      ctx.save()
-      const flashCol = w.type === "bug" ? "#fdba74" : "#7dd3fc"
-      ctx.shadowColor = flashCol; ctx.shadowBlur = 20 * spawnFlash
-      ctx.globalAlpha = spawnFlash * 0.7
-      ctx.fillStyle = flashCol; ctx.font = "11px monospace"; ctx.textAlign = "center"
-      ctx.fillText(w.text, w.x, w.y)
-      ctx.restore()
-      ctx.globalAlpha = spawnAlpha
-    }
+    // No spawn glow — crisp text at spawn is enough
 
     if (w.type === "powerup") {
       const pulse = 0.5 + 0.5 * Math.sin(now / 280)
@@ -2661,9 +2652,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       const pulse = 0.3 + 0.7 * Math.abs(Math.sin(now / 300))
       ctx.save(); ctx.shadowColor = "#34d399"; ctx.shadowBlur = 7 * pulse
     }
-    if (retroActive && w.type !== "powerup" && !w.regenBoss && !w.elite) {
-      ctx.save(); ctx.shadowColor = "#7dd3fc"; ctx.shadowBlur = 5 + 2 * Math.sin(now / 600)
-    }
+    // retroActive: color shift already signals it, no extra blur needed
     if (w.elite) {
       ctx.save(); ctx.shadowColor = "#f87171"; ctx.shadowBlur = 8 + 4 * Math.sin(now / 200)
     }
@@ -2681,7 +2670,6 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
 
     if (w.type === "powerup") ctx.restore()
     if (w.regenBoss) ctx.restore()
-    if (retroActive && w.type !== "powerup" && !w.regenBoss && !w.elite) ctx.restore()
     if (w.elite) {
       ctx.restore()
       // HP pips
