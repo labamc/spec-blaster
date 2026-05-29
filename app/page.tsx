@@ -1621,22 +1621,35 @@ export default function HomePage() {
       if (g.boss && g.boss.hp <= 0) {
         const bx = g.boss
         sfx.bossDead()
-        g.shake = 14
-        spawnParticles(g, bx.x, bx.y, bx.color, "★", g.endless ? 20 : 30)
+        g.shake = 20 + g.level * 2
+        g.accentFlash = 18; g.accentFlashCol = bx.color
+        // Core particle burst — scaled by sector
+        spawnParticles(g, bx.x, bx.y, bx.color, "★", g.endless ? 28 : 44)
+        // Three shockwave rings expanding from the boss position
+        for (let ri = 0; ri < 3; ri++) {
+          g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0,
+            life: 0.60 - ri * 0.15, initLife: 0.60 - ri * 0.15,
+            glyph: "", col: ri === 1 ? "#ffffff" : bx.color, ring: true })
+        }
+        // Boss name letters blast outward dramatically
         bx.name.split("").forEach((ch, i2) => {
+          const spread = bx.name.length / 2
           g.particles.push({
-            x: bx.x + (i2 - bx.name.length/2) * 8, y: bx.y,
-            vx: (Math.random()-0.5)*12, vy: -3 - Math.random()*6,
-            life: 1.2, glyph: ch, col: bx.color,
-            rot: (Math.random()-0.5)*1.5, rotV: (Math.random()-0.5)*0.25,
+            x: bx.x + (i2 - spread) * 9, y: bx.y,
+            vx: (i2 - spread) * 2.0 + (Math.random()-0.5) * 11,
+            vy: -5 - Math.random() * 10,
+            life: 1.8, glyph: ch, col: bx.color,
+            rot: (Math.random()-0.5) * 2.4, rotV: (Math.random()-0.5) * 0.38,
           })
         })
+        // Central impact flash glyph
+        g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: -0.5, life: 1.1, glyph: "✕", col: "#ffffff", sz: 24 })
         g.boss = null; g.mines = [] // clear mines on boss death
         if (g.endless) {
           sfx.miniBoss()
           if (bx.name === "THE VOID") {
             // THE VOID death — special treatment
-            g.score += 750; g.whiteFlash = 14; g.shake = 18
+            g.score += 750; g.accentFlash = 24; g.accentFlashCol = "#a855f7"; g.shake = 24
             // implosion particle burst in void purple
             for (let vi = 0; vi < 40; vi++) {
               const a = (vi / 40) * Math.PI * 2
@@ -1683,7 +1696,7 @@ export default function HomePage() {
           g.mines = []
           if (lvl === 4) {
             // THE COLLAPSE — final sector cleared. Legendary ceremony.
-            g.shake = 28; g.whiteFlash = 22
+            g.shake = 36; g.accentFlash = 32; g.accentFlashCol = "#4ade80"
             for (let ri = 0; ri < 100; ri++) {
               const ra = Math.random() * Math.PI * 2, rr = Math.random() * 180
               g.particles.push({ x: g.W/2 + Math.cos(ra)*rr, y: GH/2 + Math.sin(ra)*rr,
@@ -1706,7 +1719,7 @@ export default function HomePage() {
           } else {
             // Sector 1-3 clear: dramatic ceremony scaled by sector
             const sectorNames = ["", "SECTOR 1 · CLEAR", "SECTOR 2 · CLEAR", "SECTOR 3 · CLEAR"]
-            g.whiteFlash = 8 + lvl * 3; g.shake = 10 + lvl * 3
+            g.accentFlash = 16 + lvl * 5; g.accentFlashCol = bx.color; g.shake = 14 + lvl * 4
             const clearCol = bx.color
             const particleCount = 32 + lvl * 12
             for (let ci = 0; ci < particleCount; ci++) {
