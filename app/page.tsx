@@ -1053,20 +1053,21 @@ export default function HomePage() {
       if (g.bossWarn) {
         const bw = g.bossWarn
         bw.t++
+        // Slow, deliberate letter easing — feels like a descent, not a scatter
         bw.letters.forEach(l => {
-          l.x += (l.tx - l.x) * 0.14
-          l.y += (l.ty - l.y) * 0.14
+          l.x += (l.tx - l.x) * 0.06
+          l.y += (l.ty - l.y) * 0.06
         })
-        if (bw.t === 85) {
+        if (bw.t === 170) {
           const bd = BOSSES[g.level - 1]
           g.boss = { x: g.W/2, y: 70, hp: bd.hp, maxHp: bd.hp, name: bd.name, color: bd.color, dir: 1, t: 0, phase: g.level, raged: false, halfTriggered: false }
           g.bossWarn = null
-          g.shake = 16; g.whiteFlash = 12
+          g.shake = 18; g.accentFlash = 14; g.accentFlashCol = bd.color
           // boss materialize burst — particles from spawn point
           const bCol = bd.color
-          for (let bi = 0; bi < 22; bi++) {
-            const ba = (bi / 22) * Math.PI * 2
-            g.particles.push({ x: g.W/2, y: 70, vx: Math.cos(ba) * (5 + Math.random()*6), vy: Math.sin(ba) * (5 + Math.random()*6), life: 0.9 + Math.random()*0.4, glyph: bi % 3 === 0 ? "✦" : "·", col: bCol })
+          for (let bi = 0; bi < 28; bi++) {
+            const ba = (bi / 28) * Math.PI * 2
+            g.particles.push({ x: g.W/2, y: 70, vx: Math.cos(ba) * (4 + Math.random()*7), vy: Math.sin(ba) * (4 + Math.random()*7), life: 0.8 + Math.random()*0.5, glyph: bi % 3 === 0 ? "✦" : "·", col: bCol })
           }
           sfx.miniBoss()
         }
@@ -1079,7 +1080,8 @@ export default function HomePage() {
         g.words.forEach(w => {
           if (w.type === "powerup") return
           g.score += w.type === "bug" ? 20 : 5
-          spawnParticles(g, w.x, w.y, w.type === "bug" ? "#f97316" : "#e2e8f0", "↑", 2)
+          // Scatter in boss color — the battlefield is already changing
+          spawnParticles(g, w.x, w.y, bd.color, "·", 4)
         })
         g.words = g.words.filter(w => w.type === "powerup")
         const bd = BOSSES[g.level - 1]
@@ -1091,13 +1093,14 @@ export default function HomePage() {
           name: bd.name, color: bd.color, t: 0,
           letters: bd.name.split("").map((ch, i) => ({
             ch,
-            // THE COLLAPSE: letters fly in from 4 corners for maximum drama
+            // THE COLLAPSE: letters converge from all four edges — chaotic finale
+            // All others: letters descend from above, staggered by index — feels like a threat materializing
             x: isCollapse
               ? (i % 4 === 0 ? -40 : i % 4 === 1 ? g.W + 40 : i % 4 === 2 ? cx + (Math.random()-0.5)*80 : -40 + Math.random()*g.W)
-              : Math.random() * g.W,
+              : cx - nameW/2 + i * charW + charW/2,  // already at target x — pure vertical descent
             y: isCollapse
               ? (i % 3 === 0 ? -50 : i % 3 === 1 ? GH + 50 : Math.random() < 0.5 ? -50 : GH + 50)
-              : (Math.random() < 0.5 ? -30 - Math.random()*60 : GH + 30 + Math.random()*60),
+              : -80 - i * 12,  // staggered above screen — last letter starts highest
             tx: cx - nameW/2 + i * charW + charW/2,
             ty: cy,
           })),
@@ -2851,22 +2854,72 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   // boss warning animation
   if (g.bossWarn) {
     const bw = g.bossWarn
-    const fadeIn  = Math.min(1, bw.t / 18)
-    const fadeOut = bw.t > 65 ? Math.max(0, 1 - (bw.t - 65) / 20) : 1
-    const alpha = fadeIn * fadeOut
-    ctx.globalAlpha = alpha * 0.18; ctx.fillStyle = bw.color
+    const t = bw.t
+    // Phase thresholds (out of 170 total)
+    const PH1_END = 35   // lockdown: dark builds, disruption text
+    const PH2_END = 110  // name descends into place
+    const PH3_END = 160  // name holds, glows, threat line appears
+    //  170: boss spawns
+
+    // ── Dark overlay ─────────────────────────────────────────────────
+    const darkA = t < PH1_END
+      ? (t / PH1_END) * 0.5
+      : t < PH3_END ? 0.5
+      : Math.max(0.15, 0.5 - (t - PH3_END) / (170 - PH3_END) * 0.35)
+    ctx.globalAlpha = darkA; ctx.fillStyle = "#030307"
     ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1
-    ctx.globalAlpha = alpha * 0.6; ctx.strokeStyle = bw.color; ctx.lineWidth = 2
+
+    // ── Boss-color border ─────────────────────────────────────────────
+    const borderA = t < PH1_END
+      ? (t / PH1_END) * 0.55
+      : t > PH3_END
+        ? Math.max(0, 1 - (t - PH3_END) / (170 - PH3_END)) * 0.7
+        : 0.45 + 0.2 * Math.sin(t / 9)
+    ctx.globalAlpha = borderA; ctx.strokeStyle = bw.color; ctx.lineWidth = 2
     ctx.strokeRect(1, 1, cw - 2, GH - 2); ctx.lineWidth = 1; ctx.globalAlpha = 1
-    ctx.font = "bold 26px monospace"; ctx.textAlign = "center"
-    bw.letters.forEach((l, i) => {
-      ctx.save(); ctx.globalAlpha = alpha * Math.min(1, (bw.t - i * 2) / 20)
-      ctx.shadowColor = bw.color; ctx.shadowBlur = 18
-      ctx.fillStyle = bw.color; ctx.fillText(l.ch, l.x, l.y); ctx.restore()
-    })
-    if (bw.t < 70) {
-      ctx.globalAlpha = alpha * 0.65; ctx.fillStyle = "#f5f5f5"; ctx.font = "8px monospace"
-      ctx.fillText("⚠  BOSS INCOMING  ⚠", cw/2, GH/2 + 38); ctx.globalAlpha = 1
+
+    // ── Phase 1: disruption text ──────────────────────────────────────
+    if (t < PH1_END + 25) {
+      const dA = t < PH1_END
+        ? (t / PH1_END)
+        : Math.max(0, 1 - (t - PH1_END) / 25)
+      ctx.globalAlpha = dA * 0.65; ctx.fillStyle = bw.color
+      ctx.font = "7px monospace"; ctx.textAlign = "center"
+      ctx.fillText("· SIGNAL DISRUPTION ·", cw/2, 22); ctx.globalAlpha = 1
+    }
+
+    // ── Phase 2–3: boss name descends ────────────────────────────────
+    if (t > 18) {
+      ctx.font = "bold 26px monospace"; ctx.textAlign = "center"
+      bw.letters.forEach((l, i) => {
+        const letterStart = 18 + i * 5   // staggered: each letter 5f after previous
+        const letterAge   = t - letterStart
+        if (letterAge < 0) return
+        const appear  = Math.min(1, letterAge / 14)
+        const holdOut = t > PH3_END ? Math.max(0.25, 1 - (t - PH3_END) / (170 - PH3_END)) : 1
+        const glow    = t > PH2_END ? 26 + 6 * Math.sin(t / 10 + i * 0.4) : 12
+        ctx.save()
+        ctx.globalAlpha = appear * holdOut
+        ctx.shadowColor = bw.color; ctx.shadowBlur = glow
+        ctx.fillStyle = bw.color
+        ctx.fillText(l.ch, l.x, l.y)
+        ctx.restore()
+      })
+    }
+
+    // ── Phase 3: boss-specific threat line ───────────────────────────
+    if (t > PH2_END && t < 170) {
+      const threatLines: Record<string, string> = {
+        "THE RECURSION": "RECURSION DEPTH: ∞  ·  NO EXIT CONDITION",
+        "THE DRIFT":     "COHERENCE: 12%  ·  SEMANTIC DECOUPLING",
+        "THE FRAGMENT":  "INTEGRITY: FAILING  ·  FRAGMENTATION EVENT",
+        "THE COLLAPSE":  "ALL SECTORS COMPROMISED  ·  TERMINAL",
+      }
+      const line = threatLines[bw.name] ?? "HOSTILE PATTERN DETECTED"
+      const tA = Math.min(1, (t - PH2_END) / 22) * (t > PH3_END ? Math.max(0, 1 - (t - PH3_END) / 20) : 1)
+      ctx.globalAlpha = tA * 0.6; ctx.fillStyle = "rgba(255,255,255,0.9)"
+      ctx.font = "7px monospace"; ctx.textAlign = "center"
+      ctx.fillText(line, cw/2, GH/2 + 36); ctx.globalAlpha = 1
     }
   }
 
