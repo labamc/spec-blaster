@@ -1634,15 +1634,16 @@ export default function HomePage() {
           const lf = 5.0 + Math.random() * 1.5
           g.particles.push({
             x: bx.x + (i2 - spread) * 9, y: bx.y,
-            vx: (i2 - spread) * 0.55 + (Math.random()-0.5) * 2.2,
-            vy: -1.0 - Math.random() * 2.5,
+            vx: (i2 - spread) * 0.38 + (Math.random()-0.5) * 1.0,
+            vy: -0.4 - Math.random() * 0.8,
             life: lf, initLife: lf,
             glyph: ch, col: bx.color,
-            rot: (Math.random()-0.5) * 1.6, rotV: (Math.random()-0.5) * 0.08,
+            rot: (Math.random()-0.5) * 1.2, rotV: (Math.random()-0.5) * 0.04,
+            gravity: 0.014, friction: 0.97,
           })
         })
-        // Central impact flash glyph — lingers
-        g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: -0.3, life: 2.5, initLife: 2.5, glyph: "✕", col: "#ffffff", sz: 24, rot: 0, rotV: 0 })
+        // Central impact glyph — hovers in place
+        g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: -0.15, life: 2.5, initLife: 2.5, glyph: "✕", col: "#ffffff", sz: 24, rot: 0, rotV: 0, gravity: 0 })
         g.boss = null; g.mines = [] // clear mines on boss death
         if (g.endless) {
           sfx.miniBoss()
@@ -1652,13 +1653,16 @@ export default function HomePage() {
             // implosion particle burst in void purple
             for (let vi = 0; vi < 40; vi++) {
               const a = (vi / 40) * Math.PI * 2
-              const spd = 4 + Math.random() * 9
+              const spd = 1.2 + Math.random() * 2.5
+              const lf = 3.0 + Math.random() * 1.0
               g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
-                life: 1.4 + Math.random() * 0.6, glyph: vi % 3 === 0 ? "∅" : vi % 3 === 1 ? "◈" : "★",
-                col: vi % 2 === 0 ? "#6d28d9" : "#a855f7" })
+                life: lf, initLife: lf, glyph: vi % 3 === 0 ? "∅" : vi % 3 === 1 ? "◈" : "★",
+                col: vi % 2 === 0 ? "#6d28d9" : "#a855f7",
+                rot: Math.random() * Math.PI * 2, rotV: (Math.random()-0.5) * 0.04,
+                gravity: 0.018, friction: 0.97 })
             }
-            g.particles.push({ x: bx.x, y: bx.y - 22, vx: 0, vy: -0.7, life: 2.2, glyph: "THE VOID · COLLAPSED", col: "#a855f7", sz: 11 })
-            g.particles.push({ x: bx.x, y: bx.y + 8, vx: 0, vy: -0.5, life: 1.8, glyph: "+750", col: "#facc15", sz: 12 })
+            g.particles.push({ x: bx.x, y: bx.y - 22, vx: 0, vy: -0.5, life: 2.5, glyph: "THE VOID · COLLAPSED", col: "#a855f7", sz: 11, gravity: 0 })
+            g.particles.push({ x: bx.x, y: bx.y + 8,  vx: 0, vy: -0.35, life: 2.2, glyph: "+750", col: "#facc15", sz: 12, gravity: 0 })
             showCapyMsg(g, "THE VOID is closed.\nSignal coherence: restored.\nYou outran the recursion.", now)
             setTimeout(() => sfx.bossDead(), 350)
             setTimeout(() => sfx.bossDead(), 700)
@@ -1698,16 +1702,21 @@ export default function HomePage() {
             g.shake = 36; g.accentFlash = 32; g.accentFlashCol = "#4ade80"
             for (let ri = 0; ri < 100; ri++) {
               const ra = Math.random() * Math.PI * 2, rr = Math.random() * 180
+              const spd = 0.8 + Math.random() * 2.0
+              const lf = 3.5 + Math.random() * 1.0
               g.particles.push({ x: g.W/2 + Math.cos(ra)*rr, y: GH/2 + Math.sin(ra)*rr,
-                vx: Math.cos(ra)*(6+Math.random()*10), vy: Math.sin(ra)*(6+Math.random()*10),
-                life: 2.0 + Math.random()*0.8, glyph: Math.random()<0.33?"★":Math.random()<0.5?"◇":"◈", col: Math.random()<0.4?"#4ade80":Math.random()<0.5?"#966bec":"#facc15" })
+                vx: Math.cos(ra)*spd, vy: Math.sin(ra)*spd,
+                life: lf, initLife: lf,
+                glyph: Math.random()<0.33?"★":Math.random()<0.5?"◇":"◈",
+                col: Math.random()<0.4?"#4ade80":Math.random()<0.5?"#966bec":"#facc15",
+                rot: Math.random()*Math.PI*2, rotV: (Math.random()-0.5)*0.03,
+                gravity: 0.015, friction: 0.97 })
             }
-            // Concentric rings
             for (let ri = 0; ri < 3; ri++) {
               g.particles.push({ x: g.W/2, y: GH/2, vx: 0, vy: 0, life: 0.9 - ri * 0.18, initLife: 0.9 - ri * 0.18, glyph: "", col: ri === 0 ? "#4ade80" : ri === 1 ? "#966bec" : "#facc15", ring: true })
             }
-            g.particles.push({ x: g.W/2, y: GH/2 - 20, vx: 0, vy: -0.5, life: 3.5, glyph: "THE SIGNAL PERSISTS", col: "#4ade80", sz: 15 })
-            g.particles.push({ x: g.W/2, y: GH/2 + 6, vx: 0, vy: -0.35, life: 3.0, glyph: "INFINITE RECURSION UNLOCKED", col: "#966bec", sz: 9 })
+            g.particles.push({ x: g.W/2, y: GH/2 - 20, vx: 0, vy: -0.4, life: 3.5, glyph: "THE SIGNAL PERSISTS", col: "#4ade80", sz: 15, gravity: 0 })
+            g.particles.push({ x: g.W/2, y: GH/2 + 6, vx: 0, vy: -0.28, life: 3.0, glyph: "INFINITE RECURSION UNLOCKED", col: "#966bec", sz: 9, gravity: 0 })
             g.particles.push({ x: g.W/2, y: GH/2 + 22, vx: 0, vy: -0.25, life: 2.5, glyph: "+500 COLLAPSE RESOLVED", col: "#facc15", sz: 10 })
             if (noReg) g.particles.push({ x: g.W/2, y: GH/2 + 36, vx: 0, vy: -0.2, life: 2.2, glyph: "+300 CARRIER INTACT", col: "#4ade80", sz: 10 })
             showCapyMsg(g, "All collapses survived.\nThe Signal persists.\nInfinite recursion begins.", now)
@@ -1723,27 +1732,26 @@ export default function HomePage() {
             const particleCount = 32 + lvl * 12
             for (let ci = 0; ci < particleCount; ci++) {
               const a = Math.random() * Math.PI * 2
-              const spd = 1.5 + Math.random() * 3.5
-              const lf = 3.0 + Math.random() * 1.0
+              const spd = 0.6 + Math.random() * 1.8
+              const lf = 3.5 + Math.random() * 1.0
               g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
                 life: lf, initLife: lf, glyph: ci % 3 === 0 ? "★" : ci % 3 === 1 ? "◇" : "◈",
                 col: ci % 4 === 0 ? "#966bec" : ci % 4 === 1 ? "#facc15" : clearCol,
-                rot: Math.random() * Math.PI * 2, rotV: (Math.random()-0.5) * 0.05 })
+                rot: Math.random() * Math.PI * 2, rotV: (Math.random()-0.5) * 0.04,
+                gravity: 0.018, friction: 0.97 })
             }
             // Radial rings — longer lasting
             for (let ri = 0; ri < 2; ri++) {
               g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0, life: 1.4 - ri * 0.4, initLife: 1.4 - ri * 0.4, glyph: "", col: ri === 0 ? clearCol : "#ffffff", ring: true })
             }
-            // Sector clear text
-            g.particles.push({ x: g.W/2, y: GH/2 - 14, vx: 0, vy: -0.4, life: 3.5, glyph: sectorNames[lvl] ?? "", col: "#966bec", sz: 13 })
-            // Score breakdown floats
-            g.particles.push({ x: g.W/2, y: GH/2 + 6, vx: 0, vy: -0.3, life: 3.0, glyph: `+500 ${bx.name} DEFEATED`, col: "#facc15", sz: 10 })
-            if (noReg) g.particles.push({ x: g.W/2, y: GH/2 + 22, vx: 0, vy: -0.22, life: 2.8, glyph: "+300 CARRIER INTACT", col: "#4ade80", sz: 10 })
-            // Next sector preview
+            // Sector clear text — gravity 0 so they float up steadily
+            g.particles.push({ x: g.W/2, y: GH/2 - 14, vx: 0, vy: -0.35, life: 3.5, glyph: sectorNames[lvl] ?? "", col: "#966bec", sz: 13, gravity: 0 })
+            g.particles.push({ x: g.W/2, y: GH/2 + 6,  vx: 0, vy: -0.25, life: 3.0, glyph: `+500 ${bx.name} DEFEATED`, col: "#facc15", sz: 10, gravity: 0 })
+            if (noReg) g.particles.push({ x: g.W/2, y: GH/2 + 22, vx: 0, vy: -0.18, life: 2.8, glyph: "+300 CARRIER INTACT", col: "#4ade80", sz: 10, gravity: 0 })
             const nextSector = lvl + 1
             const nextBoss = BOSSES[nextSector - 1]
             if (nextBoss) {
-              g.particles.push({ x: g.W/2, y: GH/2 + (noReg ? 38 : 22), vx: 0, vy: -0.18, life: 2.5, glyph: `SECTOR ${nextSector} · ${nextBoss.name}`, col: "rgba(150,107,236,0.6)", sz: 9 })
+              g.particles.push({ x: g.W/2, y: GH/2 + (noReg ? 38 : 22), vx: 0, vy: -0.14, life: 2.5, glyph: `SECTOR ${nextSector} · ${nextBoss.name}`, col: "rgba(150,107,236,0.6)", sz: 9, gravity: 0 })
             }
             // Extra boss dead fanfare for later sectors
             if (lvl >= 2) setTimeout(() => sfx.bossDead(), 350)
@@ -2316,8 +2324,9 @@ function applyPowerup(g: GState, word: Word, now: number) {
 function spawnParticles(g: GState, x: number, y: number, col: string, glyph: string, n: number) {
   for (let i = 0; i < n; i++) {
     const lf = 2.5 + Math.random() * 1.0
-    g.particles.push({ x, y, vx: (Math.random()-0.5)*4, vy: (Math.random()-0.5)*3.5-1,
-      life: lf, initLife: lf, glyph, col, rot: (Math.random()-0.5)*2, rotV: (Math.random()-0.5)*0.06 })
+    g.particles.push({ x, y, vx: (Math.random()-0.5)*2.2, vy: (Math.random()-0.5)*2.0-0.5,
+      life: lf, initLife: lf, glyph, col, rot: (Math.random()-0.5)*2, rotV: (Math.random()-0.5)*0.04,
+      gravity: 0.022, friction: 0.97 })
   }
 }
 
