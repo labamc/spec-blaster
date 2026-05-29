@@ -4642,9 +4642,17 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
     ? endlessDepth && endlessDepth >= 9 ? "THE RECURSION" : "THE VOID"
     : bossNames[level - 1] ?? "THE SIGNAL"
 
+  // Sector death tint — each boss has its color signature
+  const deathBossColor = endless ? "#a855f7" : BOSSES[Math.min(level - 1, BOSSES.length - 1)].color
+  const deathBossRgb = deathBossColor === "#f87171" ? "248,113,113"
+    : deathBossColor === "#fb923c" ? "251,146,60"
+    : deathBossColor === "#facc15" ? "250,204,21"
+    : deathBossColor === "#4ade80" ? "74,222,128"
+    : "168,85,247"
+
   return (
-    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(10,10,18,0.97)", zIndex:10 }}>
-      <div style={{ background:"#13131c", border:"1px solid rgba(150,107,236,0.2)", borderRadius:"10px", padding:"1.6rem 1.4rem", maxWidth:"310px", width:"calc(100% - 2rem)", textAlign:"center" }}>
+    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:`rgba(${deathBossRgb === "248,113,113" ? "18,8,8" : deathBossRgb === "251,146,60" ? "16,10,6" : "10,10,18"},0.97)`, zIndex:10 }}>
+      <div style={{ background:"#13131c", border:`1px solid rgba(${deathBossRgb},0.25)`, borderRadius:"10px", padding:"1.6rem 1.4rem", maxWidth:"310px", width:"calc(100% - 2rem)", textAlign:"center" }}>
 
         {/* Status */}
         <p style={{ color:"#f87171", fontWeight:700, fontSize:"0.62rem", margin:"0 0 0.35rem", fontFamily:"monospace", letterSpacing:"0.18em" }}>
@@ -4662,7 +4670,7 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
         <p style={{ color:"#c4b5fd", fontSize:"3rem", fontWeight:700, margin:"0 0 0.1rem", fontFamily:"monospace", lineHeight:1 }}>
           {endless ? `DEPTH ${depth}` : `SECTOR ${level}`}
         </p>
-        <p style={{ color:"rgba(248,113,113,0.5)", fontSize:"0.58rem", margin:"0 0 0.6rem", fontFamily:"monospace", letterSpacing:"0.14em" }}>
+        <p style={{ color:`rgba(${deathBossRgb},0.6)`, fontSize:"0.58rem", margin:"0 0 0.6rem", fontFamily:"monospace", letterSpacing:"0.14em" }}>
           {whereFell}
         </p>
 
