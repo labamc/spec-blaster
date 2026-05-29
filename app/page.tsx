@@ -2339,22 +2339,24 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number)
   const energy = 1 + Math.min(combo, 20) * 0.12
   const charW  = 6.8, totalW = chars.length * charW
 
-  // Letters blast apart — each carries its own velocity proportional to distance from center
+  // Letters blast apart — wide spread, big size, arc through air visibly
   chars.forEach((ch, i) => {
     const startX = word.x - totalW/2 + i*charW + charW/2
     const dx = startX - word.x
-    // Lateral: spread outward from word center, scaled by combo energy
-    const vxBase = dx * 0.32 + (Math.random()-0.5) * 5
-    // Vertical: always upward burst, gravity will arc them back down
-    const vyBase = -2.5 - Math.random() * 5.5
+    // Lateral: outward from center + random scatter, scaled by energy
+    const vxBase = dx * 0.55 + (Math.random()-0.5) * 10
+    // Vertical: strong upward burst so gravity arcs them dramatically
+    const vyBase = -5 - Math.random() * 9
+    // Life 1.5–2.2s so letters travel the full arc before fading
+    const lf = 1.5 + Math.random() * 0.7
     g.particles.push({
       x: startX, y: word.y,
       vx: vxBase * energy,
       vy: vyBase * energy,
-      life: 0.85 + Math.random() * 0.3,
+      life: lf, initLife: lf,
       glyph: ch, col,
-      rot: (Math.random()-0.5) * 1.8,
-      rotV: (Math.random()-0.5) * 0.3,
+      rot: (Math.random()-0.5) * 2.4,
+      rotV: (Math.random()-0.5) * 0.22,
     })
   })
 
@@ -2998,7 +3000,9 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.globalAlpha = Math.max(0, p.life)
     ctx.fillStyle = p.col
     if (p.rot !== undefined) {
-      const sz = p.sz ?? Math.max(7, 13 * p.life)
+      // initLife set → size scales from big-to-zero (letter explosions)
+      // otherwise → old formula: shrinks to 7px minimum
+      const sz = p.sz ?? (p.initLife ? Math.max(0, 22 * p.life / p.initLife) : Math.max(7, 13 * p.life))
       ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot)
       ctx.font = `${sz}px monospace`; ctx.textAlign = "center"
       ctx.fillText(p.glyph, 0, 0); ctx.restore()
