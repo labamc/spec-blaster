@@ -1619,25 +1619,27 @@ export default function HomePage() {
         g.accentFlash = 18; g.accentFlashCol = bx.color
         // Core particle burst — scaled by sector
         spawnParticles(g, bx.x, bx.y, bx.color, "★", g.endless ? 28 : 44)
-        // Three shockwave rings expanding from the boss position
+        // Three shockwave rings — slow and visible
         for (let ri = 0; ri < 3; ri++) {
           g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0,
-            life: 0.60 - ri * 0.15, initLife: 0.60 - ri * 0.15,
+            life: 1.4 - ri * 0.3, initLife: 1.4 - ri * 0.3,
             glyph: "", col: ri === 1 ? "#ffffff" : bx.color, ring: true })
         }
-        // Boss name letters blast outward dramatically
+        // Boss name letters drift apart slowly — visible for a long time
         bx.name.split("").forEach((ch, i2) => {
           const spread = bx.name.length / 2
+          const lf = 5.0 + Math.random() * 1.5
           g.particles.push({
             x: bx.x + (i2 - spread) * 9, y: bx.y,
-            vx: (i2 - spread) * 2.0 + (Math.random()-0.5) * 11,
-            vy: -5 - Math.random() * 10,
-            life: 1.8, glyph: ch, col: bx.color,
-            rot: (Math.random()-0.5) * 2.4, rotV: (Math.random()-0.5) * 0.38,
+            vx: (i2 - spread) * 0.55 + (Math.random()-0.5) * 2.2,
+            vy: -1.0 - Math.random() * 2.5,
+            life: lf, initLife: lf,
+            glyph: ch, col: bx.color,
+            rot: (Math.random()-0.5) * 1.6, rotV: (Math.random()-0.5) * 0.08,
           })
         })
-        // Central impact flash glyph
-        g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: -0.5, life: 1.1, glyph: "✕", col: "#ffffff", sz: 24 })
+        // Central impact flash glyph — lingers
+        g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: -0.3, life: 2.5, initLife: 2.5, glyph: "✕", col: "#ffffff", sz: 24, rot: 0, rotV: 0 })
         g.boss = null; g.mines = [] // clear mines on boss death
         if (g.endless) {
           sfx.miniBoss()
@@ -1709,7 +1711,7 @@ export default function HomePage() {
             setTimeout(() => sfx.bossDead(), 300)
             setTimeout(() => sfx.bossDead(), 650)
             setTimeout(() => sfx.bossDead(), 1050)
-            g.sectorClearAt = now + 2800
+            g.sectorClearAt = now + 4500
           } else {
             // Sector 1-3 clear: dramatic ceremony scaled by sector
             const sectorNames = ["", "SECTOR 1 · CLEAR", "SECTOR 2 · CLEAR", "SECTOR 3 · CLEAR"]
@@ -1718,27 +1720,32 @@ export default function HomePage() {
             const particleCount = 32 + lvl * 12
             for (let ci = 0; ci < particleCount; ci++) {
               const a = Math.random() * Math.PI * 2
-              const spd = 4 + Math.random() * 8
-              const life = 1.5 + Math.random() * 0.6
-              g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, life, glyph: ci % 3 === 0 ? "★" : ci % 3 === 1 ? "◇" : "◈", col: ci % 4 === 0 ? "#966bec" : ci % 4 === 1 ? "#facc15" : clearCol })
+              const spd = 1.5 + Math.random() * 3.5
+              const lf = 3.0 + Math.random() * 1.0
+              g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
+                life: lf, initLife: lf, glyph: ci % 3 === 0 ? "★" : ci % 3 === 1 ? "◇" : "◈",
+                col: ci % 4 === 0 ? "#966bec" : ci % 4 === 1 ? "#facc15" : clearCol,
+                rot: Math.random() * Math.PI * 2, rotV: (Math.random()-0.5) * 0.05 })
             }
-            // Radial ring
-            g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0, life: 0.7, initLife: 0.7, glyph: "", col: clearCol, ring: true })
+            // Radial rings — longer lasting
+            for (let ri = 0; ri < 2; ri++) {
+              g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0, life: 1.4 - ri * 0.4, initLife: 1.4 - ri * 0.4, glyph: "", col: ri === 0 ? clearCol : "#ffffff", ring: true })
+            }
             // Sector clear text
-            g.particles.push({ x: g.W/2, y: GH/2 - 14, vx: 0, vy: -0.6, life: 2.5, glyph: sectorNames[lvl] ?? "", col: "#966bec", sz: 13 })
+            g.particles.push({ x: g.W/2, y: GH/2 - 14, vx: 0, vy: -0.4, life: 3.5, glyph: sectorNames[lvl] ?? "", col: "#966bec", sz: 13 })
             // Score breakdown floats
-            g.particles.push({ x: g.W/2, y: GH/2 + 6, vx: 0, vy: -0.45, life: 2.2, glyph: `+500 ${bx.name} DEFEATED`, col: "#facc15", sz: 10 })
-            if (noReg) g.particles.push({ x: g.W/2, y: GH/2 + 22, vx: 0, vy: -0.35, life: 2.0, glyph: "+300 CARRIER INTACT", col: "#4ade80", sz: 10 })
+            g.particles.push({ x: g.W/2, y: GH/2 + 6, vx: 0, vy: -0.3, life: 3.0, glyph: `+500 ${bx.name} DEFEATED`, col: "#facc15", sz: 10 })
+            if (noReg) g.particles.push({ x: g.W/2, y: GH/2 + 22, vx: 0, vy: -0.22, life: 2.8, glyph: "+300 CARRIER INTACT", col: "#4ade80", sz: 10 })
             // Next sector preview
             const nextSector = lvl + 1
             const nextBoss = BOSSES[nextSector - 1]
             if (nextBoss) {
-              g.particles.push({ x: g.W/2, y: GH/2 + (noReg ? 38 : 22), vx: 0, vy: -0.25, life: 1.8, glyph: `SECTOR ${nextSector} · ${nextBoss.name}`, col: "rgba(150,107,236,0.6)", sz: 9 })
+              g.particles.push({ x: g.W/2, y: GH/2 + (noReg ? 38 : 22), vx: 0, vy: -0.18, life: 2.5, glyph: `SECTOR ${nextSector} · ${nextBoss.name}`, col: "rgba(150,107,236,0.6)", sz: 9 })
             }
             // Extra boss dead fanfare for later sectors
             if (lvl >= 2) setTimeout(() => sfx.bossDead(), 350)
             if (lvl >= 3) setTimeout(() => sfx.bossDead(), 700)
-            g.sectorClearAt = now + 1800
+            g.sectorClearAt = now + 3500
           }
           setLevel(g.level); setScore(g.score); setLives(g.lives)
           pendingCapyRef.current = CAPY_DIALOG[lvl - 1] || ["You made it.", "Keep shipping."]
@@ -2304,8 +2311,11 @@ function applyPowerup(g: GState, word: Word, now: number) {
 }
 
 function spawnParticles(g: GState, x: number, y: number, col: string, glyph: string, n: number) {
-  for (let i = 0; i < n; i++)
-    g.particles.push({ x, y, vx: (Math.random()-0.5)*10, vy: (Math.random()-0.5)*8-2, life: 1, glyph, col })
+  for (let i = 0; i < n; i++) {
+    const lf = 2.5 + Math.random() * 1.0
+    g.particles.push({ x, y, vx: (Math.random()-0.5)*4, vy: (Math.random()-0.5)*3.5-1,
+      life: lf, initLife: lf, glyph, col, rot: (Math.random()-0.5)*2, rotV: (Math.random()-0.5)*0.06 })
+  }
 }
 
 function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number) {
