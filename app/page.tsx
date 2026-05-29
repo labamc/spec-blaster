@@ -331,7 +331,7 @@ interface GState {
   bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null; maxCombo: number; lastStorm: number
   paused: boolean; lastMilestone: number; livesAtWave: number; py: number; storyStreak: number
   lastLifeRegen: number; lastAutoFire: number; firstKill: boolean
-  redFlash: number; whiteFlash: number; lastMiniAt: number
+  redFlash: number; whiteFlash: number; accentFlash: number; accentFlashCol: string; lastMiniAt: number
   pb: number; pbShown: boolean; shotsFired: number
   activeAgents: string[]; endlessWave: number; secUnlockTriggered: boolean
   agentUpgrades: Record<string,number>; agentSectorRevived: boolean
@@ -366,7 +366,7 @@ function initState(W: number): GState {
     bossWarn: null, mouseX: -1, waveAnn: null, maxCombo: 1, lastStorm: 0,
     paused: false, lastMilestone: 0, livesAtWave: MAX_LIVES, py: PLAYER_Y, storyStreak: 0,
     lastLifeRegen: 0, lastAutoFire: 0, firstKill: false,
-    redFlash: 0, whiteFlash: 0, lastMiniAt: 0,
+    redFlash: 0, whiteFlash: 0, accentFlash: 0, accentFlashCol: "#ffffff", lastMiniAt: 0,
     pb: 0, pbShown: false, shotsFired: 0,
     activeAgents: [], endlessWave: 0, secUnlockTriggered: false,
     agentUpgrades: {}, agentSectorRevived: false,
@@ -632,6 +632,7 @@ export default function HomePage() {
         g.bg.forEach(b => { b.y += b.vy * 0.5; if (b.y > GH + 10) { b.y = -10; b.x = Math.random() * g.W } })
         if (g.whiteFlash > 0) g.whiteFlash--
         if (g.redFlash > 0) g.redFlash--
+        if (g.accentFlash > 0) g.accentFlash--
         if (g.shake > 0) g.shake--
         draw(ctx, g, canvas.width, now, false)
         if (now >= g.sectorClearAt) {
@@ -1434,12 +1435,12 @@ export default function HomePage() {
             if (g.combo === 3 || g.combo === 5 || g.combo === 10 || g.combo === 15 || g.combo === 20 || g.combo === 25 || g.combo === 30) {
               sfx.combo(g.combo)
               if (g.combo === 5)  { showCapyMsg(g, "Five x.\nThe Signal amplifies.", now); g.shake = 3 }
-              if (g.combo === 10) { showCapyMsg(g, "Ten x.\nPure coherence.", now); g.shake = 6; g.whiteFlash = 4 }
-              if (g.combo === 15) { showCapyMsg(g, "Fifteen x.\nUnstoppable signal.", now); g.shake = 8; g.whiteFlash = 6 }
-              if (g.combo === 20) { showCapyMsg(g, "TWENTY.\nThe Signal is infinite.", now); g.shake = 12; g.whiteFlash = 10 }
+              if (g.combo === 10) { showCapyMsg(g, "Ten x.\nPure coherence.", now); g.shake = 6; g.accentFlash = 14; g.accentFlashCol = "#fb923c" }
+              if (g.combo === 15) { showCapyMsg(g, "Fifteen x.\nUnstoppable signal.", now); g.shake = 9; g.accentFlash = 18; g.accentFlashCol = "#c4b5fd" }
+              if (g.combo === 20) { showCapyMsg(g, "TWENTY.\nThe Signal is infinite.", now); g.shake = 14; g.accentFlash = 24; g.accentFlashCol = "#facc15" }
               if (g.combo === 25) {
                 showCapyMsg(g, "TWENTY-FIVE.\nThe noise is dissolving.", now)
-                g.shake = 16; g.whiteFlash = 14
+                g.shake = 18; g.accentFlash = 28; g.accentFlashCol = "#facc15"
                 for (let ri = 0; ri < 24; ri++) {
                   const a = (ri / 24) * Math.PI * 2
                   g.particles.push({ x: g.px, y: g.py, vx: Math.cos(a)*12, vy: Math.sin(a)*12, life: 1.2, glyph: "★", col: "#facc15" })
@@ -1447,7 +1448,7 @@ export default function HomePage() {
               }
               if (g.combo === 30) {
                 showCapyMsg(g, "THIRTY.\nYou are becoming The Signal.", now)
-                g.shake = 22; g.whiteFlash = 18
+                g.shake = 24; g.accentFlash = 32; g.accentFlashCol = "#facc15"
                 for (let ri = 0; ri < 36; ri++) {
                   const a = (ri / 36) * Math.PI * 2
                   const spd = 8 + Math.random() * 8
@@ -2396,6 +2397,10 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.globalAlpha = g.whiteFlash * 0.035; ctx.fillStyle = "#ffffff"
     ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1; g.whiteFlash--
   }
+  if (g.accentFlash > 0) {
+    ctx.globalAlpha = g.accentFlash * 0.028; ctx.fillStyle = g.accentFlashCol
+    ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1; g.accentFlash--
+  }
   // RETROSPECTIVE: subtle time-freeze blue wash
   if (!attractMode && g.retroEnd > 0 && now < g.retroEnd) {
     const retroFade = Math.min(1, (g.retroEnd - now) / 1200)
@@ -2422,6 +2427,33 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
         eg2.addColorStop(0, `rgba(${br},${bg2},${bb},${edgeA})`)
         eg2.addColorStop(1, `rgba(${br},${bg2},${bb},0)`)
         ctx.fillStyle = eg2; ctx.fillRect(cw - 32, 0, 32, GH)
+      } catch {}
+    }
+  }
+
+  // Chain aura: glowing screen edges that escalate with active combo level
+  if (!attractMode && g.combo >= 8) {
+    const chainAge = Math.min(1, Math.max(0, 1300 - (now - g.lastKill)) / 1300)
+    const chainStr = Math.min(1, (g.combo - 7) / 15) * chainAge
+    if (chainStr > 0.01) {
+      const chainRgb = g.combo >= 20 ? "250,204,21" : g.combo >= 12 ? "251,146,60" : "196,181,253"
+      const pulse = 0.7 + 0.3 * Math.abs(Math.sin(now / 120))
+      const edgeA = chainStr * pulse * 0.26
+      try {
+        const eg = ctx.createLinearGradient(0, 0, 50, 0)
+        eg.addColorStop(0, `rgba(${chainRgb},${edgeA})`); eg.addColorStop(1, `rgba(${chainRgb},0)`)
+        ctx.fillStyle = eg; ctx.fillRect(0, 0, 50, GH)
+        const eg2 = ctx.createLinearGradient(cw, 0, cw - 50, 0)
+        eg2.addColorStop(0, `rgba(${chainRgb},${edgeA})`); eg2.addColorStop(1, `rgba(${chainRgb},0)`)
+        ctx.fillStyle = eg2; ctx.fillRect(cw - 50, 0, 50, GH)
+        if (g.combo >= 15) {
+          const eg3 = ctx.createLinearGradient(0, 0, 0, 44)
+          eg3.addColorStop(0, `rgba(${chainRgb},${edgeA * 0.7})`); eg3.addColorStop(1, `rgba(${chainRgb},0)`)
+          ctx.fillStyle = eg3; ctx.fillRect(0, 0, cw, 44)
+          const eg4 = ctx.createLinearGradient(0, GH, 0, GH - 44)
+          eg4.addColorStop(0, `rgba(${chainRgb},${edgeA * 0.7})`); eg4.addColorStop(1, `rgba(${chainRgb},0)`)
+          ctx.fillStyle = eg4; ctx.fillRect(0, GH - 44, cw, 44)
+        }
       } catch {}
     }
   }
