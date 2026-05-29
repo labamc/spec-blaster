@@ -295,13 +295,21 @@ const MINI_BOSSES = [
 
 const CAPY_DIALOG = [
   // After Sector 1 — THE RECURSION cleared
-  ["SECTOR 1 · CLEAR.\nRecursion loop severed.\nThe stack is clean.\nNext: THE DRIFT."],
+  [
+    "THE RECURSION · SEVERED.\n\nThe loop had no exit condition.\nYou wrote one.\n\nSignal integrity: restored.\nStack: clean.\nDepth: increasing.",
+  ],
   // After Sector 2 — THE DRIFT cleared
-  ["SECTOR 2 · CLEAR.\nDrift contained. Meaning restored.\nNext: THE FRAGMENT."],
+  [
+    "THE DRIFT · CONTAINED.\n\nLanguage was dissolving.\nYou held the meaning\nlong enough to matter.\n\nCoherence: nominal.\nSemantic anchor: holding.",
+  ],
   // After Sector 3 — THE FRAGMENT cleared
-  ["SECTOR 3 · CLEAR.\nFragmentation resolved.\nOne collapse remains: THE COLLAPSE."],
+  [
+    "THE FRAGMENT · RESOLVED.\n\nEvery shard found.\nEvery split reintegrated.\nThe pattern is whole.\n\nOne sector remains.\nThis is what you came for.",
+  ],
   // After Sector 4 — THE COLLAPSE cleared
-  ["THE COLLAPSE · RESOLVED.\nFour sectors. All dissolved.\nInfinite recursion begins."],
+  [
+    "THE COLLAPSE · SURVIVED.\n\nFour sectors of noise.\nFour terminal threats.\nAll dissolved by signal.\n\nYou didn't just survive —\nyou maintained coherence\nthrough the collapse itself.\n\nInfinite recursion: unlocked.",
+  ],
 ]
 
 // ── AI Agents ──────────────────────────────────────────────────────────────
@@ -423,7 +431,7 @@ interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: bo
 interface Mine      { x: number; y: number; age: number; armAt: number }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number; gravity?: number; friction?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
-interface Boss      { x: number; y: number; hp: number; maxHp: number; name: string; color: string; dir: number; t: number; phase: number; raged: boolean; halfTriggered: boolean }
+interface Boss      { x: number; y: number; hp: number; maxHp: number; name: string; color: string; dir: number; t: number; phase: number; raged: boolean; halfTriggered: boolean; hitFlash?: number }
 interface BossWarn  { name: string; color: string; t: number; letters: Array<{ ch: string; x: number; y: number; tx: number; ty: number }> }
 interface WaveAnn   { text: string; t: number }
 interface GState {
@@ -791,7 +799,15 @@ export default function HomePage() {
       }
 
       // combo decay
-      if (now - g.lastKill > 1300 && g.combo > 1) g.combo = 1
+      if (now - g.lastKill > 1300 && g.combo > 1) {
+        // Chain break feedback — only if combo was meaningful
+        if (g.combo >= 8) {
+          const breakCol = g.combo >= 20 ? "#facc15" : g.combo >= 10 ? "#fb923c" : "#7dd3fc"
+          g.particles.push({ x: g.px, y: g.py - 22, vx: 0, vy: -0.6, life: 1.1,
+            glyph: `×${g.combo} CHAIN BROKEN`, col: `${breakCol}88`, sz: 9 })
+        }
+        g.combo = 1
+      }
       if (g.combo > g.maxCombo) g.maxCombo = g.combo
 
       // ambient drone pitch — each state has a distinct, tuned frequency
@@ -1360,6 +1376,7 @@ export default function HomePage() {
           if (b.x > g.W - 50 || b.x < 50) b.dir *= -1
         }
         b.t++
+        if (b.hitFlash && b.hitFlash > 0) b.hitFlash--
         // Phase 6 (THE VOID) has its own custom firing below — skip the generic shoot interval
         if (b.phase !== 6) {
           const si = Math.round((b.phase >= 5 ? 65 : (BOSSES[Math.min(g.level - 1, BOSSES.length - 1)]?.shootInterval ?? 60)) / rageMul)
@@ -1540,6 +1557,15 @@ export default function HomePage() {
         }
         // THE DRIFT: bullets accelerate sideways over time
         if (b.drift && b.enemy) b.vx = (b.vx ?? 0) + b.drift
+        // Near-miss spark: enemy bullet passed close to player without hitting
+        if (b.enemy && !g.invuln && b.y > g.py - 2 && b.y <= g.py + 6) {
+          const nearDx = Math.abs(b.x - g.px)
+          if (nearDx >= 14 && nearDx < 34) {
+            const missDir = b.x > g.px ? 1 : -1
+            g.particles.push({ x: b.x, y: b.y, vx: missDir * 3 + (Math.random()-0.5), vy: -1.5 - Math.random(), life: 0.35, glyph: "·", col: b.col ?? "#f87171" })
+            g.particles.push({ x: b.x, y: b.y, vx: missDir * 1.5, vy: -0.8, life: 0.25, glyph: "×", col: b.col ?? "#f87171" })
+          }
+        }
         if (b.cluster) return b.y < GH + 10 && b.y > -10 && b.x > -10 && b.x < g.W + 10
         return b.enemy ? b.y < GH + 10 : b.y > -10
       })
@@ -1640,12 +1666,12 @@ export default function HomePage() {
             }
             if (g.combo === 3 || g.combo === 5 || g.combo === 10 || g.combo === 15 || g.combo === 20 || g.combo === 25 || g.combo === 30) {
               sfx.combo(g.combo)
-              if (g.combo === 5)  { showCapyMsg(g, "Five x.\nThe Signal amplifies.", now); g.shake = 3 }
-              if (g.combo === 10) { showCapyMsg(g, "Ten x.\nPure coherence.", now); g.shake = 6; g.accentFlash = 14; g.accentFlashCol = "#fb923c" }
-              if (g.combo === 15) { showCapyMsg(g, "Fifteen x.\nUnstoppable signal.", now); g.shake = 9; g.accentFlash = 18; g.accentFlashCol = "#c4b5fd" }
-              if (g.combo === 20) { showCapyMsg(g, "TWENTY.\nThe Signal is infinite.", now); g.shake = 14; g.accentFlash = 24; g.accentFlashCol = "#facc15" }
+              if (g.combo === 5)  { showCapyMsg(g, "Chain x5.\nSignal is resonating.", now); g.shake = 3 }
+              if (g.combo === 10) { showCapyMsg(g, "Chain x10.\nThe noise breaks apart.", now); g.shake = 6; g.accentFlash = 14; g.accentFlashCol = "#fb923c" }
+              if (g.combo === 15) { showCapyMsg(g, "Chain x15.\nCoherence: maximum.", now); g.shake = 9; g.accentFlash = 18; g.accentFlashCol = "#c4b5fd" }
+              if (g.combo === 20) { showCapyMsg(g, "Chain x20.\nYou are the signal now.", now); g.shake = 14; g.accentFlash = 24; g.accentFlashCol = "#facc15" }
               if (g.combo === 25) {
-                showCapyMsg(g, "TWENTY-FIVE.\nThe noise is dissolving.", now)
+                showCapyMsg(g, "Chain x25.\nThe noise has no hold here.", now)
                 g.shake = 18; g.accentFlash = 28; g.accentFlashCol = "#facc15"
                 for (let ri = 0; ri < 24; ri++) {
                   const a = (ri / 24) * Math.PI * 2
@@ -1653,7 +1679,7 @@ export default function HomePage() {
                 }
               }
               if (g.combo === 30) {
-                showCapyMsg(g, "THIRTY.\nYou are becoming The Signal.", now)
+                showCapyMsg(g, "Chain x30.\nYou ARE The Signal.", now)
                 g.shake = 24; g.accentFlash = 32; g.accentFlashCol = "#facc15"
                 for (let ri = 0; ri < 36; ri++) {
                   const a = (ri / 36) * Math.PI * 2
@@ -1763,6 +1789,7 @@ export default function HomePage() {
           if (Math.abs(b.x - bx.x) < 50 && Math.abs(b.y - bx.y) < 28) {
             const dmg = g.upgrades.code_review ? 2 : 1
             bx.hp -= dmg; g.score += 5
+            bx.hitFlash = (bx.hitFlash ?? 0) + 5  // brief white flash on each hit
             g.bullets.splice(i, 1)
             sfx.bossHit()
             spawnParticles(g, bx.x + (Math.random()-0.5)*40, bx.y, bx.color, "✦", 4)
@@ -1851,8 +1878,29 @@ export default function HomePage() {
         sfx.bossDead()
         g.shake = 32 + g.level * 4         // heavy sustained shake
         g.accentFlash = 70; g.accentFlashCol = bx.color  // ~1.2s of boss-color flash
-        // Core burst — generous count
-        spawnParticles(g, bx.x, bx.y, bx.color, "★", g.endless ? 45 : 70)
+        // Boss-specific death glyphs — each boss scatters its own identity
+        const bossDeathGlyphs: Record<string, string[]> = {
+          "THE RECURSION": ["⊗", "∞", "→", "⊗", "→", "∞"],
+          "THE DRIFT":     ["~", "≈", "~", "∿", "≈", "~"],
+          "THE FRAGMENT":  ["⌁", "⋈", "⌁", "·", "⋈", "⌁"],
+          "THE COLLAPSE":  ["◈", "▽", "×", "◈", "▼", "×"],
+        }
+        const deathGlyphs = bossDeathGlyphs[bx.name] ?? ["✦", "×", "·", "★", "◇", "✦"]
+
+        // Core burst — with boss-specific glyphs
+        const burstCount = g.endless ? 45 : 70
+        for (let bi = 0; bi < burstCount; bi++) {
+          const a = (bi / burstCount) * Math.PI * 2
+          const spd = 0.8 + Math.random() * 3.5
+          g.particles.push({
+            x: bx.x + (Math.random()-0.5) * 20, y: bx.y + (Math.random()-0.5) * 16,
+            vx: Math.cos(a) * spd, vy: Math.sin(a) * spd - 0.5,
+            life: 0.6 + Math.random() * 0.5, glyph: deathGlyphs[bi % deathGlyphs.length],
+            col: bi % 3 === 0 ? "#fbbf24" : bi % 3 === 1 ? bx.color : "#fde68a",
+            rot: Math.random() * Math.PI * 2, rotV: (Math.random()-0.5) * 0.08,
+            gravity: 0.04, friction: 0.97,
+          })
+        }
         // Four expanding rings — long-lived, staggered timing
         for (let ri = 0; ri < 4; ri++) {
           g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0,
@@ -1877,20 +1925,14 @@ export default function HomePage() {
             friction: 0.99,
           })
         })
-        // Debris sparks — 50 of them, spread wide, long enough to feel raining down
-        for (let di = 0; di < 50; di++) {
-          const vx2 = (Math.random() - 0.5) * 7
-          const vy2 = (Math.random() - 0.5) * 4 + 0.5        // biased downward
-          const lf2 = 0.7 + Math.random() * 0.7              // 0.7–1.4
-          g.particles.push({
-            x: bx.x + (Math.random() - 0.5) * 48,
-            y: bx.y + (Math.random() - 0.5) * 20,
-            vx: vx2, vy: vy2,
-            life: lf2, initLife: lf2,
-            glyph: di % 4 === 0 ? "✦" : di % 4 === 1 ? "×" : "·",
-            col: di % 3 === 0 ? "#fbbf24" : di % 3 === 1 ? bx.color : "#fde68a",
-            rot: 0, rotV: 0, gravity: 0.05, friction: 0.97,
-          })
+        // Extra boss-emblem glyph burst from center — big and fleeting
+        const emblem = (deathGlyphs[0])
+        for (let ei = 0; ei < 8; ei++) {
+          const ea = (ei / 8) * Math.PI * 2
+          g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(ea) * (5 + Math.random()*5), vy: Math.sin(ea) * (5 + Math.random()*5) - 1,
+            life: 0.9 + Math.random() * 0.4, glyph: emblem, col: bx.color,
+            rot: Math.random() * Math.PI * 2, rotV: (Math.random()-0.5) * 0.12,
+            gravity: 0.025, friction: 0.96 })
         }
         g.boss = null; g.mines = [] // clear mines on boss death
         if (g.endless) {
@@ -3033,11 +3075,21 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
         : w.type === "powerup"       ? "rgba(74,222,128,0.10)"
         : "rgba(8,8,18,0.55)"
       roundRect(ctx, boxX2, boxY2, bwBox, boxH2, 3); ctx.fill()
-      ctx.strokeStyle = flashRed     ? "rgba(253,230,138,0.55)"
+      // Danger proximity: words near the bottom get a red-pulse border
+      const dangerFrac = w.type !== "powerup" && !w.fragment
+        ? Math.max(0, Math.min(1, (w.y - (GH - 90)) / 60))
+        : 0
+      const dangerPulse = dangerFrac * (0.5 + 0.5 * Math.sin(now / 110))
+      ctx.strokeStyle = dangerFrac > 0.3
+        ? `rgba(248,113,113,${0.35 + dangerPulse * 0.6})`
+        : flashRed     ? "rgba(253,230,138,0.55)"
         : w.type === "bug"           ? "rgba(249,115,22,0.45)"
         : w.type === "powerup"       ? "rgba(74,222,128,0.45)"
         : `${curSectorTheme.storyCol}22`   // subtle sector-tinted border
-      ctx.lineWidth = 0.8
+      if (dangerFrac > 0.3) {
+        ctx.shadowColor = "#f87171"; ctx.shadowBlur = dangerPulse * 12
+      }
+      ctx.lineWidth = dangerFrac > 0.5 ? 1.2 : 0.8
       roundRect(ctx, boxX2, boxY2, bwBox, boxH2, 3); ctx.stroke()
       ctx.lineWidth = 1
       // BUG badge — small pill above top-left corner
@@ -3202,13 +3254,21 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       const glowColor = b.raged ? `rgba(255,180,180,${0.6 + 0.4 * Math.sin(now / 60)})` : b.color
       // transparent card — canvas bg shows through, only border glows
       ctx.save()
-      ctx.shadowColor = glowColor; ctx.shadowBlur = (distress || b.raged ? 35 : 20) * pulse
-      ctx.strokeStyle = glowColor; ctx.lineWidth = distress || b.raged ? 2.5 : 1.8
+      const hitFrac = b.hitFlash ? b.hitFlash / 5 : 0
+      const strokeColor = hitFrac > 0
+        ? `rgba(255,255,255,${0.5 + hitFrac * 0.5})`
+        : glowColor
+      ctx.shadowColor = hitFrac > 0 ? "#ffffff" : glowColor
+      ctx.shadowBlur = hitFrac > 0
+        ? 28 + hitFrac * 22
+        : (distress || b.raged ? 35 : 20) * pulse
+      ctx.strokeStyle = strokeColor
+      ctx.lineWidth = hitFrac > 0 ? 2.8 : (distress || b.raged ? 2.5 : 1.8)
       roundRect(ctx, b.x - 50, b.y - 28, 100, 56, 8); ctx.stroke()
       ctx.restore()
       // Boss emblem — unique visual identity per boss
       ctx.save()
-      ctx.globalAlpha = (0.22 + 0.12 * Math.sin(now / 220)) * (distress ? 0.6 : 1)
+      ctx.globalAlpha = (0.35 + 0.15 * Math.sin(now / 220)) * (distress ? 0.7 : 1)
       ctx.fillStyle = b.color; ctx.textAlign = "center"
       if (b.name === "THE RECURSION") {
         // Spinning recursion symbol
@@ -3372,28 +3432,106 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
         ctx.restore()
       }
     } else {
-      // enemy bullet with fade trail — colored by boss that spawned it
+      // enemy bullet — semantic corruption visual, styled per boss signature
       const eCol = b.col ?? "#f87171"
       ctx.save()
-      ctx.shadowColor = eCol; ctx.shadowBlur = 5
-      ctx.globalAlpha = 0.2; ctx.fillStyle = eCol
-      ctx.beginPath(); ctx.arc(b.x, b.y - 8, 3, 0, Math.PI*2); ctx.fill()
-      ctx.globalAlpha = 0.08
-      ctx.beginPath(); ctx.arc(b.x, b.y - 16, 2, 0, Math.PI*2); ctx.fill()
-      ctx.globalAlpha = 1; ctx.fillStyle = eCol
-      // bounce bullet: diamond shape instead of circle
+      ctx.shadowColor = eCol; ctx.shadowBlur = 10
+
       if (b.bounce) {
-        ctx.beginPath(); ctx.moveTo(b.x, b.y - 5); ctx.lineTo(b.x + 4, b.y); ctx.lineTo(b.x, b.y + 5); ctx.lineTo(b.x - 4, b.y); ctx.closePath(); ctx.fill()
-        ctx.globalAlpha = 0.45; ctx.strokeStyle = eCol; ctx.lineWidth = 1
-        ctx.beginPath(); ctx.arc(b.x, b.y, 8, 0, Math.PI * 2); ctx.stroke()
+        // THE RECURSION: recursive spinning ring — it ricochets and loops
+        const ang = now / 200
+        ctx.strokeStyle = eCol; ctx.lineWidth = 1.5
+        // outer orbit ring
+        ctx.globalAlpha = 0.28
+        ctx.beginPath(); ctx.arc(b.x, b.y, 10, 0, Math.PI * 2); ctx.stroke()
+        // spinning inner ring
+        ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(ang)
+        ctx.globalAlpha = 0.85; ctx.lineWidth = 1.8
+        ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.stroke()
+        // axis cross
+        ctx.globalAlpha = 0.45; ctx.lineWidth = 1
+        ctx.beginPath(); ctx.moveTo(-5, 0); ctx.lineTo(5, 0); ctx.moveTo(0, -5); ctx.lineTo(0, 5); ctx.stroke()
+        ctx.restore()
+        // hot core dot
+        ctx.globalAlpha = 1; ctx.fillStyle = eCol
+        ctx.beginPath(); ctx.arc(b.x, b.y, 2, 0, Math.PI * 2); ctx.fill()
+        // fade trail
+        ctx.globalAlpha = 0.2; ctx.fillStyle = eCol
+        ctx.beginPath(); ctx.arc(b.x, b.y - 11, 3, 0, Math.PI * 2); ctx.fill()
+        ctx.globalAlpha = 0.08
+        ctx.beginPath(); ctx.arc(b.x, b.y - 20, 1.8, 0, Math.PI * 2); ctx.fill()
+
       } else if (b.splitAt) {
-        // split bullet: wider, with a tiny "fork" glyph below
-        ctx.beginPath(); ctx.arc(b.x, b.y, 5, 0, Math.PI*2); ctx.fill()
-        ctx.globalAlpha = 0.5; ctx.font = "7px monospace"; ctx.textAlign = "center"
-        ctx.fillText("⋎", b.x, b.y + 14)
+        // THE FRAGMENT: jagged sharded shape — you can see it wants to break apart
+        ctx.fillStyle = eCol; ctx.globalAlpha = 0.9
+        // irregular hexagon with notch
+        ctx.beginPath()
+        ctx.moveTo(b.x,      b.y - 7)
+        ctx.lineTo(b.x + 3,  b.y - 3)
+        ctx.lineTo(b.x + 6,  b.y + 1)
+        ctx.lineTo(b.x + 2,  b.y + 5)
+        ctx.lineTo(b.x - 2,  b.y + 5)
+        ctx.lineTo(b.x - 6,  b.y + 1)
+        ctx.lineTo(b.x - 3,  b.y - 3)
+        ctx.closePath(); ctx.fill()
+        // fork glyph — where it's going to split
+        ctx.globalAlpha = 0.6; ctx.font = "8px monospace"; ctx.textAlign = "center"
+        ctx.fillStyle = eCol; ctx.fillText("⋎", b.x, b.y + 17)
+        // shard ghost trail
+        ctx.globalAlpha = 0.18; ctx.fillStyle = eCol
+        ctx.beginPath(); ctx.arc(b.x, b.y - 11, 3.5, 0, Math.PI * 2); ctx.fill()
+        ctx.globalAlpha = 0.07
+        ctx.beginPath(); ctx.arc(b.x, b.y - 20, 2, 0, Math.PI * 2); ctx.fill()
+
+      } else if (b.drift !== undefined) {
+        // THE DRIFT: wavy oscillating teardrop — accelerates sideways
+        const dWave = Math.sin(now / 110 + b.x * 0.05) * 2
+        ctx.fillStyle = eCol; ctx.globalAlpha = 0.88
+        ctx.beginPath()
+        ctx.ellipse(b.x + dWave, b.y, 3, 5.5, 0, 0, Math.PI * 2)
+        ctx.fill()
+        // horizontal shimmer — shows the lateral drift
+        ctx.globalAlpha = 0.3; ctx.strokeStyle = eCol; ctx.lineWidth = 0.9
+        ctx.beginPath()
+        ctx.moveTo(b.x - 12 + dWave, b.y); ctx.lineTo(b.x + 12 + dWave, b.y)
+        ctx.stroke()
+        // wavy trail
+        ctx.globalAlpha = 0.2; ctx.fillStyle = eCol
+        ctx.beginPath(); ctx.arc(b.x, b.y - 10, 2.5, 0, Math.PI * 2); ctx.fill()
+        ctx.globalAlpha = 0.07
+        ctx.beginPath(); ctx.arc(b.x, b.y - 19, 1.5, 0, Math.PI * 2); ctx.fill()
+
+      } else if (eCol === "#4ade80") {
+        // THE COLLAPSE: converging crosshair — targeted, precise, inevitable
+        const pls = 0.6 + 0.4 * Math.abs(Math.sin(now / 160))
+        ctx.strokeStyle = eCol; ctx.lineWidth = 1.3
+        const cs = 5
+        ctx.globalAlpha = 0.9
+        ctx.beginPath()
+        ctx.moveTo(b.x - cs, b.y); ctx.lineTo(b.x + cs, b.y)
+        ctx.moveTo(b.x, b.y - cs); ctx.lineTo(b.x, b.y + cs)
+        ctx.stroke()
+        ctx.globalAlpha = 0.4 * pls; ctx.lineWidth = 0.8
+        ctx.beginPath(); ctx.arc(b.x, b.y, 8, 0, Math.PI * 2); ctx.stroke()
+        ctx.globalAlpha = 0.95; ctx.fillStyle = eCol
+        ctx.beginPath(); ctx.arc(b.x, b.y, 2.5, 0, Math.PI * 2); ctx.fill()
+        // trail
+        ctx.globalAlpha = 0.2; ctx.fillStyle = eCol
+        ctx.beginPath(); ctx.arc(b.x, b.y - 10, 2.5, 0, Math.PI * 2); ctx.fill()
+        ctx.globalAlpha = 0.07
+        ctx.beginPath(); ctx.arc(b.x, b.y - 19, 1.5, 0, Math.PI * 2); ctx.fill()
+
       } else {
-        ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2); ctx.fill()
+        // Generic enemy bullet — mini-bosses and phase 5/6 void shots
+        ctx.shadowBlur = 7
+        ctx.globalAlpha = 0.2; ctx.fillStyle = eCol
+        ctx.beginPath(); ctx.arc(b.x, b.y - 9, 3, 0, Math.PI * 2); ctx.fill()
+        ctx.globalAlpha = 0.08
+        ctx.beginPath(); ctx.arc(b.x, b.y - 18, 2, 0, Math.PI * 2); ctx.fill()
+        ctx.globalAlpha = 1; ctx.fillStyle = eCol
+        ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI * 2); ctx.fill()
       }
+
       ctx.restore()
     }
   })
@@ -3710,9 +3848,25 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   if (g.boss) {
     const bHpPct = g.boss.hp / g.boss.maxHp
     const bBarCol = bHpPct > 0.5 ? g.boss.color : bHpPct > 0.25 ? "#facc15" : "#f87171"
-    ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.fillRect(0, 0, cw, 4)
-    ctx.save(); ctx.shadowColor = bBarCol; ctx.shadowBlur = 5
-    ctx.fillStyle = bBarCol; ctx.fillRect(0, 0, cw * Math.max(0, bHpPct), 4)
+    const bBarH = 5
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 0, cw, bBarH)
+    // HP fill with glow
+    ctx.save()
+    ctx.shadowColor = bBarCol; ctx.shadowBlur = bHpPct < 0.3 ? 8 + 4 * Math.abs(Math.sin(now / 80)) : 5
+    ctx.fillStyle = bBarCol
+    ctx.fillRect(0, 0, cw * Math.max(0, bHpPct), bBarH)
+    // Bright leading edge (the "front" of the HP bar)
+    if (bHpPct > 0.01) {
+      const edgeX = cw * bHpPct
+      ctx.globalAlpha = 0.7 + 0.3 * Math.sin(now / 60)
+      ctx.fillStyle = "#ffffff"
+      ctx.fillRect(edgeX - 2, 0, 2, bBarH)
+    }
+    ctx.restore()
+    // Midpoint marker at 50%
+    ctx.save()
+    ctx.globalAlpha = 0.3; ctx.fillStyle = "rgba(0,0,0,0.8)"
+    ctx.fillRect(cw * 0.5 - 0.5, 0, 1, bBarH)
     ctx.restore()
   }
 
@@ -4518,58 +4672,67 @@ function CapyScreen({ text, lineNum, totalLines, level, onAdvance }: {
     return () => clearTimeout(id)
   }, [done]) // eslint-disable-line
 
-  const nextBoss  = level <= 4 ? BOSSES[level - 1] : null
-  const isFinale  = level > 4
+  const nextBoss   = level <= 4 ? BOSSES[level - 1] : null
+  const clearedBoss = BOSSES[Math.min(level - 2, BOSSES.length - 1)]
+  const isFinale   = level > 4
+  const borderCol  = clearedBoss ? `${clearedBoss.color}55` : "rgba(150,107,236,0.4)"
+  const headerCol  = clearedBoss ? clearedBoss.color : "#966bec"
 
   return (
     <div onClick={handleAdvance}
       style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center",
-        background:"rgba(8,8,15,0.97)", cursor:"pointer", zIndex:10 }}>
-      <div style={{ maxWidth:"380px", width:"100%", padding:"1.5rem", textAlign:"center" }}>
+        background:"rgba(5,5,12,0.98)", cursor:"pointer", zIndex:10 }}>
+      <div style={{ maxWidth:"400px", width:"100%", padding:"1.5rem", textAlign:"center" }}>
 
-        {/* Capybara + sector indicator */}
-        <div style={{ marginBottom:"1rem" }}>
-          <div style={{ fontSize:"2.6rem", marginBottom:"0.5rem" }}>🦫</div>
-          <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.57rem", fontFamily:"monospace",
-            letterSpacing:"0.28em", margin:0 }}>
-            {lineNum + 1} / {totalLines}
+        {/* Transmission header */}
+        <div style={{ marginBottom:"0.9rem" }}>
+          <p style={{ color:`${headerCol}90`, fontSize:"0.52rem", fontFamily:"monospace",
+            letterSpacing:"0.35em", margin:"0 0 0.4rem", textTransform:"uppercase" }}>
+            ·· signal transmission ··
+          </p>
+          <div style={{ fontSize:"2.2rem", marginBottom:"0.35rem", filter:`drop-shadow(0 0 8px ${headerCol})` }}>
+            🦫
+          </div>
+          {clearedBoss && (
+            <p style={{ color:clearedBoss.color, fontSize:"0.58rem", fontFamily:"monospace",
+              letterSpacing:"0.2em", margin:0, opacity:0.8 }}>
+              {clearedBoss.name} · SECTOR {level - 1}
+            </p>
+          )}
+        </div>
+
+        {/* Dialog box */}
+        <div style={{ background:"rgba(8,8,18,0.95)", border:`1px solid ${borderCol}`,
+            borderRadius:"8px", padding:"1.3rem 1.6rem", marginBottom:"1rem",
+            boxShadow:`0 0 18px ${borderCol}40`,
+            display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <p style={{ color:"rgba(240,240,255,0.92)", fontSize:"0.86rem", lineHeight:1.9, margin:0,
+            whiteSpace:"pre-line", textAlign:"left", fontFamily:"monospace" }}>
+            {displayed}
+            {!done && <span className="cursor-blink">|</span>}
           </p>
         </div>
 
-        {/* Dialog box — border tinted with next boss color */}
-        {(() => {
-          // Use the CURRENT boss color (sector just cleared) for the border tint
-          const clearedBoss = BOSSES[Math.min(level - 2, BOSSES.length - 1)]
-          const borderCol = clearedBoss ? `${clearedBoss.color}44` : "rgba(150,107,236,0.3)"
-          return (
-            <div className="capy-glow"
-              style={{ background:"#111118", border:`1px solid ${borderCol}`, borderRadius:"6px",
-                padding:"1.25rem 1.5rem", marginBottom:"1.1rem", minHeight:"4rem",
-                display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <p style={{ color:"#f5f5f5", fontSize:"0.92rem", lineHeight:1.8, margin:0,
-                whiteSpace:"pre-line", textAlign:"left" }}>
-                {displayed}
-                {!done && <span className="cursor-blink">|</span>}
-              </p>
-            </div>
-          )
-        })()}
-
         {/* Prompt + next sector hint */}
-        <p style={{ color: done ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.15)",
-          fontSize:"0.7rem", margin:"0 0 0.55rem", transition:"color 0.3s",
-          fontFamily:"monospace" }}>
-          {done ? "click to skip  ·  auto →" : "…"}
+        <p style={{ color: done ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.12)",
+          fontSize:"0.65rem", margin:"0 0 0.55rem", transition:"color 0.4s",
+          fontFamily:"monospace", letterSpacing:"0.05em" }}>
+          {done ? "[ click · space · enter ]" : "· · ·"}
         </p>
         {nextBoss && done && (
-          <p style={{ color: nextBoss.color, fontSize:"0.72rem", fontWeight:600,
-            fontFamily:"monospace", letterSpacing:"0.08em", margin:0 }}>
-            SECTOR {level} · {nextBoss.name}
-          </p>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:"0.5rem" }}>
+            <span style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.6rem", fontFamily:"monospace" }}>NEXT</span>
+            <span style={{ color: nextBoss.color, fontSize:"0.76rem", fontWeight:700,
+              fontFamily:"monospace", letterSpacing:"0.1em",
+              textShadow:`0 0 10px ${nextBoss.color}88` }}>
+              SECTOR {level} · {nextBoss.name}
+            </span>
+          </div>
         )}
         {isFinale && done && (
-          <p style={{ color:"#4ade80", fontSize:"0.72rem", fontWeight:600,
-            fontFamily:"monospace", letterSpacing:"0.1em", margin:0 }}>
+          <p style={{ color:"#4ade80", fontSize:"0.76rem", fontWeight:700,
+            fontFamily:"monospace", letterSpacing:"0.12em", margin:0,
+            textShadow:"0 0 12px #4ade8088" }}>
             ∞ INFINITE RECURSION
           </p>
         )}
