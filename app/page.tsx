@@ -870,9 +870,9 @@ export default function HomePage() {
           // claude_design scales: base 12% slower → lv2 20% → lv3 28%
           const designLv = g.activeAgents.includes("claude_design") ? 1 + (g.agentUpgrades.claude_design ?? 0) : 0
           const designMul = designLv >= 3 ? 0.72 : designLv >= 2 ? 0.80 : designLv >= 1 ? 0.88 : 1
-          // Speed: sector 1 ~1.65, sector 4 ~2.3, endless capped at 3.5
-          const rawSpd = (1.4 + g.level * 0.22 + (g.endless ? Math.floor(g.score / 1200) * 0.08 : 0))
-          const spd2 = Math.min(rawSpd, 3.5) * slowFactor * designMul
+          // Speed: sector 1 ~0.95, sector 4 ~1.5, endless capped at 2.2
+          const rawSpd = (0.8 + g.level * 0.14 + (g.endless ? Math.floor(g.score / 1200) * 0.05 : 0))
+          const spd2 = Math.min(rawSpd, 2.2) * slowFactor * designMul
           const br = Math.random()
           let beh: Behavior = "fall"
           if (type !== "powerup") {
@@ -898,7 +898,7 @@ export default function HomePage() {
         if (stormAt > g.lastStorm) {
           g.lastStorm = stormAt; g.shake = 6
           const slowFactor = Math.pow(0.85, g.upgrades.word_slow ?? 0)
-          const stormSpd = Math.min((1.5 + g.level * 0.25) * slowFactor, 3.2)
+          const stormSpd = Math.min((1.0 + g.level * 0.16) * slowFactor, 2.0)
           // Storm: 5 words capped to not exceed MAX_WORDS_ENDLESS
           const stormSlots = Math.max(0, MAX_WORDS_ENDLESS - g.words.filter(w => w.type !== "powerup" && !w.fragment).length)
           const stormCount = Math.min(5, stormSlots)
@@ -2335,28 +2335,28 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number)
   const isPow = word.type === "powerup"
   const col   = isBug ? "#fdba74" : isPow ? "#4ade80" : "#7dd3fc"
 
-  // Combo energy multiplier — higher combos = more explosive
-  const energy = 1 + Math.min(combo, 20) * 0.12
+  // Combo energy multiplier — higher combos = slightly more explosive, not wildly
+  const energy = 1 + Math.min(combo, 20) * 0.055
   const charW  = 6.8, totalW = chars.length * charW
 
-  // Letters blast apart — wide spread, big size, arc through air visibly
+  // Letters blast apart — moderate spread, arc visibly then fade
   chars.forEach((ch, i) => {
     const startX = word.x - totalW/2 + i*charW + charW/2
     const dx = startX - word.x
-    // Lateral: outward from center + random scatter, scaled by energy
-    const vxBase = dx * 0.40 + (Math.random()-0.5) * 7
-    // Vertical: upward burst — gravity will arc them back down visibly
-    const vyBase = -3 - Math.random() * 6
-    // Life 1.2–1.7s — long enough to see the arc, not so long they dominate
-    const lf = 1.2 + Math.random() * 0.5
+    // Lateral: gentle outward spread + small random scatter
+    const vxBase = dx * 0.22 + (Math.random()-0.5) * 2.8
+    // Vertical: short upward pop — gravity arcs them down within view
+    const vyBase = -1.2 - Math.random() * 2.2
+    // Life 1.3–1.8s — readable arc, not dominating the screen
+    const lf = 1.3 + Math.random() * 0.5
     g.particles.push({
       x: startX, y: word.y,
       vx: vxBase * energy,
       vy: vyBase * energy,
       life: lf, initLife: lf,
       glyph: ch, col,
-      rot: (Math.random()-0.5) * 2.4,
-      rotV: (Math.random()-0.5) * 0.20,
+      rot: (Math.random()-0.5) * 1.8,
+      rotV: (Math.random()-0.5) * 0.14,
     })
   })
 
@@ -2364,12 +2364,12 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number)
   g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.55, initLife: 0.55, glyph:"", col, ring: true })
 
   // Spark burst — scales with combo
-  const sparkCount = Math.min(5 + Math.floor(combo / 4), 14)
+  const sparkCount = Math.min(4 + Math.floor(combo / 5), 11)
   const sparkGlyph = isBug ? "×" : isPow ? "◈" : "·"
   for (let i = 0; i < sparkCount; i++) {
     const a = (i / sparkCount) * Math.PI * 2 + Math.random() * 0.5
-    const spd = (3 + Math.random() * 8) * energy
-    g.particles.push({ x: word.x, y: word.y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd - 2, life: 0.5 + Math.random()*0.3, glyph: sparkGlyph, col })
+    const spd = (1.5 + Math.random() * 3.5) * energy
+    g.particles.push({ x: word.x, y: word.y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd - 1, life: 0.5 + Math.random()*0.3, glyph: sparkGlyph, col })
   }
 
   // At chain ×8+ add a second outer ring in accent color
@@ -2384,7 +2384,7 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number)
     const label    = `${chainStr}+${pts}`
     const popCol   = combo >= 20 ? "#facc15" : combo >= 10 ? "#fb923c" : combo >= 5 ? "#c4b5fd" : col
     const sz       = combo >= 20 ? 16 : combo >= 10 ? 14 : combo >= 5 ? 12 : 10
-    g.particles.push({ x: word.x, y: word.y - 16, vx: 0, vy: -1.3 * energy, life: 1.2, glyph: label, col: popCol, sz })
+    g.particles.push({ x: word.x, y: word.y - 16, vx: 0, vy: -0.7, life: 1.2, glyph: label, col: popCol, sz })
   }
 
   // Fragment mechanic: 35% of non-powerup, non-fragment kills leave a letter cluster
