@@ -199,6 +199,14 @@ const CAPY_SECTOR_COMMENTS: string[][] = [
   ],
 ]
 
+// First transmission when entering each sector — fires ~3s in
+const SECTOR_ENTRY_MSGS: string[] = [
+  "Entering THE RECURSION.\nPattern integrity: nominal.\nExpect loop instability.",
+  "Entering THE DRIFT.\nSemantic coherence degrading.\nHold your interpretation.",
+  "Entering THE FRAGMENT.\nIntegrity check failed: 3 shards detected.\nExpect splits.",
+  "Entering THE COLLAPSE.\nAll four signals converging.\nThis is the terminal sector.",
+]
+
 const BOSS_TAUNTS: string[][] = [
   [ // THE RECURSION
     "You call this a stack trace?",
@@ -602,8 +610,12 @@ export default function HomePage() {
       g.agentSectorRevived = false
       // Stamp bg glyphs with new sector identity
       { const th = sectorTheme(g.level); g.bg.forEach(b => { b.ch = th.bgChars[Math.floor(Math.random() * th.bgChars.length)] }) }
-      // Reset Capy timer so each sector gets a fresh first transmission
-      g.nextCapyMsg = Date.now() + 22000 + Math.random() * 14000
+      // Sector entry transmission — fires ~3s in, then regular timer
+      if (g.level >= 1 && g.level <= 4 && SECTOR_ENTRY_MSGS[g.level - 1]) {
+        g.nextCapyMsg = Date.now() + 3200  // fire entry msg after 3.2s
+      } else {
+        g.nextCapyMsg = Date.now() + 22000 + Math.random() * 14000
+      }
       // Activate endless mode when entering level 5+
       if (g.level > 4) {
         g.endless = true
@@ -814,14 +826,21 @@ export default function HomePage() {
       // capy in-game comments
       if (g.nextCapyMsg === 0) g.nextCapyMsg = now + 28000 + Math.random() * 18000
       if (now > g.nextCapyMsg && !g.capyMsg && !g.bossWarn) {
-        // Sector-specific pool in story mode; depth pools in endless
-        const commentPool = g.endless && g.endlessWave >= 5 ? CAPY_PLAY_COMMENTS_VOID
-          : g.endless && g.endlessWave >= 3 ? CAPY_PLAY_COMMENTS_MID
-          : g.endless ? CAPY_PLAY_COMMENTS_SHALLOW
-          : CAPY_SECTOR_COMMENTS[Math.min(g.level - 1, 3)]
-        g.capyMsg = commentPool[Math.floor(Math.random() * commentPool.length)]
-        g.capyMsgEnd = now + 3200
-        // Fire every 30-50s in story mode — active mission control, not silence
+        // Sector entry message on first trigger (fired 3.2s after sector start, no kills yet)
+        const isEntryMsg = !g.endless && g.level >= 1 && g.level <= 4 && g.wordsKilled < 3
+        let msg: string
+        if (isEntryMsg && SECTOR_ENTRY_MSGS[g.level - 1]) {
+          msg = SECTOR_ENTRY_MSGS[g.level - 1]
+        } else {
+          // Sector-specific pool in story mode; depth pools in endless
+          const commentPool = g.endless && g.endlessWave >= 5 ? CAPY_PLAY_COMMENTS_VOID
+            : g.endless && g.endlessWave >= 3 ? CAPY_PLAY_COMMENTS_MID
+            : g.endless ? CAPY_PLAY_COMMENTS_SHALLOW
+            : CAPY_SECTOR_COMMENTS[Math.min(g.level - 1, 3)]
+          msg = commentPool[Math.floor(Math.random() * commentPool.length)]
+        }
+        showCapyMsg(g, msg, now)
+        // Override the 28s default from showCapyMsg with sector-paced interval
         const baseInterval = g.endless && g.endlessWave >= 5
           ? 50000 + Math.random() * 30000
           : g.endless
@@ -1656,6 +1675,13 @@ export default function HomePage() {
             const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul * pmMul * dataMul)
             g.score += pts
             g.kills++; if (!w.fragment) g.wordsKilled++
+            // Kill milestones — expedition checkpoints
+            if ([10, 25, 50, 100].includes(g.kills)) {
+              const sCol = sectorTheme(g.level).storyCol
+              g.particles.push({ x: g.px, y: g.py - 28, vx: 0, vy: -0.7, life: 2.2, glyph: `${g.kills} PATTERNS RESOLVED`, col: sCol, sz: 11, gravity: 0 })
+              g.accentFlash = 8; g.accentFlashCol = sCol
+              tone(660, 0.1, 0.18); setTimeout(() => tone(880, 0.1, 0.22), 110)
+            }
             // "one kill to boss" capy warning (non-endless only)
             if (!g.endless && !g.boss && g.wordsKilled === WORDS_TO_BOSS - 1) {
               const bossName = BOSSES[Math.min(g.level - 1, 3)].name
@@ -3298,7 +3324,15 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
 
   // player motion trail
   if (!attractMode && g.trail.length > 1) {
-    const trailCol = g.shield ? "74,222,128" : "150,107,236"
+    // Trail color: shield overrides, otherwise sector-tinted
+    const sectorBossCol = BOSSES[Math.min(g.level - 1, BOSSES.length - 1)].color
+    const sectorRgb = g.endless ? "150,107,236"
+      : sectorBossCol === "#f87171" ? "248,113,113"
+      : sectorBossCol === "#fb923c" ? "251,146,60"
+      : sectorBossCol === "#facc15" ? "250,204,21"
+      : sectorBossCol === "#4ade80" ? "74,222,128"
+      : "150,107,236"
+    const trailCol = g.shield ? "74,222,128" : sectorRgb
     g.trail.forEach((pt, i) => {
       const age = g.trail.length - 1 - i
       const alpha = (1 - age / g.trail.length) * 0.22
@@ -3528,25 +3562,45 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.restore(); ctx.globalAlpha = 1
   }
 
-  // wave announcement
+  // wave announcement — sector entry cinematic
   if (g.waveAnn) {
     const wa = g.waveAnn
-    const fadeIn  = Math.min(1, wa.t / 15)
+    const fadeIn  = Math.min(1, wa.t / 18)
     const fadeOut = wa.t > 75 ? Math.max(0, 1 - (wa.t - 75) / 30) : 1
-    const slide   = Math.max(0, 1 - wa.t / 70) * cw * 0.25
-    ctx.globalAlpha = fadeIn * fadeOut
-    // color varies: void depth = purple, endless = green, sector = purple
+    const alpha   = fadeIn * fadeOut
+    const slide   = Math.max(0, (1 - wa.t / 60)) * cw * 0.18
     const isVoidDepth = g.endless && g.endlessWave >= 5
-    const annCol = isVoidDepth ? "#a855f7" : g.endless ? "#4ade80" : "#966bec"
-    ctx.fillStyle = annCol
+    const annCol = isVoidDepth ? "#a855f7" : g.endless ? "#4ade80"
+      : BOSSES[Math.min(g.level - 1, BOSSES.length - 1)].color
+
+    // Backdrop strip — anchors the text
+    ctx.globalAlpha = alpha * 0.22
+    ctx.fillStyle = "#000010"
+    ctx.fillRect(0, GH/2 - 26, cw, 54)
+    ctx.globalAlpha = alpha
+
+    // Two-line rendering when text has " · " separator
+    const parts = wa.text.split(" · ")
     ctx.save()
-    if (isVoidDepth) { ctx.shadowColor = "#6d28d9"; ctx.shadowBlur = 18 * (0.5 + 0.5 * Math.sin(now / 100)) }
-    ctx.font = "bold 17px monospace"; ctx.textAlign = "center"
-    ctx.fillText(wa.text, cw/2 + slide, GH/2 - 10)
+    ctx.shadowColor = annCol; ctx.shadowBlur = (14 + 6 * Math.sin(wa.t / 6)) * alpha
+    ctx.textAlign = "center"
+    if (parts.length >= 2) {
+      // Line 1: sector number or depth (e.g. "SECTOR 2") — white, bold, big
+      ctx.fillStyle = "#e8e8f0"; ctx.font = "bold 13px monospace"
+      ctx.fillText(parts[0], cw/2 + slide, GH/2 - 4)
+      // Line 2: boss name or subtitle (e.g. "THE DRIFT") — sector color, slightly smaller
+      ctx.fillStyle = annCol; ctx.font = "bold 11px monospace"
+      ctx.shadowBlur = 12 * alpha
+      ctx.fillText(parts.slice(1).join(" · "), cw/2 + slide, GH/2 + 12)
+    } else {
+      ctx.fillStyle = annCol; ctx.font = "bold 17px monospace"
+      ctx.fillText(wa.text, cw/2 + slide, GH/2)
+    }
     ctx.restore()
-    ctx.font = "8px monospace"; ctx.globalAlpha = (fadeIn * fadeOut) * 0.4
-    ctx.fillStyle = "#ffffff"
-    ctx.fillText(g.endless ? "INFINITE RECURSION" : "SPEC BLASTER", cw/2 + slide, GH/2 + 10)
+    // Subtle game-title footer
+    ctx.font = "7px monospace"; ctx.globalAlpha = alpha * 0.28
+    ctx.fillStyle = "#c4b5fd"; ctx.textAlign = "center"
+    ctx.fillText(g.endless ? "INFINITE RECURSION" : "SPEC BLASTER", cw/2, GH/2 + 26)
     ctx.globalAlpha = 1
   }
 
@@ -3561,13 +3615,17 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       const bh = 18 + lines.length * 13
       // Top-right corner — well clear of the player ship at the bottom
       const bx = cw - bw - 8, by = 52
+      // During boss fight: border tints to boss color — feels like a transmission intercept
+      const isBossTaunt = !!(g.boss && g.boss.phase <= 4)
+      const capyBorderCol = isBossTaunt ? `${g.boss!.color}55` : "rgba(150,107,236,0.35)"
       ctx.globalAlpha = a * 0.72
       ctx.fillStyle = "#15151e"
       roundRect(ctx, bx, by, bw, bh, 5); ctx.fill()
-      ctx.strokeStyle = "rgba(150,107,236,0.35)"; ctx.lineWidth = 1
+      ctx.strokeStyle = capyBorderCol; ctx.lineWidth = isBossTaunt ? 1.2 : 1
       roundRect(ctx, bx, by, bw, bh, 5); ctx.stroke()
-      ctx.fillStyle = "#f5f5f5"; ctx.font = "8px monospace"; ctx.textAlign = "left"
-      lines.forEach((ln, i) => ctx.fillText((i === 0 ? "🦫 " : "   ") + ln, bx + 7, by + 13 + i * 13))
+      ctx.fillStyle = isBossTaunt ? "#fde8e8" : "#f5f5f5"
+      ctx.font = "8px monospace"; ctx.textAlign = "left"
+      lines.forEach((ln, i) => ctx.fillText((i === 0 ? (isBossTaunt ? "⚠ " : "🦫 ") : "   ") + ln, bx + 7, by + 13 + i * 13))
       ctx.globalAlpha = 1
     }
   }
@@ -4390,17 +4448,24 @@ function CapyScreen({ text, lineNum, totalLines, level, onAdvance }: {
           </p>
         </div>
 
-        {/* Dialog box */}
-        <div className="capy-glow"
-          style={{ background:"#111118", border:"1px solid rgba(150,107,236,0.3)", borderRadius:"6px",
-            padding:"1.25rem 1.5rem", marginBottom:"1.1rem", minHeight:"4rem",
-            display:"flex", alignItems:"center", justifyContent:"center" }}>
-          <p style={{ color:"#f5f5f5", fontSize:"0.92rem", lineHeight:1.8, margin:0,
-            whiteSpace:"pre-line", textAlign:"left" }}>
-            {displayed}
-            {!done && <span className="cursor-blink">|</span>}
-          </p>
-        </div>
+        {/* Dialog box — border tinted with next boss color */}
+        {(() => {
+          // Use the CURRENT boss color (sector just cleared) for the border tint
+          const clearedBoss = BOSSES[Math.min(level - 2, BOSSES.length - 1)]
+          const borderCol = clearedBoss ? `${clearedBoss.color}44` : "rgba(150,107,236,0.3)"
+          return (
+            <div className="capy-glow"
+              style={{ background:"#111118", border:`1px solid ${borderCol}`, borderRadius:"6px",
+                padding:"1.25rem 1.5rem", marginBottom:"1.1rem", minHeight:"4rem",
+                display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <p style={{ color:"#f5f5f5", fontSize:"0.92rem", lineHeight:1.8, margin:0,
+                whiteSpace:"pre-line", textAlign:"left" }}>
+                {displayed}
+                {!done && <span className="cursor-blink">|</span>}
+              </p>
+            </div>
+          )
+        })()}
 
         {/* Prompt + next sector hint */}
         <p style={{ color: done ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.15)",
@@ -4409,7 +4474,7 @@ function CapyScreen({ text, lineNum, totalLines, level, onAdvance }: {
           {done ? "click to skip  ·  auto →" : "…"}
         </p>
         {nextBoss && done && (
-          <p style={{ color:"#966bec", fontSize:"0.72rem", fontWeight:600,
+          <p style={{ color: nextBoss.color, fontSize:"0.72rem", fontWeight:600,
             fontFamily:"monospace", letterSpacing:"0.08em", margin:0 }}>
             SECTOR {level} · {nextBoss.name}
           </p>
