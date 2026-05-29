@@ -2301,31 +2301,58 @@ function spawnParticles(g: GState, x: number, y: number, col: string, glyph: str
 
 function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number) {
   const chars = word.text.split("")
-  const col = word.type === "bug" ? "#fdba74" : word.type === "powerup" ? "#4ade80" : "#7dd3fc"
-  const charW = 6.8, totalW = chars.length * charW
+  const isBug = word.type === "bug"
+  const isPow = word.type === "powerup"
+  const col   = isBug ? "#fdba74" : isPow ? "#4ade80" : "#7dd3fc"
 
+  // Combo energy multiplier — higher combos = more explosive
+  const energy = 1 + Math.min(combo, 20) * 0.12
+  const charW  = 6.8, totalW = chars.length * charW
+
+  // Letters blast apart — each carries its own velocity proportional to distance from center
   chars.forEach((ch, i) => {
     const startX = word.x - totalW/2 + i*charW + charW/2
     const dx = startX - word.x
+    // Lateral: spread outward from word center, scaled by combo energy
+    const vxBase = dx * 0.32 + (Math.random()-0.5) * 5
+    // Vertical: always upward burst, gravity will arc them back down
+    const vyBase = -2.5 - Math.random() * 5.5
     g.particles.push({
       x: startX, y: word.y,
-      vx: dx * 0.18 + (Math.random()-0.5)*4,
-      vy: -1.5 - Math.random()*4.5,
-      life: 1, glyph: ch, col,
-      rot: (Math.random()-0.5)*1.2, rotV: (Math.random()-0.5)*0.2,
+      vx: vxBase * energy,
+      vy: vyBase * energy,
+      life: 0.85 + Math.random() * 0.3,
+      glyph: ch, col,
+      rot: (Math.random()-0.5) * 1.8,
+      rotV: (Math.random()-0.5) * 0.3,
     })
   })
 
-  for (let i = 0; i < 5; i++)
-    g.particles.push({ x: word.x, y: word.y, vx: (Math.random()-0.5)*14, vy: (Math.random()-0.5)*10-4, life: 0.65, glyph: "✦", col })
+  // Impact ring — instant radial flash at kill point
+  g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.55, initLife: 0.55, glyph:"", col, ring: true })
 
+  // Spark burst — scales with combo
+  const sparkCount = Math.min(5 + Math.floor(combo / 4), 14)
+  const sparkGlyph = isBug ? "×" : isPow ? "◈" : "·"
+  for (let i = 0; i < sparkCount; i++) {
+    const a = (i / sparkCount) * Math.PI * 2 + Math.random() * 0.5
+    const spd = (3 + Math.random() * 8) * energy
+    g.particles.push({ x: word.x, y: word.y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd - 2, life: 0.5 + Math.random()*0.3, glyph: sparkGlyph, col })
+  }
+
+  // At chain ×8+ add a second outer ring in accent color
+  if (combo >= 8) {
+    const accentCol = combo >= 20 ? "#facc15" : combo >= 12 ? "#fb923c" : "#c4b5fd"
+    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.4, initLife: 0.4, glyph:"", col: accentCol, ring: true })
+  }
+
+  // Score/combo label — bigger and bolder at high chains
   if (pts > 0) {
-    const label = combo >= 3 ? `×${combo} +${pts}` : `+${pts}`
-    const popCol = combo >= 5 ? "#facc15" : combo >= 3 ? "#fb923c" : col
-    g.particles.push({
-      x: word.x, y: word.y - 14, vx: 0, vy: -1.1,
-      life: 1.1, glyph: label, col: popCol, sz: combo >= 3 ? 13 : 10,
-    })
+    const chainStr = combo >= 3 ? `×${combo} ` : ""
+    const label    = `${chainStr}+${pts}`
+    const popCol   = combo >= 20 ? "#facc15" : combo >= 10 ? "#fb923c" : combo >= 5 ? "#c4b5fd" : col
+    const sz       = combo >= 20 ? 16 : combo >= 10 ? 14 : combo >= 5 ? 12 : 10
+    g.particles.push({ x: word.x, y: word.y - 16, vx: 0, vy: -1.3 * energy, life: 1.2, glyph: label, col: popCol, sz })
   }
 }
 
