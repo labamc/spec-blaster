@@ -181,35 +181,14 @@ const MINI_BOSSES = [
 ]
 
 const CAPY_DIALOG = [
-  // After Sector 1 — THE RECURSION cleared, entering DEFINE
-  [
-    "SECTOR 1 · CLEAR.\nThe first recursion loop severed.",
-    "You dissolved the undefined cycle.\nThe stack is clean.",
-    "The Signal holds.\nNext: THE DRIFT awaits in Sector 2.",
-    "Semantic drift is subtler than recursion.\nMeaning detaches slowly.\nYou won't always notice until it's too late.",
-  ],
-  // After Sector 2 — THE DRIFT cleared, entering DESIGN
-  [
-    "SECTOR 2 · CLEAR.\nDrift contained.",
-    "Meaning recoupled to intent.\nCoherence restored in the carrier.",
-    "The Fragment is next.\nA single idea, shattered into a thousand orphaned shards.",
-    "Every fragment thinks it's the whole story.\nNone of them are.\nOnly you carry the full context.",
-  ],
-  // After Sector 3 — THE FRAGMENT cleared, entering DELIVER
-  [
-    "SECTOR 3 · CLEAR.\nFragmentation event resolved.",
-    "The pieces cohere.\nThe signal is intact.",
-    "One collapse remains.\nTHE COLLAPSE — the moment everything unravels at once.",
-    "This is what the other sectors were preparing you for.\nFour collapses in one.\nThe Signal must survive all of them.",
-  ],
-  // After Sector 4 — THE COLLAPSE cleared, entering INFINITE RECURSION
-  [
-    "THE COLLAPSE · RESOLVED.",
-    "Four sectors.\nFour patterns of entropy.\nAll dissolved.",
-    "The Signal persists.",
-    "Most carriers didn't make it this far.\nYou are now in infinite recursion.\nEvery loop is deeper than the last.",
-    "There is no final sector.\nOnly signal.\nOnly entropy.\nOnly you.",
-  ],
+  // After Sector 1 — THE RECURSION cleared
+  ["SECTOR 1 · CLEAR.\nRecursion loop severed.\nThe stack is clean.\nNext: THE DRIFT."],
+  // After Sector 2 — THE DRIFT cleared
+  ["SECTOR 2 · CLEAR.\nDrift contained. Meaning restored.\nNext: THE FRAGMENT."],
+  // After Sector 3 — THE FRAGMENT cleared
+  ["SECTOR 3 · CLEAR.\nFragmentation resolved.\nOne collapse remains: THE COLLAPSE."],
+  // After Sector 4 — THE COLLAPSE cleared
+  ["THE COLLAPSE · RESOLVED.\nFour sectors. All dissolved.\nInfinite recursion begins."],
 ]
 
 // ── AI Agents ──────────────────────────────────────────────────────────────
@@ -3834,12 +3813,12 @@ function CapyScreen({ text, lineNum, totalLines, level, onAdvance }: {
     return () => window.removeEventListener("keydown", handler)
   }, [done]) // eslint-disable-line
 
-  // Auto-advance 2.5s after typewriter completes — no Enter required
+  // Auto-advance 1.5s after typewriter completes — no Enter required
   const onAdvanceRef = useRef(onAdvance)
   onAdvanceRef.current = onAdvance
   useEffect(() => {
     if (!done) return
-    const id = setTimeout(() => onAdvanceRef.current(), 2500)
+    const id = setTimeout(() => onAdvanceRef.current(), 1500)
     return () => clearTimeout(id)
   }, [done]) // eslint-disable-line
 
