@@ -2056,6 +2056,9 @@ export default function HomePage() {
             onPick={onUpgradePick}
             score={score}
             kills={G.current.kills}
+            level={level}
+            endless={G.current.endless}
+            endlessDepth={G.current.endlessWave}
             onReroll={() => pickUpgrades(G.current.upgrades)}
             crew={{ unlocked: unlockedAgents, selected: selectedAgents, upgrades: agentUpgrades, names: agentNames }}
             onAgentHire={(id) => {
@@ -3006,46 +3009,54 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.restore()
   }
 
-  // HUD
-  ctx.textAlign = "left"; ctx.font = "bold 13px monospace"
-  ctx.fillStyle = "#966bec"; ctx.fillText(g.score.toLocaleString(), 10, 20)
-  // Depth label: pulse purple in void territory (depth 5+)
+  // HUD — depth/sector is the primary anchor, score is secondary
+  ctx.textAlign = "left"
+
+  // PRIMARY: sector / depth label — this is what the run is about
   if (g.endless && g.endlessWave >= 5) {
     const voidPulse = 0.5 + 0.5 * Math.abs(Math.sin(now / 700))
-    ctx.fillStyle = `rgba(${g.endlessWave >= 9 ? "220,38,38" : "168,85,247"},${0.55 + voidPulse * 0.35})`
-    ctx.font = `bold 13px monospace`
+    ctx.fillStyle = `rgba(${g.endlessWave >= 9 ? "220,38,38" : "168,85,247"},${0.7 + voidPulse * 0.3})`
+    ctx.font = "bold 15px monospace"
+  } else if (g.endless) {
+    ctx.fillStyle = "rgba(74,222,128,0.85)"; ctx.font = "bold 15px monospace"
   } else {
-    ctx.fillStyle = "rgba(255,255,255,0.4)"; ctx.font = "bold 13px monospace"
+    ctx.fillStyle = "rgba(255,255,255,0.88)"; ctx.font = "bold 15px monospace"
   }
-  ctx.fillText(g.endless ? (g.endlessWave > 1 ? `DEPTH ${g.endlessWave}` : "RECURSION") : `SECTOR ${g.level}`, 10, 36)
-  ctx.fillStyle = "rgba(255,255,255,0.18)"; ctx.font = "7px monospace"
-  ctx.fillText(`${g.kills} kills`, 10, 60)
-  // combo counter when active
+  const depthLabel = g.endless ? (g.endlessWave > 1 ? `DEPTH ${g.endlessWave}` : "THE VOID") : `SECTOR ${g.level}`
+  ctx.fillText(depthLabel, 10, 20)
+
+  // SECONDARY: score — useful but not the point
+  ctx.fillStyle = "rgba(150,107,236,0.5)"; ctx.font = "8px monospace"
+  ctx.fillText(g.score.toLocaleString(), 10, 32)
+
+  // Kills — expedition context
+  ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.font = "7px monospace"
+  ctx.fillText(`${g.kills} eliminated`, 10, 43)
+
+  // Sector progress bar — how far to the next boss encounter
+  if (!g.boss && !g.endless && !g.bossWarn) {
+    const wPct = Math.min(1, g.wordsKilled / WORDS_TO_BOSS)
+    const remaining = WORDS_TO_BOSS - g.wordsKilled
+    ctx.fillStyle = "rgba(255,255,255,0.07)"; ctx.fillRect(10, 48, 68, 2)
+    ctx.fillStyle = wPct >= 0.85 ? "#f87171" : "rgba(150,107,236,0.6)"; ctx.fillRect(10, 48, 68 * wPct, 2)
+    ctx.font = "7px monospace"; ctx.textAlign = "left"
+    if (remaining <= 3 && remaining > 0) {
+      const pulse = 0.7 + 0.3 * Math.abs(Math.sin(now / 140))
+      ctx.fillStyle = `rgba(248,113,113,${pulse})`
+      ctx.fillText(`BOSS INCOMING · ${remaining}`, 10, 58)
+    } else {
+      ctx.fillStyle = "rgba(255,255,255,0.18)"
+      ctx.fillText(`${remaining} patterns`, 10, 58)
+    }
+  }
+
+  // combo counter
   if (g.combo >= 3) {
     const comboAlpha = g.combo >= 10 ? 1 : 0.55 + g.combo * 0.045
     const comboCol = g.combo >= 20 ? "#facc15" : g.combo >= 10 ? "#fb923c" : "#7dd3fc"
     ctx.fillStyle = `rgba(${comboCol === "#facc15" ? "250,204,21" : comboCol === "#fb923c" ? "251,146,60" : "125,211,252"},${comboAlpha})`
-    ctx.fillText(`×${g.combo} combo`, 10, 80)
-  }
-  if (g.pb > 0) {
-    ctx.fillStyle = g.score >= g.pb ? "rgba(250,204,21,0.55)" : "rgba(255,255,255,0.13)"
-    ctx.fillText(g.score >= g.pb ? `★ ${g.pb.toLocaleString()}` : `PB ${g.pb.toLocaleString()}`, 10, 70)
-  }
-  // wave progress bar + boss countdown
-  if (!g.boss && !g.endless && !g.bossWarn) {
-    const wPct = Math.min(1, g.wordsKilled / WORDS_TO_BOSS)
-    const remaining = WORDS_TO_BOSS - g.wordsKilled
-    ctx.fillStyle = "rgba(255,255,255,0.07)"; ctx.fillRect(10, 41, 72, 3)
-    ctx.fillStyle = wPct >= 0.85 ? "#f87171" : "#966bec"; ctx.fillRect(10, 41, 72 * wPct, 3)
     ctx.font = "7px monospace"; ctx.textAlign = "left"
-    if (remaining <= 4 && remaining > 0) {
-      const pulse = 0.7 + 0.3 * Math.abs(Math.sin(now / 140))
-      ctx.fillStyle = `rgba(248,113,113,${pulse})`
-      ctx.fillText(`COLLAPSE IN ${remaining}`, 10, 52)
-    } else {
-      ctx.fillStyle = "rgba(255,255,255,0.22)"
-      ctx.fillText(`COLLAPSE: ${remaining}`, 10, 52)
-    }
+    ctx.fillText(`×${g.combo} chain`, 10, g.boss || g.endless ? 55 : 68)
   }
   ctx.textAlign = "right"; ctx.fillStyle = "#f87171"; ctx.font = "12px monospace"
   ctx.fillText("♥".repeat(g.lives) + "♡".repeat(Math.max(0, MAX_LIVES - g.lives)), cw - 10, 20)
@@ -3322,8 +3333,9 @@ interface CrewState {
 }
 
 // ── CLI Screen — card-based upgrade picker with crew panel ─────────────────
-function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll, crew, onAgentHire, onAgentUpgrade, onAgentRename }: {
+function CLIScreen({ options: initialOptions, onPick, score, kills, level, endless, endlessDepth, onReroll, crew, onAgentHire, onAgentUpgrade, onAgentRename }: {
   options: UpgradeDef[]; onPick: (id: string) => void; score: number; kills: number
+  level?: number; endless?: boolean; endlessDepth?: number
   onReroll?: () => UpgradeDef[]
   crew?: CrewState
   onAgentHire?: (id: string) => void
@@ -3486,7 +3498,14 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll, cr
 
       {/* ── Header ── */}
       <div style={{ borderBottom:"1px solid rgba(150,107,236,0.2)", padding:"0.55rem 1.4rem", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-        <span style={{ color:"rgba(150,107,236,0.7)", fontSize:"0.62rem", letterSpacing:"0.2em" }}>THE SIGNAL · COMPILE TERMINAL</span>
+        <div>
+          <span style={{ color:"rgba(150,107,236,0.6)", fontSize:"0.6rem", letterSpacing:"0.18em" }}>COMPILE TERMINAL</span>
+          {level != null && (
+            <span style={{ color:"rgba(255,255,255,0.35)", fontSize:"0.6rem", letterSpacing:"0.08em", marginLeft:"0.75rem" }}>
+              {endless ? `DEPTH ${endlessDepth ?? 1}` : `SECTOR ${level} → ${level + 1}`}
+            </span>
+          )}
+        </div>
         <span style={{ color:"rgba(74,222,128,0.75)", fontSize:"0.62rem", letterSpacing:"0.06em" }}>
           {tokensAvailable.toLocaleString()} TOKENS
         </span>
@@ -3496,8 +3515,8 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, onReroll, cr
 
         {/* ── Upgrade cards ── */}
         <div>
-          <p style={{ color:"rgba(255,255,255,0.4)", fontSize:"0.6rem", letterSpacing:"0.2em", margin:"0 0 0.6rem" }}>
-            CHOOSE AN UPGRADE · ↑↓ navigate · ENTER deploy · or click
+          <p style={{ color:"rgba(255,255,255,0.35)", fontSize:"0.6rem", letterSpacing:"0.12em", margin:"0 0 0.6rem" }}>
+            SIGNAL UPGRADE · ↑↓ or 1–3 to select · ENTER to deploy
           </p>
           <div style={{ display:"flex", flexDirection:"column", gap:"0.45rem" }}>
             {liveOptions.map((opt, i) => {
