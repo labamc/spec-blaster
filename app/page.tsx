@@ -1554,7 +1554,7 @@ export default function HomePage() {
               bx.halfTriggered = true; bx.raged = true; g.shake = 10
               for (let ri = 0; ri < 22; ri++) {
                 const a = (ri / 22) * Math.PI * 2
-                g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a)*11, vy: Math.sin(a)*11, life: 1.0, glyph: ri % 2 === 0 ? "✦" : "×", col: ri % 3 === 0 ? "#ffffff" : bx.color })
+                g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a)*11, vy: Math.sin(a)*11, life: 0.6, glyph: ri % 2 === 0 ? "✦" : "×", col: ri % 3 === 0 ? "#fbbf24" : bx.color })
               }
               g.particles.push({ x: bx.x, y: bx.y - 20, vx: 0, vy: -1.2, life: 1.6, glyph: "ENRAGED", col: "#f87171", sz: 12 })
               g.accentFlash = 12; g.accentFlashCol = "#f87171"
@@ -1626,7 +1626,7 @@ export default function HomePage() {
         for (let ri = 0; ri < 3; ri++) {
           g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0,
             life: 1.4 - ri * 0.3, initLife: 1.4 - ri * 0.3,
-            glyph: "", col: ri === 1 ? "#ffffff" : bx.color, ring: true })
+            glyph: "", col: ri === 1 ? "#fbbf24" : bx.color, ring: true })
         }
         // Boss name letters — scatter in all directions, each one independent
         bx.name.split("").forEach((ch, i2) => {
@@ -1635,7 +1635,7 @@ export default function HomePage() {
           // Random angle biased upward (±117° from straight up) — true scatter
           const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.3
           const spd = 2.8 + Math.random() * 2.8
-          const lf = 2.8 + Math.random() * 2.0
+          const lf = 0.8 + Math.random() * 0.4
           g.particles.push({
             x: charX, y: bx.y,
             vx: Math.cos(angle) * spd,
@@ -1648,8 +1648,8 @@ export default function HomePage() {
             friction: 0.99,
           })
         })
-        // Central impact glyph — hovers in place
-        g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: -0.15, life: 2.5, initLife: 2.5, glyph: "✕", col: "#ffffff", sz: 24, rot: 0, rotV: 0, gravity: 0 })
+        // Central impact glyph — hovers, boss color
+        g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: -0.15, life: 2.5, initLife: 2.5, glyph: "✕", col: bx.color, sz: 24, rot: 0, rotV: 0, gravity: 0 })
         g.boss = null; g.mines = [] // clear mines on boss death
         if (g.endless) {
           sfx.miniBoss()
@@ -1660,7 +1660,7 @@ export default function HomePage() {
             for (let vi = 0; vi < 40; vi++) {
               const a = (vi / 40) * Math.PI * 2
               const spd = 1.2 + Math.random() * 2.5
-              const lf = 3.0 + Math.random() * 1.0
+              const lf = 0.65 + Math.random() * 0.35
               g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
                 life: lf, initLife: lf, glyph: vi % 3 === 0 ? "∅" : vi % 3 === 1 ? "◈" : "★",
                 col: vi % 2 === 0 ? "#6d28d9" : "#a855f7",
@@ -1709,7 +1709,7 @@ export default function HomePage() {
             for (let ri = 0; ri < 100; ri++) {
               const ra = Math.random() * Math.PI * 2, rr = Math.random() * 180
               const spd = 0.8 + Math.random() * 2.0
-              const lf = 3.5 + Math.random() * 1.0
+              const lf = 0.7 + Math.random() * 0.4
               g.particles.push({ x: g.W/2 + Math.cos(ra)*rr, y: GH/2 + Math.sin(ra)*rr,
                 vx: Math.cos(ra)*spd, vy: Math.sin(ra)*spd,
                 life: lf, initLife: lf,
@@ -1739,7 +1739,7 @@ export default function HomePage() {
             for (let ci = 0; ci < particleCount; ci++) {
               const a = Math.random() * Math.PI * 2
               const spd = 0.6 + Math.random() * 1.8
-              const lf = 3.5 + Math.random() * 1.0
+              const lf = 0.7 + Math.random() * 0.4
               g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
                 life: lf, initLife: lf, glyph: ci % 3 === 0 ? "★" : ci % 3 === 1 ? "◇" : "◈",
                 col: ci % 4 === 0 ? "#966bec" : ci % 4 === 1 ? "#facc15" : clearCol,
@@ -1748,7 +1748,7 @@ export default function HomePage() {
             }
             // Radial rings — longer lasting
             for (let ri = 0; ri < 2; ri++) {
-              g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0, life: 1.4 - ri * 0.4, initLife: 1.4 - ri * 0.4, glyph: "", col: ri === 0 ? clearCol : "#ffffff", ring: true })
+              g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0, life: 1.4 - ri * 0.4, initLife: 1.4 - ri * 0.4, glyph: "", col: ri === 0 ? clearCol : "#fbbf24", ring: true })
             }
             // Sector clear text — gravity 0 so they float up steadily
             g.particles.push({ x: g.W/2, y: GH/2 - 14, vx: 0, vy: -0.35, life: 3.5, glyph: sectorNames[lvl] ?? "", col: "#966bec", sz: 13, gravity: 0 })
@@ -1876,7 +1876,7 @@ export default function HomePage() {
           g.boss.halfTriggered = true; g.boss.raged = true; g.shake = 8
           for (let ri = 0; ri < 18; ri++) {
             const a = (ri / 18) * Math.PI * 2
-            g.particles.push({ x: g.boss.x, y: g.boss.y, vx: Math.cos(a)*9, vy: Math.sin(a)*9, life: 0.9, glyph: "✦", col: "#ffffff" })
+            g.particles.push({ x: g.boss.x, y: g.boss.y, vx: Math.cos(a)*9, vy: Math.sin(a)*9, life: 0.6, glyph: "✦", col: "#fbbf24" })
           }
           showCapyMsg(g, "Pattern is escalating.\nIt knows you're here.", now)
         }
@@ -2329,7 +2329,7 @@ function applyPowerup(g: GState, word: Word, now: number) {
 
 function spawnParticles(g: GState, x: number, y: number, col: string, glyph: string, n: number) {
   for (let i = 0; i < n; i++) {
-    const lf = 2.5 + Math.random() * 1.0
+    const lf = 0.5 + Math.random() * 0.3
     g.particles.push({ x, y, vx: (Math.random()-0.5)*2.2, vy: (Math.random()-0.5)*2.0-0.5,
       life: lf, initLife: lf, glyph, col, rot: (Math.random()-0.5)*2, rotV: (Math.random()-0.5)*0.04,
       gravity: 0.022, friction: 0.97 })
@@ -2349,18 +2349,18 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
     // They flash white then dissolve — clean, instant, column-precise.
     chars.forEach((ch, i) => {
       const startX = word.x - totalW/2 + i*charW + charW/2
-      const lf = 0.9 + Math.random() * 0.4
+      const lf = 0.45 + Math.random() * 0.25
       g.particles.push({
         x: startX, y: word.y,
         vx: 0, vy: 0,
         life: lf, initLife: lf,
-        glyph: ch, col: "#ffffff",  // flash white — pure energy hit
+        glyph: ch, col: "#fde68a",  // warm cream — heat of the beam, not cold white
         rot: 0, rotV: 0,
         gravity: 0, friction: 0,
       })
     })
-    // Tight white flash ring — laser precision
-    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.35, initLife: 0.35, glyph:"", col: "#ffffff", ring: true })
+    // Tight amber flash ring — laser precision
+    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.28, initLife: 0.28, glyph:"", col: "#fbbf24", ring: true })
 
   } else if (style === "mine") {
     // ── SHOCKWAVE BLAST ──────────────────────────────────────────────────
@@ -2369,7 +2369,7 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
     chars.forEach((ch, i) => {
       const angle = Math.random() * Math.PI * 2  // truly random direction
       const spd   = 2.5 + Math.random() * 2.5    // faster than default
-      const lf    = 3.0 + Math.random() * 1.0
+      const lf    = 0.65 + Math.random() * 0.35
       g.particles.push({
         x: word.x, y: word.y,
         vx: Math.cos(angle) * spd,
@@ -2379,11 +2379,11 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
         rot: Math.random() * Math.PI * 2,  // start at random angle
         rotV: (Math.random()-0.5) * 0.28,  // heavy tumble
         gravity: 0.03,
-        friction: 0.95,  // travels ~80px before stopping — wide scatter
+        friction: 0.95,
       })
     })
     g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 1.1, initLife: 1.1, glyph:"", col: "#f59e0b", ring: true })
-    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.65, initLife: 0.65, glyph:"", col: "#ffffff", ring: true })
+    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.55, initLife: 0.55, glyph:"", col: "#fbbf24", ring: true })
 
   } else if (style === "spray") {
     // ── HORIZONTAL SWEEP ─────────────────────────────────────────────────
@@ -2392,7 +2392,7 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
     chars.forEach((ch, i) => {
       const startX = word.x - totalW/2 + i*charW + charW/2
       const dx = startX - word.x
-      const lf = 3.0 + Math.random() * 1.0
+      const lf = 0.65 + Math.random() * 0.35
       g.particles.push({
         x: startX, y: word.y,
         vx: dx * 0.7 + (Math.random()-0.5) * 2.5,  // strong lateral push
@@ -2401,8 +2401,8 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
         glyph: ch, col,
         rot: (Math.random()-0.5) * 0.6,
         rotV: (Math.random()-0.5) * 0.04,
-        gravity: 0.015,   // very light — they stay at roughly the same height
-        friction: 0.93,   // glide sideways ~50px then stop
+        gravity: 0.015,
+        friction: 0.93,
       })
     })
     g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.5, initLife: 0.5, glyph:"", col, ring: true })
@@ -2417,7 +2417,7 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
       const dx = startX - word.x
       const vx = dx * 0.07 + (Math.random()-0.5) * 1.6   // radial + random spread
       const vy = -0.8 - Math.random() * 1.6               // upward burst
-      const lf = 2.0 + Math.random() * 2.5
+      const lf = 0.6 + Math.random() * 0.4
       g.particles.push({
         x: startX, y: word.y,
         vx, vy,
@@ -2516,7 +2516,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1; g.redFlash--
   }
   if (g.whiteFlash > 0) {
-    ctx.globalAlpha = g.whiteFlash * 0.035; ctx.fillStyle = "#ffffff"
+    ctx.globalAlpha = g.whiteFlash * 0.030; ctx.fillStyle = "#fbbf24"
     ctx.fillRect(0, 0, cw, GH); ctx.globalAlpha = 1; g.whiteFlash--
   }
   if (g.accentFlash > 0) {
@@ -2685,7 +2685,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       ctx.save(); ctx.shadowColor = "#f87171"; ctx.shadowBlur = 8 + 4 * Math.sin(now / 200)
     }
 
-    const wordCol = flashRed ? "#ffffff" : (w.beh === "charge" && w.type !== "powerup" && !w.regenBoss ? "#fca5a5" : col)
+    const wordCol = flashRed ? "#fde68a" : (w.beh === "charge" && w.type !== "powerup" && !w.regenBoss ? "#fca5a5" : col)
     ctx.fillStyle = wordCol
     ctx.font = (w.elite ? "bold " : "") + "11px monospace"
     ctx.textAlign = "center"
