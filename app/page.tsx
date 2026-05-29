@@ -306,7 +306,7 @@ const sfx = {
 // ── Types ──────────────────────────────────────────────────────────────────
 type Behavior = "fall" | "charge" | "zigzag" | "sine"
 interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean; age: number; regenBoss?: boolean; fragment?: boolean }
-interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean; cluster?: boolean; col?: string; bounce?: boolean; drift?: number; splitAt?: number }
+interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean; cluster?: boolean; col?: string; bounce?: boolean; drift?: number; splitAt?: number; kind?: "spray"|"triple"|"homing"|"laser"|"mine" }
 interface Mine      { x: number; y: number; age: number; armAt: number }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
@@ -779,12 +779,13 @@ export default function HomePage() {
       if (!laserCharging && g.keys.has(" ") && now - g.lastShot > fireInterval) {
         if (g.upgrades.spray) {
           for (let a = -2; a <= 2; a++)
-            g.bullets.push({ x: g.px + a * 10, y: g.py - 20, vx: a * 0.8 })
+            g.bullets.push({ x: g.px + a * 10, y: g.py - 20, vx: a * 0.8, kind: "spray" })
         } else {
-          g.bullets.push({ x: g.px, y: g.py - 20 })
+          const bkind = g.upgrades.homing ? "homing" : (g.triple || g.upgrades.triple) ? "triple" : undefined
+          g.bullets.push({ x: g.px, y: g.py - 20, kind: bkind })
           if (g.triple || g.upgrades.triple) {
-            g.bullets.push({ x: g.px - 16, y: g.py - 14 })
-            g.bullets.push({ x: g.px + 16, y: g.py - 14 })
+            g.bullets.push({ x: g.px - 16, y: g.py - 14, kind: "triple" })
+            g.bullets.push({ x: g.px + 16, y: g.py - 14, kind: "triple" })
           }
         }
         g.lastShot = now; sfx.shoot()
@@ -1486,7 +1487,8 @@ export default function HomePage() {
             }
             if (w.type === "powerup") applyPowerup(g, w, now)
             if (!g.firstKill) { g.firstKill = true; showCapyMsg(g, "First pattern dissolved.\nThe Signal is live.", now) }
-            spawnLetterExplosion(g, w, pts, g.combo)
+            const killStyle = b.kind === "spray" ? "spray" : b.kind === "homing" ? "homing" : "default"
+            spawnLetterExplosion(g, w, pts, g.combo, killStyle)
             // impact ring — powerup gets triple cascading rings
             const ringCol = w.type === "bug" ? "#fdba74" : w.type === "powerup" ? "#4ade80" : "#7dd3fc"
             if (w.type === "powerup") {
@@ -1582,7 +1584,7 @@ export default function HomePage() {
                 for (let wj = g.words.length - 1; wj >= 0; wj--) {
                   const ww = g.words[wj]
                   if (Math.hypot(ww.x - mine.x, ww.y - mine.y) < blastR) {
-                    spawnLetterExplosion(g, ww, 0, 1)
+                    spawnLetterExplosion(g, ww, 0, 1, "mine")
                     g.score += ww.type === "bug" ? 75 : 10
                     g.kills++; if (!ww.fragment) g.wordsKilled++; chain++
                   }
@@ -1844,7 +1846,7 @@ export default function HomePage() {
           const pmLv = g.activeAgents.includes("claude_pm") ? 1 + (g.agentUpgrades.claude_pm ?? 0) : 0
           const pmMul = pmLv >= 3 ? 1.30 : pmLv >= 2 ? 1.22 : pmLv >= 1 ? 1.15 : 1
           const pts = Math.floor((w.type === "bug" ? 75 : 10) * mult * pmMul)
-          spawnLetterExplosion(g, w, pts, g.combo)
+          spawnLetterExplosion(g, w, pts, g.combo, "laser")
           g.score += pts
           g.kills++; if (!w.fragment) g.wordsKilled++; beamKills++
           g.words.splice(wi, 1)
@@ -2318,56 +2320,102 @@ function spawnParticles(g: GState, x: number, y: number, col: string, glyph: str
   }
 }
 
-function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number) {
+function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number, style: "default"|"laser"|"spray"|"mine"|"homing" = "default") {
   const chars = word.text.split("")
   const isBug = word.type === "bug"
   const isPow = word.type === "powerup"
   const col   = isBug ? "#fdba74" : isPow ? "#4ade80" : "#7dd3fc"
+  const charW = 6.8, totalW = chars.length * charW
 
-  // Combo energy multiplier — higher combos = slightly more explosive, not wildly
-  const energy = 1 + Math.min(combo, 20) * 0.055
-  const charW  = 6.8, totalW = chars.length * charW
-
-  // Letters blast apart — moderate spread, arc visibly then fade
-  chars.forEach((ch, i) => {
-    const startX = word.x - totalW/2 + i*charW + charW/2
-    const dx = startX - word.x
-    // Lateral: gentle outward spread + small random scatter
-    const vxBase = dx * 0.22 + (Math.random()-0.5) * 2.8
-    // Vertical: short upward pop — gravity arcs them down within view
-    const vyBase = -1.2 - Math.random() * 2.2
-    // Life 2.5–3.5 frames-equivalent — letters linger visibly before fading
-    const lf = 2.5 + Math.random() * 1.0
-    g.particles.push({
-      x: startX, y: word.y,
-      vx: vxBase * energy,
-      vy: vyBase * energy,
-      life: lf, initLife: lf,
-      glyph: ch, col,
-      rot: (Math.random()-0.5) * 1.8,
-      rotV: (Math.random()-0.5) * 0.14,
+  if (style === "laser") {
+    // ── ASH / DISSOLVE ──────────────────────────────────────────────────
+    // Letters crumble in place — barely move, drift down like ash
+    chars.forEach((ch, i) => {
+      const startX = word.x - totalW/2 + i*charW + charW/2
+      const lf = 1.4 + Math.random() * 0.6
+      g.particles.push({
+        x: startX, y: word.y,
+        vx: (Math.random()-0.5) * 0.5,
+        vy: 0.15 + Math.random() * 0.4,   // drift downward — ash falls
+        life: lf, initLife: lf,
+        glyph: ch, col: "#94a3b8",         // slate-grey ash color
+        rot: (Math.random()-0.5) * 0.5,
+        rotV: (Math.random()-0.5) * 0.01,
+      })
     })
-  })
+    // Faint dissolution ring
+    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.4, initLife: 0.4, glyph:"", col: "#64748b", ring: true })
 
-  // Impact ring — instant radial flash at kill point
-  g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.55, initLife: 0.55, glyph:"", col, ring: true })
+  } else if (style === "mine") {
+    // ── BLAST / RADIAL ───────────────────────────────────────────────────
+    // Letters explode outward in all directions from the mine's ground zero
+    chars.forEach((ch, i) => {
+      const angle = (i / chars.length) * Math.PI * 2 + Math.random() * 0.8
+      const spd   = 1.8 + Math.random() * 2.2
+      const lf    = 2.0 + Math.random() * 1.0
+      g.particles.push({
+        x: word.x, y: word.y,
+        vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd - 1.0,
+        life: lf, initLife: lf,
+        glyph: ch, col,
+        rot: (Math.random()-0.5) * 2.0, rotV: (Math.random()-0.5) * 0.18,
+      })
+    })
+    // Heavy blast ring
+    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.9, initLife: 0.9, glyph:"", col: "#f59e0b", ring: true })
+    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.6, initLife: 0.6, glyph:"", col: "#ffffff", ring: true })
 
-  // Spark burst — scales with combo
-  const sparkCount = Math.min(4 + Math.floor(combo / 5), 11)
-  const sparkGlyph = isBug ? "×" : isPow ? "◈" : "·"
-  for (let i = 0; i < sparkCount; i++) {
-    const a = (i / sparkCount) * Math.PI * 2 + Math.random() * 0.5
-    const spd = (1.5 + Math.random() * 3.5) * energy
-    g.particles.push({ x: word.x, y: word.y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd - 1, life: 0.5 + Math.random()*0.3, glyph: sparkGlyph, col })
+  } else if (style === "spray") {
+    // ── WIDE HORIZONTAL SCATTER ──────────────────────────────────────────
+    // Letters fan out sideways — flat and wide, low arc
+    chars.forEach((ch, i) => {
+      const startX = word.x - totalW/2 + i*charW + charW/2
+      const dx = startX - word.x
+      const lf = 2.2 + Math.random() * 0.8
+      g.particles.push({
+        x: startX, y: word.y,
+        vx: dx * 0.55 + (Math.random()-0.5) * 3.5,
+        vy: -0.4 - Math.random() * 1.0,   // barely up — stays in view longer
+        life: lf, initLife: lf,
+        glyph: ch, col,
+        rot: (Math.random()-0.5) * 1.2, rotV: (Math.random()-0.5) * 0.08,
+      })
+    })
+    // Thin horizontal ring
+    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.5, initLife: 0.5, glyph:"", col, ring: true })
+
+  } else {
+    // ── DEFAULT — gentle upward arc ───────────────────────────────────────
+    const energy = 1 + Math.min(combo, 20) * 0.055
+    chars.forEach((ch, i) => {
+      const startX = word.x - totalW/2 + i*charW + charW/2
+      const dx = startX - word.x
+      const lf = 2.5 + Math.random() * 1.0
+      g.particles.push({
+        x: startX, y: word.y,
+        vx: (dx * 0.22 + (Math.random()-0.5) * 2.8) * energy,
+        vy: (-1.2 - Math.random() * 2.2) * energy,
+        life: lf, initLife: lf,
+        glyph: ch, col,
+        rot: (Math.random()-0.5) * 1.8, rotV: (Math.random()-0.5) * 0.14,
+      })
+    })
+    // Impact ring
+    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.55, initLife: 0.55, glyph:"", col, ring: true })
   }
 
-  // At chain ×8+ add a second outer ring in accent color
-  if (combo >= 8) {
-    const accentCol = combo >= 20 ? "#facc15" : combo >= 12 ? "#fb923c" : "#c4b5fd"
-    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.4, initLife: 0.4, glyph:"", col: accentCol, ring: true })
+  // Sparks scale to letter count — not combo
+  if (style !== "laser") {
+    const sparkCount = chars.length
+    const sparkGlyph = isBug ? "×" : isPow ? "◈" : "·"
+    for (let i = 0; i < sparkCount; i++) {
+      const a = (i / sparkCount) * Math.PI * 2 + Math.random() * 0.6
+      const spd = style === "mine" ? 2.5 + Math.random() * 3.0 : 1.2 + Math.random() * 2.5
+      g.particles.push({ x: word.x, y: word.y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd - 0.8, life: 0.45 + Math.random()*0.25, glyph: sparkGlyph, col })
+    }
   }
 
-  // Score/combo label — bigger and bolder at high chains
+  // Score/combo label
   if (pts > 0) {
     const chainStr = combo >= 3 ? `×${combo} ` : ""
     const label    = `${chainStr}+${pts}`
@@ -2377,8 +2425,8 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number)
   }
 
   // Fragment mechanic: 35% of non-powerup, non-fragment kills leave a letter cluster
-  // The cluster holds together on screen and requires a second shot to clear
-  if (!word.fragment && word.type !== "powerup" && word.text.length >= 3 && Math.random() < 0.35) {
+  // Laser burns clean — no fragments
+  if (style !== "laser" && !word.fragment && word.type !== "powerup" && word.text.length >= 3 && Math.random() < 0.35) {
     const maxFrag = Math.min(4, word.text.length - 1)
     const fragLen = 2 + Math.floor(Math.random() * (maxFrag - 1))
     const fragStart = Math.floor(Math.random() * (word.text.length - fragLen))
