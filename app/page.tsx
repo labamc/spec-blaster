@@ -2223,6 +2223,29 @@ export default function HomePage() {
         g.particles.push({ x: g.px, y: g.py, vx: Math.cos(a) * (4 + Math.random()*6), vy: Math.sin(a) * (4 + Math.random()*6) - 1, life: 0.8 + Math.random()*0.4, glyph: i % 3 === 0 ? "×" : "·", col: i % 3 === 0 ? "#f87171" : "#fca5a5" })
       }
       if (g.lives <= 0) {
+        // Signal Lost ceremony — big screen-wide burst before transitioning
+        const deathCol = g.boss ? g.boss.color : (g.endless ? "#a855f7" : BOSSES[Math.min(g.level - 1, BOSSES.length - 1)].color)
+        g.shake = 28; g.redFlash = 28; g.whiteFlash = 8
+        g.accentFlash = 50; g.accentFlashCol = deathCol
+        // radial debris from player
+        for (let di = 0; di < 40; di++) {
+          const da = (di / 40) * Math.PI * 2
+          const spd = 2.5 + Math.random() * 5
+          g.particles.push({ x: g.px, y: g.py,
+            vx: Math.cos(da) * spd, vy: Math.sin(da) * spd - 1.2,
+            life: 1.2 + Math.random() * 0.6,
+            glyph: di % 5 === 0 ? "✦" : di % 5 === 1 ? "×" : di % 5 === 2 ? "·" : di % 5 === 3 ? "◈" : "★",
+            col: di % 3 === 0 ? "#f87171" : di % 3 === 1 ? deathCol : "#fbbf24",
+            rot: Math.random() * Math.PI * 2, rotV: (Math.random()-0.5) * 0.1,
+            gravity: 0.03, friction: 0.97 })
+        }
+        // 3 expanding rings from player
+        for (let ri = 0; ri < 3; ri++)
+          g.particles.push({ x: g.px, y: g.py, vx: 0, vy: 0,
+            life: 0.8 - ri * 0.2, initLife: 0.8 - ri * 0.2, glyph: "", col: ri === 0 ? "#f87171" : ri === 1 ? deathCol : "#fbbf24", ring: true })
+        // "SIGNAL LOST" floats up from player
+        g.particles.push({ x: g.px, y: g.py - 20, vx: 0, vy: -0.9, life: 2.0,
+          glyph: "SIGNAL LOST", col: "#f87171", sz: 16, gravity: 0 })
         g.running = false; stopDrone()
         setScore(g.score); setLevel(g.level)
         try {
@@ -2963,25 +2986,60 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   }); ctx.globalAlpha = 1
 
   if (!attractMode) {
-    // journey bar
-    const jy = GH - 20, jx = 16, jw = cw - 32
-    ctx.fillStyle = "rgba(255,255,255,0.06)"; ctx.fillRect(jx, jy, jw, 8)
+    // journey bar — sector-colored segments, boss marker
+    const jy = GH - 20, jx = 16, jw = cw - 32, jh = 5
+    ctx.fillStyle = "rgba(255,255,255,0.05)"; ctx.fillRect(jx, jy, jw, jh)
     const prog = g.endless ? 1 : Math.min(1, ((g.level - 1) + (g.boss ? (1 - g.boss.hp/g.boss.maxHp)*0.85 : 0)) / 4)
-    ctx.fillStyle = "#966bec"; ctx.fillRect(jx, jy, jw * prog, 8)
+
+    if (!g.endless) {
+      // Draw each completed sector's segment in its boss color, active sector lighter
+      for (let si = 0; si < 4; si++) {
+        const segX = jx + jw * (si / 4)
+        const segW = jw / 4
+        const bosCol = BOSSES[si].color
+        const segEnd = Math.min(1, Math.max(0, prog - si / 4) * 4)  // 0→1 within this sector
+        if (segEnd <= 0) break
+        ctx.save()
+        ctx.globalAlpha = si < g.level - 1 ? 0.55 : 0.7 + 0.15 * Math.sin(now / 400)
+        ctx.fillStyle = bosCol
+        ctx.fillRect(segX, jy, segW * segEnd, jh)
+        ctx.restore()
+      }
+      // Segment dividers at 25%, 50%, 75%
+      ctx.save()
+      ctx.globalAlpha = 0.2; ctx.fillStyle = "#000020"
+      for (const frac of [0.25, 0.5, 0.75]) ctx.fillRect(jx + jw * frac - 0.5, jy, 1, jh)
+      ctx.restore()
+    } else {
+      // Endless: single purple bar
+      ctx.save(); ctx.globalAlpha = 0.65; ctx.fillStyle = "#a855f7"
+      ctx.fillRect(jx, jy, jw, jh)
+      ctx.restore()
+    }
+
+    // Phase labels
     ctx.font = "8px monospace"; ctx.textAlign = "center"
     SDLC_PHASES.forEach((ph, i) => {
       const lx = jx + jw*(i/4) + jw/8
       const isActive = !g.endless && i === g.level - 1
       const isDone   = i < g.level - 1 || g.endless
+      const phBosCol = BOSSES[i].color
       if (isActive) {
-        const activePulse = 0.7 + 0.3 * Math.sin(now / 350)
-        ctx.fillStyle = `rgba(150,107,236,${activePulse})`
+        const activePulse = 0.65 + 0.35 * Math.sin(now / 350)
+        ctx.fillStyle = `rgba(${
+          phBosCol === "#f87171" ? "248,113,113" :
+          phBosCol === "#fb923c" ? "251,146,60" :
+          phBosCol === "#facc15" ? "250,204,21" :
+          "74,222,128"
+        },${activePulse})`
         ctx.font = "bold 8px monospace"
       } else {
-        ctx.fillStyle = isDone ? "rgba(150,107,236,0.5)" : "rgba(255,255,255,0.18)"
+        ctx.fillStyle = isDone
+          ? `${BOSSES[i].color}66`
+          : "rgba(255,255,255,0.16)"
         ctx.font = "8px monospace"
       }
-      ctx.fillText(ph, lx, jy - 3)
+      ctx.fillText(ph, lx, jy - 4)
     })
   }
 
@@ -3909,14 +3967,17 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     const sBarCol = BOSSES[Math.min(g.level - 1, BOSSES.length - 1)].color
     ctx.fillStyle = "rgba(255,255,255,0.07)"; ctx.fillRect(10, 55, 68, 2)
     ctx.fillStyle = wPct >= 0.85 ? "#f87171" : `${sBarCol}88`; ctx.fillRect(10, 55, 68 * wPct, 2)
+    const sectorNoiseLabel = ["loops","echoes","shards","signals"]
+    const noiseLabel = sectorNoiseLabel[Math.min(g.level - 1, 3)]
+    const bossIncoming = BOSSES[Math.min(g.level - 1, BOSSES.length - 1)].name
     ctx.font = "7px monospace"; ctx.textAlign = "left"
     if (remaining <= 3 && remaining > 0) {
       const pulse = 0.7 + 0.3 * Math.abs(Math.sin(now / 140))
       ctx.fillStyle = `rgba(248,113,113,${pulse})`
-      ctx.fillText(`BOSS INCOMING · ${remaining}`, 10, 65)
+      ctx.fillText(`${bossIncoming} · ${remaining}`, 10, 65)
     } else {
       ctx.fillStyle = "rgba(255,255,255,0.18)"
-      ctx.fillText(`${remaining} patterns`, 10, 65)
+      ctx.fillText(`${remaining} ${noiseLabel}`, 10, 65)
     }
   }
 
