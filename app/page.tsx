@@ -825,8 +825,8 @@ export default function HomePage() {
       if (!g.bossWarn && !g.boss) {
         // Pre-boss surge: last 3 kills before boss, modest 20% faster spawn
         const preBossSurge = !g.endless && !g.boss && g.wordsKilled >= WORDS_TO_BOSS - 3
-        // Spawn interval: sector 1 ~1080ms, sector 4 ~720ms — tighter from the start
-        const baseInterval = Math.max(380, 1200 - g.level * 120 - (g.endless ? Math.floor(g.score / 1200) * 20 : 0))
+        // Spawn interval: sector 1 ~1300ms, sector 4 ~900ms — deliberate pace
+        const baseInterval = Math.max(500, 1450 - g.level * 130 - (g.endless ? Math.floor(g.score / 1200) * 20 : 0))
         const interval = preBossSurge ? Math.floor(baseInterval * 0.78) : baseInterval
         // Hard word cap — never overwhelm the screen
         const wordCap = g.endless ? MAX_WORDS_ENDLESS : MAX_WORDS_NORMAL
@@ -852,8 +852,8 @@ export default function HomePage() {
           // claude_design scales: base 12% slower → lv2 20% → lv3 28%
           const designLv = g.activeAgents.includes("claude_design") ? 1 + (g.agentUpgrades.claude_design ?? 0) : 0
           const designMul = designLv >= 3 ? 0.72 : designLv >= 2 ? 0.80 : designLv >= 1 ? 0.88 : 1
-          // Speed: sector 1 ~0.95, sector 4 ~1.5, endless capped at 2.2
-          const rawSpd = (0.8 + g.level * 0.14 + (g.endless ? Math.floor(g.score / 1200) * 0.05 : 0))
+          // Speed: sector 1 ~0.78, sector 4 ~1.26, endless capped at 2.2
+          const rawSpd = (0.62 + g.level * 0.16 + (g.endless ? Math.floor(g.score / 1200) * 0.05 : 0))
           const spd2 = Math.min(rawSpd, 2.2) * slowFactor * designMul
           const br = Math.random()
           let beh: Behavior = "fall"
@@ -1076,6 +1076,7 @@ export default function HomePage() {
       // spawn boss warning
       if (!g.boss && !g.bossWarn && !g.bossSpawned && !g.endless && g.wordsKilled >= WORDS_TO_BOSS) {
         g.bossSpawned = true
+        const bd = BOSSES[g.level - 1]  // must be before forEach — bd.color used inside
         // Scatter remaining words as score bonus before boss warning
         g.words.forEach(w => {
           if (w.type === "powerup") return
@@ -1084,7 +1085,6 @@ export default function HomePage() {
           spawnParticles(g, w.x, w.y, bd.color, "·", 4)
         })
         g.words = g.words.filter(w => w.type === "powerup")
-        const bd = BOSSES[g.level - 1]
         const charW = 18
         const nameW = bd.name.length * charW
         const cx = g.W / 2, cy = GH / 2
@@ -2427,13 +2427,13 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
     // ── DEFAULT — burst apart, arc, drift ────────────────────────────────
     // Letters fly outward from their positions with a real upward burst.
     // friction=0.99 (not 0.91) — so deceleration is imperceptible, no freeze.
-    // gravity pulls them into a natural arc. Life varies 2–4.5s for staggered fade.
+    // gravity pulls them into a natural arc. Life 0.8–1.3s for a satisfying hang.
     chars.forEach((ch, i) => {
       const startX = word.x - totalW/2 + i*charW + charW/2
       const dx = startX - word.x
       const vx = dx * 0.07 + (Math.random()-0.5) * 1.6   // radial + random spread
       const vy = -0.8 - Math.random() * 1.6               // upward burst
-      const lf = 0.6 + Math.random() * 0.4
+      const lf = 0.8 + Math.random() * 0.5
       g.particles.push({
         x: startX, y: word.y,
         vx, vy,
@@ -2445,7 +2445,7 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
         friction: 0.99,
       })
     })
-    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.45, initLife: 0.45, glyph:"", col, ring: true })
+    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.55, initLife: 0.55, glyph:"", col, ring: true })
   }
 
   // Sparks scale to letter count — not combo
@@ -2455,7 +2455,7 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
     for (let i = 0; i < sparkCount; i++) {
       const a = (i / sparkCount) * Math.PI * 2 + Math.random() * 0.6
       const spd = style === "mine" ? 2.5 + Math.random() * 3.0 : 1.2 + Math.random() * 2.5
-      g.particles.push({ x: word.x, y: word.y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd - 0.8, life: 0.45 + Math.random()*0.25, glyph: sparkGlyph, col })
+      g.particles.push({ x: word.x, y: word.y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd - 0.8, life: 0.58 + Math.random()*0.30, glyph: sparkGlyph, col })
     }
   }
 
