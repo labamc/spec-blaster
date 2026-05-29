@@ -467,11 +467,13 @@ export default function HomePage() {
   }
 
   function onUpgradePick(id: string) {
-    const g = G.current
-    g.upgrades[id] = (g.upgrades[id] ?? 0) + 1
-    const def = UPGRADES.find(u => u.id === id)
-    if (def?.instant) def.instant(g)
-    setLives(g.lives)
+    if (id !== "__skip__") {
+      const g = G.current
+      g.upgrades[id] = (g.upgrades[id] ?? 0) + 1
+      const def = UPGRADES.find(u => u.id === id)
+      if (def?.instant) def.instant(g)
+      setLives(g.lives)
+    }
     const lines = pendingCapyRef.current
     capyLinesRef.current = lines; capyIdxRef.current = 0
     setCapyLines(lines); setCapyIdx(0)
@@ -3523,7 +3525,9 @@ interface CrewState {
   names: Record<string,string>
 }
 
-// ── CLI Screen — card-based upgrade picker with crew panel ─────────────────
+// ── Command Deck ──────────────────────────────────────────────────────────
+// Primary nav: arrow keys + Enter. ESC goes back.
+// Power-user mode: TAB, :, or / activates a real CLI at the bottom.
 function CLIScreen({ options: initialOptions, onPick, score, kills, level, endless, endlessDepth, onReroll, crew, onAgentHire, onAgentUpgrade, onAgentRename }: {
   options: UpgradeDef[]; onPick: (id: string) => void; score: number; kills: number
   level?: number; endless?: boolean; endlessDepth?: number
@@ -3533,305 +3537,382 @@ function CLIScreen({ options: initialOptions, onPick, score, kills, level, endle
   onAgentUpgrade?: (id: string) => void
   onAgentRename?: (id: string, name: string) => void
 }) {
+  // ── State ──────────────────────────────────────────────────────────────
   const totalTokens = Math.floor(score / 6) + kills * 3
   const [liveOptions, setLiveOptions] = useState(initialOptions)
   const [tokensSpent, setTokensSpent] = useState(0)
-  const [rollCount, setRollCount] = useState(0)
-  // Selected card index for keyboard navigation
-  const [selectedIdx, setSelectedIdx] = useState(0)
-  // Terminal log lines (crew command feedback only)
-  const [log, setLog] = useState<{text:string; col?:string}[]>([])
-  // Text input for power-user crew commands
-  const [input, setInput] = useState("")
-  const inputRef = useRef<HTMLInputElement>(null)
+  const [rollCount, setRollCount]     = useState(0)
+  const [view,       setView]         = useState<"menu"|"ship"|"crew">("menu")
+  const [menuIdx,    setMenuIdx]      = useState(0)
+  const [cardIdx,    setCardIdx]      = useState(0)
+  const [cmdMode,    setCmdMode]      = useState(false)
+  const [cmdText,    setCmdText]      = useState("")
+  const [log,        setLog]          = useState<{text:string; col?:string}[]>([])
+  const inputRef  = useRef<HTMLInputElement>(null)
   const logEndRef = useRef<HTMLDivElement>(null)
 
   const tokensAvailable = totalTokens - tokensSpent
-  const rerollCost = REROLL_BASE_COST * (rollCount + 1)
-  const canReroll = !!onReroll && tokensAvailable >= rerollCost
+  const rerollCost      = REROLL_BASE_COST * (rollCount + 1)
+  const canReroll       = !!onReroll && tokensAvailable >= rerollCost
+  const allAgents       = [...AGENT_DEFS, ...MERC_AGENTS]
+  const deployedCrew    = crew ? allAgents.filter(a => crew.selected.includes(a.id) && crew.unlocked.includes(a.id)) : []
+  const hirableMercs    = crew ? MERC_AGENTS.filter(a => !crew.unlocked.includes(a.id)) : []
 
-  // Auto-scroll log
+  const MENU = [
+    { id:"continue", label:"CONTINUE RUN",  badge: liveOptions.length > 0 ? `${liveOptions.length} upgrade${liveOptions.length!==1?"s":""} pending` : "" },
+    { id:"ship",     label:"SHIP",          badge: liveOptions.length > 0 ? `${liveOptions.length} ready` : "" },
+    { id:"crew",     label:"CREW",          badge: deployedCrew.length > 0 ? `${deployedCrew.length} active` : "" },
+    { id:"capy",     label:"CAPY",          badge: "" },
+    { id:"archive",  label:"ARCHIVE",       badge: "" },
+  ]
+
+  // ── Effects ────────────────────────────────────────────────────────────
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior:"smooth" }) }, [log])
+  useEffect(() => { if (cmdMode) setTimeout(() => inputRef.current?.focus(), 0) }, [cmdMode])
 
-  // ── Keyboard nav: arrows cycle cards, 1/2/3 select, Enter deploys ──────
+  // ── Keyboard nav ───────────────────────────────────────────────────────
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-        e.preventDefault()
-        setSelectedIdx(i => {
-          const next = e.key === "ArrowUp" ? i - 1 : i + 1
-          return (next + liveOptions.length) % liveOptions.length
-        })
+    const h = (e: KeyboardEvent) => {
+      // Command mode: only ESC and Enter are captured; input handles the rest
+      if (cmdMode) {
+        if (e.key === "Escape") { e.preventDefault(); setCmdMode(false); setCmdText(""); }
+        if (e.key === "Enter")  { e.preventDefault(); runCmd(cmdText); setCmdText(""); }
         return
       }
-      if (["1","2","3"].includes(e.key) && document.activeElement !== inputRef.current) {
-        e.preventDefault()
-        const idx = parseInt(e.key) - 1
-        if (idx < liveOptions.length) { setSelectedIdx(idx) }
-        return
+      // Activate command mode
+      if (e.key === "Tab" || e.key === "/" || e.key === ":") {
+        e.preventDefault(); setCmdMode(true); return
       }
-      if (e.key === "Enter" && document.activeElement !== inputRef.current) {
-        e.preventDefault()
-        onPick(liveOptions[selectedIdx]?.id)
-        return
+      // View-specific nav
+      if (view === "menu") {
+        if      (e.key === "ArrowUp")   { e.preventDefault(); setMenuIdx(i => (i - 1 + MENU.length) % MENU.length) }
+        else if (e.key === "ArrowDown") { e.preventDefault(); setMenuIdx(i => (i + 1) % MENU.length) }
+        else if (e.key === "Enter")     { e.preventDefault(); activateMenu(MENU[menuIdx].id) }
+      } else if (view === "ship") {
+        if      (e.key === "ArrowUp")   { e.preventDefault(); setCardIdx(i => (i - 1 + liveOptions.length) % liveOptions.length) }
+        else if (e.key === "ArrowDown") { e.preventDefault(); setCardIdx(i => (i + 1) % liveOptions.length) }
+        else if (["1","2","3"].includes(e.key)) { e.preventDefault(); const n = +e.key - 1; if (n < liveOptions.length) setCardIdx(n) }
+        else if (e.key === "Enter")     { e.preventDefault(); onPick(liveOptions[cardIdx]?.id) }
+        else if (e.key === "Escape")    { e.preventDefault(); setView("menu") }
+      } else if (view === "crew") {
+        if (e.key === "Escape") { e.preventDefault(); setView("menu") }
       }
     }
-    window.addEventListener("keydown", handler)
-    return () => window.removeEventListener("keydown", handler)
-  }, [liveOptions, selectedIdx]) // eslint-disable-line
+    window.addEventListener("keydown", h)
+    return () => window.removeEventListener("keydown", h)
+  }, [cmdMode, view, menuIdx, cardIdx, liveOptions, cmdText, MENU.length]) // eslint-disable-line
 
-  // ── Crew command handler (power-user text input) ──────────────────────
-  function addLog(text: string, col?: string) {
-    setLog(prev => [...prev, { text, col }])
+  // ── Actions ────────────────────────────────────────────────────────────
+  function addLog(text: string, col?: string) { setLog(prev => [...prev, { text, col }]) }
+
+  function activateMenu(id: string) {
+    if      (id === "continue") { onPick("__skip__") }
+    else if (id === "ship")     { setView("ship"); setCardIdx(0) }
+    else if (id === "crew")     { setView("crew") }
+    else { addLog(`${id} — coming soon`, "rgba(255,255,255,0.25)") }
   }
 
-  function handleCrewCommand(raw: string) {
-    const cmd = raw.trim()
-    if (!cmd) return
-    setInput("")
+  function doReroll() {
+    if (!onReroll || tokensAvailable < rerollCost) return
+    const newOpts = onReroll()
+    if (!newOpts?.length) return
+    setTokensSpent(t => t + rerollCost); setRollCount(r => r + 1)
+    setLiveOptions(newOpts); setCardIdx(0)
+    addLog(`rerolled — ${rerollCost}t spent`, "rgba(150,107,236,0.7)")
+  }
 
-    if (cmd.toLowerCase() === "reroll" || cmd.toLowerCase() === "re-roll") {
-      if (!onReroll) { addLog("reroll not available", "#f87171"); return }
-      if (tokensAvailable < rerollCost) {
-        addLog(`need ${rerollCost}t — have ${tokensAvailable}t`, "#f87171"); return
-      }
-      const newOpts = onReroll()
-      if (!newOpts?.length) return
-      setTokensSpent(t => t + rerollCost)
-      setRollCount(r => r + 1)
-      setLiveOptions(newOpts)
-      setSelectedIdx(0)
-      addLog(`rerolled — ${rerollCost}t spent`, "rgba(150,107,236,0.9)")
+  function runCmd(raw: string) {
+    const cmd = raw.trim(); if (!cmd) return
+    const lo = cmd.toLowerCase()
+    addLog(`> ${cmd}`, "rgba(150,107,236,0.6)")
+
+    if (lo === "help" || lo === "?") {
+      addLog("ship      upgrade systems",         "rgba(255,255,255,0.5)")
+      addLog("crew      manage agents",           "rgba(255,255,255,0.5)")
+      addLog("stats     run statistics",          "rgba(255,255,255,0.5)")
+      addLog("continue  return to mission",       "rgba(255,255,255,0.5)")
+      addLog("hire <agent>  upgrade <agent>  rename <agent> <name>", "rgba(255,255,255,0.3)")
+      addLog("reroll    fresh upgrade options",   "rgba(255,255,255,0.3)")
       return
     }
-
-    if (cmd.toLowerCase() === "crew" || cmd.toLowerCase() === "manifest") {
+    if (lo === "ship")     { setView("ship"); setCmdMode(false); return }
+    if (lo === "crew" || lo === "manifest") {
       if (!crew) { addLog("no crew data", "#f87171"); return }
-      const deployed = [...AGENT_DEFS,...MERC_AGENTS].filter(a => crew.selected.includes(a.id) && crew.unlocked.includes(a.id))
-      const hirable = MERC_AGENTS.filter(a => !crew.unlocked.includes(a.id))
-      addLog("── THE SIGNAL · CREW ────────────────", "rgba(150,107,236,0.7)")
-      deployed.forEach(a => {
+      addLog("── CREW MANIFEST ──────────────────────", "rgba(150,107,236,0.55)")
+      deployedCrew.forEach(a => {
         const lv = 1 + (crew.upgrades[a.id] ?? 0)
-        addLog(`  ● ${(crew.names[a.id] ?? a.name).padEnd(18)} lv.${lv}  ${a.desc}`, "#4ade80")
+        addLog(`  ● ${(crew.names[a.id] ?? a.name).padEnd(20)} lv.${lv}`, "#4ade80")
       })
-      hirable.forEach(a => addLog(`  ◇ ${a.name.padEnd(18)} ${a.cost}t  hire: hire ${a.id.replace("claude_","")}`, "rgba(255,255,255,0.38)"))
-      addLog("─────────────────────────────────────", "rgba(150,107,236,0.3)")
+      hirableMercs.forEach(a => addLog(`  ◇ ${a.name.padEnd(20)} ${a.cost}t`, "rgba(255,255,255,0.32)"))
       return
     }
+    if (lo === "continue") { onPick("__skip__"); return }
+    if (lo === "stats") {
+      addLog(`score   ${score.toLocaleString()}`, "#4ade80")
+      addLog(`kills   ${kills}`,                  "#4ade80")
+      addLog(`tokens  ${tokensAvailable}t`,       "#4ade80")
+      if (endless) addLog(`depth   ${endlessDepth ?? 1}`, "#4ade80")
+      return
+    }
+    if (lo === "reroll" || lo === "re-roll") { doReroll(); return }
 
     const hireM = cmd.match(/^hire\s+(.+)$/i)
     if (hireM) {
       const t = hireM[1].trim().toLowerCase()
       const merc = MERC_AGENTS.find(a => a.name.toLowerCase().includes(t) || a.id.replace("claude_","").includes(t) || a.role.toLowerCase().includes(t))
-      if (!merc) { addLog(`unknown agent: "${t}" — try: hire ops / hire data / hire exec`, "#f87171"); return }
+      if (!merc) { addLog(`unknown: "${t}" — try hire ops / hire data / hire exec`, "#f87171"); return }
       if (crew?.unlocked.includes(merc.id)) { addLog(`${merc.name} already on crew`, "#fdba74"); return }
       if (tokensAvailable < merc.cost) { addLog(`need ${merc.cost}t — have ${tokensAvailable}t`, "#f87171"); return }
-      setTokensSpent(s => s + merc.cost)
-      onAgentHire?.(merc.id)
-      addLog(`${merc.name} hired — ${merc.desc}`, "#4ade80")
-      addLog(`${merc.cost}t spent · ${tokensAvailable - merc.cost}t remaining`, "rgba(255,255,255,0.38)")
-      return
+      setTokensSpent(s => s + merc.cost); onAgentHire?.(merc.id)
+      addLog(`${merc.name} hired`, "#4ade80"); return
     }
 
     const upM = cmd.match(/^upgrade\s+(.+)$/i)
     if (upM) {
       const t = upM[1].trim().toLowerCase()
-      const all = [...AGENT_DEFS,...MERC_AGENTS]
-      const agent = all.find(a => crew?.unlocked.includes(a.id) && (
+      const agent = allAgents.find(a => crew?.unlocked.includes(a.id) && (
         a.name.toLowerCase().includes(t) || a.id.replace("claude_","").includes(t) ||
         a.role.toLowerCase().includes(t) || (crew?.names[a.id]??"").toLowerCase().includes(t)
       ))
-      if (!agent) { addLog(`agent not found — type "crew" to see your roster`, "#f87171"); return }
+      if (!agent) { addLog(`not found — try "crew"`, "#f87171"); return }
       const lv = crew?.upgrades[agent.id] ?? 0
-      if (lv >= MAX_AGENT_UPGRADES) { addLog(`${crew?.names[agent.id] ?? agent.name} is at max level`, "#fdba74"); return }
+      if (lv >= MAX_AGENT_UPGRADES) { addLog(`at max level`, "#fdba74"); return }
       const cost = AGENT_UPGRADE_COSTS[lv]
       if (tokensAvailable < cost) { addLog(`need ${cost}t — have ${tokensAvailable}t`, "#f87171"); return }
-      setTokensSpent(s => s + cost)
-      onAgentUpgrade?.(agent.id)
-      addLog(`${crew?.names[agent.id] ?? agent.name} → lv.${lv+2}  ${agent.desc}`, "#4ade80")
-      addLog(`${cost}t spent`, "rgba(255,255,255,0.38)")
-      return
+      setTokensSpent(s => s + cost); onAgentUpgrade?.(agent.id)
+      addLog(`${crew?.names[agent.id] ?? agent.name} → lv.${lv+2}`, "#4ade80"); return
     }
 
     const renM = cmd.match(/^rename\s+(\S+)\s+(.+)$/i)
     if (renM) {
-      const t = renM[1].trim().toLowerCase()
-      const newName = renM[2].trim().toUpperCase().slice(0,24)
-      const agent = [...AGENT_DEFS,...MERC_AGENTS].find(a => crew?.unlocked.includes(a.id) && (
+      const t = renM[1].toLowerCase(), newName = renM[2].trim().toUpperCase().slice(0,24)
+      const agent = allAgents.find(a => crew?.unlocked.includes(a.id) && (
         a.name.toLowerCase().includes(t) || a.id.replace("claude_","").includes(t) ||
         (crew?.names[a.id]??"").toLowerCase().includes(t)
       ))
-      if (!agent) { addLog(`agent not found in your crew`, "#f87171"); return }
+      if (!agent) { addLog(`agent not found`, "#f87171"); return }
       onAgentRename?.(agent.id, newName)
-      addLog(`${agent.name} → ${newName}`, "#4ade80")
-      return
+      addLog(`renamed → ${newName}`, "#4ade80"); return
     }
 
-    if (cmd.toLowerCase() === "help" || cmd === "?") {
-      addLog("crew commands:", "rgba(150,107,236,0.9)")
-      addLog("  crew                  show full manifest", "rgba(255,255,255,0.5)")
-      addLog("  hire ops/data/exec    recruit a merc agent", "rgba(255,255,255,0.5)")
-      addLog("  upgrade <name>        level up an agent (400/800t)", "rgba(255,255,255,0.5)")
-      addLog("  rename <name> <alias> give an agent a callsign", "rgba(255,255,255,0.5)")
-      addLog("  reroll                fresh upgrade options (120t+)", "rgba(255,255,255,0.5)")
-      return
-    }
-
-    addLog(`unknown: "${cmd}" — type help for commands`, "rgba(255,255,255,0.35)")
+    addLog(`unknown: "${cmd}" — help for commands`, "rgba(255,255,255,0.28)")
   }
 
-  // deployed crew for the panel (including mercs)
-  const deployedCrew = crew ? [...AGENT_DEFS,...MERC_AGENTS].filter(a => crew.selected.includes(a.id) && crew.unlocked.includes(a.id)) : []
-  const hirableMercs = crew ? MERC_AGENTS.filter(a => !crew.unlocked.includes(a.id)) : []
+  // ── Styles ─────────────────────────────────────────────────────────────
+  const C = {
+    purple:   "rgba(150,107,236,0.55)",
+    purpleHi: "#c4b5fd",
+    dim:      "rgba(255,255,255,0.22)",
+    dimmer:   "rgba(255,255,255,0.11)",
+    text:     "rgba(255,255,255,0.65)",
+    textHi:   "#e9d5ff",
+    green:    "rgba(74,222,128,0.65)",
+    border:   "rgba(150,107,236,0.16)",
+    borderDim:"rgba(255,255,255,0.07)",
+  }
 
+  const sectorLabel = endless ? `DEPTH ${endlessDepth ?? 1}` : level != null ? `SECTOR ${level} → ${level + 1}` : ""
+
+  // ── Render ─────────────────────────────────────────────────────────────
   return (
     <div style={{ position:"absolute", inset:0, background:"#09090f", zIndex:10, display:"flex", flexDirection:"column", fontFamily:"monospace", overflow:"hidden" }}>
 
-      {/* ── Header ── */}
-      <div style={{ borderBottom:"1px solid rgba(150,107,236,0.2)", padding:"0.55rem 1.4rem", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-        <div>
-          <span style={{ color:"rgba(150,107,236,0.6)", fontSize:"0.6rem", letterSpacing:"0.18em" }}>COMPILE TERMINAL</span>
-          {level != null && (
-            <span style={{ color:"rgba(255,255,255,0.35)", fontSize:"0.6rem", letterSpacing:"0.08em", marginLeft:"0.75rem" }}>
-              {endless ? `DEPTH ${endlessDepth ?? 1}` : `SECTOR ${level} → ${level + 1}`}
-            </span>
-          )}
+      {/* Header */}
+      <div style={{ borderBottom:`1px solid ${C.border}`, padding:"0.55rem 1.5rem", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+        <div style={{ display:"flex", gap:"1.1rem", alignItems:"center" }}>
+          <span style={{ color:C.purple, fontSize:"0.58rem", letterSpacing:"0.22em" }}>COMMAND DECK</span>
+          {view !== "menu" && <span style={{ color:C.dim, fontSize:"0.58rem", letterSpacing:"0.1em" }}>/ {view === "ship" ? "SHIP" : view.toUpperCase()}</span>}
+          {sectorLabel && <span style={{ color:C.dimmer, fontSize:"0.58rem" }}>{sectorLabel}</span>}
         </div>
-        <span style={{ color:"rgba(74,222,128,0.75)", fontSize:"0.62rem", letterSpacing:"0.06em" }}>
-          {tokensAvailable.toLocaleString()} TOKENS
-        </span>
+        <span style={{ color:C.green, fontSize:"0.6rem" }}>{tokensAvailable.toLocaleString()}t</span>
       </div>
 
-      <div style={{ flex:1, overflowY:"auto", padding:"1rem 1.2rem", display:"flex", flexDirection:"column", gap:"1rem" }}>
+      {/* Main content */}
+      <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"1.5rem 1.6rem", overflow:"hidden", minHeight:0 }}>
 
-        {/* ── Upgrade cards ── */}
-        <div>
-          <p style={{ color:"rgba(255,255,255,0.35)", fontSize:"0.6rem", letterSpacing:"0.12em", margin:"0 0 0.6rem" }}>
-            SIGNAL UPGRADE · ↑↓ or 1–3 to select · ENTER to deploy
-          </p>
-          <div style={{ display:"flex", flexDirection:"column", gap:"0.45rem" }}>
-            {liveOptions.map((opt, i) => {
-              const active = i === selectedIdx
+        {/* ── MENU VIEW ── */}
+        {view === "menu" && !cmdMode && (
+          <div style={{ display:"flex", flexDirection:"column", gap:"0.04rem" }}>
+            {MENU.map((item, i) => {
+              const active = i === menuIdx
               return (
-                <div key={opt.id}
-                  onClick={() => { setSelectedIdx(i); onPick(opt.id) }}
-                  onMouseEnter={() => setSelectedIdx(i)}
-                  style={{
-                    border: active ? "1px solid rgba(150,107,236,0.7)" : "1px solid rgba(255,255,255,0.1)",
-                    borderRadius:"6px",
-                    padding:"0.65rem 0.9rem",
-                    background: active ? "rgba(150,107,236,0.1)" : "rgba(255,255,255,0.03)",
-                    cursor:"pointer",
-                    transition:"all 0.12s",
-                    display:"grid",
-                    gridTemplateColumns:"1.6rem 1fr auto",
-                    alignItems:"center",
-                    gap:"0.6rem",
-                  }}>
-                  <span style={{ color: active ? "#c4b5fd" : "rgba(255,255,255,0.3)", fontSize:"0.78rem", fontWeight:700 }}>[{i+1}]</span>
-                  <div>
-                    <div style={{ color: active ? "#e9d5ff" : "rgba(255,255,255,0.8)", fontSize:"0.78rem", fontWeight:600, letterSpacing:"0.04em", marginBottom:"0.18rem" }}>{opt.name}</div>
-                    <div style={{ color: active ? "rgba(196,181,253,0.65)" : "rgba(255,255,255,0.35)", fontSize:"0.68rem" }}>{opt.desc}</div>
-                  </div>
-                  {active && <span style={{ color:"#966bec", fontSize:"0.75rem" }}>▶</span>}
+                <div key={item.id}
+                  onClick={() => { setMenuIdx(i); activateMenu(item.id) }}
+                  onMouseEnter={() => setMenuIdx(i)}
+                  style={{ display:"flex", alignItems:"baseline", gap:"0.8rem", padding:"0.42rem 0.4rem",
+                    cursor:"pointer", borderRadius:"3px",
+                    background: active ? "rgba(150,107,236,0.07)" : "transparent" }}>
+                  <span style={{ color: active ? "#a5b4fc" : "transparent", fontSize:"0.75rem", width:"0.75rem", flexShrink:0 }}>{">"}</span>
+                  <span style={{ color: active ? C.textHi : "rgba(255,255,255,0.42)", fontSize:"0.8rem",
+                    letterSpacing:"0.07em", fontWeight: active ? 600 : 400 }}>
+                    {item.label}
+                  </span>
+                  {item.badge && (
+                    <span style={{ color: active ? "rgba(196,181,253,0.5)" : "rgba(255,255,255,0.16)", fontSize:"0.6rem" }}>
+                      {item.badge}
+                    </span>
+                  )}
                 </div>
               )
             })}
           </div>
-          {/* ENTER to deploy hint + reroll */}
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:"0.6rem", paddingTop:"0.5rem", borderTop:"1px solid rgba(255,255,255,0.06)" }}>
-            <span style={{ color:"rgba(150,107,236,0.55)", fontSize:"0.62rem" }}>ENTER or click to deploy upgrade [{selectedIdx+1}]</span>
-            {canReroll && (
-              <button onClick={() => handleCrewCommand("reroll")} style={{
-                background:"none", border:"1px solid rgba(255,255,255,0.12)", borderRadius:"4px",
-                color:"rgba(255,255,255,0.45)", fontSize:"0.6rem", fontFamily:"monospace",
-                padding:"0.2rem 0.6rem", cursor:"pointer", letterSpacing:"0.06em",
-              }}>reroll ({rerollCost}t)</button>
-            )}
-          </div>
-        </div>
+        )}
 
-        {/* ── Crew panel ── */}
-        {(deployedCrew.length > 0 || hirableMercs.length > 0) && (
-          <div style={{ borderTop:"1px solid rgba(255,255,255,0.07)", paddingTop:"0.8rem" }}>
-            <p style={{ color:"rgba(255,255,255,0.4)", fontSize:"0.6rem", letterSpacing:"0.2em", margin:"0 0 0.55rem" }}>CREW</p>
-            {deployedCrew.length > 0 && (
-              <div style={{ display:"flex", flexWrap:"wrap", gap:"0.35rem", marginBottom:"0.5rem" }}>
-                {deployedCrew.map(a => {
-                  const lv = 1 + (crew?.upgrades[a.id] ?? 0)
-                  const canUp = (crew?.upgrades[a.id] ?? 0) < MAX_AGENT_UPGRADES && tokensAvailable >= AGENT_UPGRADE_COSTS[crew?.upgrades[a.id] ?? 0]
+        {/* ── COMMAND MODE LOG ── */}
+        {cmdMode && (
+          <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:"0.04rem", minHeight:0 }}>
+            {log.length === 0 && (
+              <span style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.68rem" }}>
+                type <span style={{ color:C.purple }}>help</span> for available commands
+              </span>
+            )}
+            {log.slice(-14).map((l, i) => (
+              <div key={i} style={{ fontSize:"0.68rem", lineHeight:1.8, color: l.col ?? "rgba(255,255,255,0.48)",
+                fontFamily:"monospace", whiteSpace:"pre" }}>{l.text}</div>
+            ))}
+            <div ref={logEndRef} />
+          </div>
+        )}
+
+        {/* ── SHIP VIEW — upgrade cards ── */}
+        {view === "ship" && (
+          <div style={{ display:"flex", flexDirection:"column", flex:1 }}>
+            <p style={{ color:C.dimmer, fontSize:"0.57rem", letterSpacing:"0.16em", margin:"0 0 1.1rem" }}>SIGNAL UPGRADES</p>
+            <div style={{ display:"flex", flexDirection:"column", gap:"0.45rem" }}>
+              {liveOptions.map((opt, i) => {
+                const active = i === cardIdx
+                return (
+                  <div key={opt.id}
+                    onClick={() => { setCardIdx(i); onPick(opt.id) }}
+                    onMouseEnter={() => setCardIdx(i)}
+                    style={{ border: active ? "1px solid rgba(150,107,236,0.6)" : `1px solid ${C.borderDim}`,
+                      borderRadius:"5px", padding:"0.65rem 0.9rem",
+                      background: active ? "rgba(150,107,236,0.08)" : "rgba(255,255,255,0.02)",
+                      cursor:"pointer", display:"grid", gridTemplateColumns:"1.4rem 1fr auto",
+                      gap:"0.6rem", alignItems:"center" }}>
+                    <span style={{ color: active ? "#a5b4fc" : C.dim, fontSize:"0.7rem", fontWeight:700 }}>[{i+1}]</span>
+                    <div>
+                      <div style={{ color: active ? C.textHi : C.text, fontSize:"0.78rem", fontWeight:600,
+                        letterSpacing:"0.04em", marginBottom:"0.14rem" }}>{opt.name}</div>
+                      <div style={{ color: active ? "rgba(196,181,253,0.52)" : "rgba(255,255,255,0.26)", fontSize:"0.65rem" }}>{opt.desc}</div>
+                    </div>
+                    {active && <span style={{ color:"#8b5cf6" }}>▶</span>}
+                  </div>
+                )
+              })}
+            </div>
+            <div style={{ marginTop:"0.85rem", paddingTop:"0.55rem", borderTop:`1px solid ${C.borderDim}`,
+              display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <span style={{ color:C.dimmer, fontSize:"0.58rem" }}>↑↓ or 1–{liveOptions.length}  ·  ENTER deploy  ·  ESC back</span>
+              {canReroll && (
+                <button onClick={doReroll} style={{ background:"none", border:`1px solid ${C.borderDim}`, borderRadius:"4px",
+                  color:C.dim, fontSize:"0.6rem", fontFamily:"monospace", padding:"0.2rem 0.55rem", cursor:"pointer" }}>
+                  reroll ({rerollCost}t)
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── CREW VIEW ── */}
+        {view === "crew" && (
+          <div>
+            <p style={{ color:C.dimmer, fontSize:"0.57rem", letterSpacing:"0.16em", margin:"0 0 1rem" }}>CREW MANIFEST</p>
+            {deployedCrew.length === 0 && (
+              <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.7rem" }}>No crew yet — survive sector 1 to recruit agents.</p>
+            )}
+            {deployedCrew.map(a => {
+              const lv = 1 + (crew?.upgrades[a.id] ?? 0)
+              const upCost = AGENT_UPGRADE_COSTS[crew?.upgrades[a.id] ?? 0]
+              const canUp  = (crew?.upgrades[a.id] ?? 0) < MAX_AGENT_UPGRADES && tokensAvailable >= upCost
+              return (
+                <div key={a.id} style={{ display:"flex", alignItems:"center", gap:"0.7rem", marginBottom:"0.45rem" }}>
+                  <span style={{ color:"rgba(74,222,128,0.65)", fontSize:"0.7rem" }}>●</span>
+                  <span style={{ color:C.text, fontSize:"0.72rem", minWidth:"11rem" }}>{crew?.names[a.id] ?? a.name}</span>
+                  <span style={{ color:C.dimmer, fontSize:"0.64rem" }}>lv.{lv}</span>
+                  {canUp && (
+                    <button onClick={() => { setTokensSpent(s => s + upCost); onAgentUpgrade?.(a.id); addLog(`${crew?.names[a.id] ?? a.name} → lv.${lv+1}`, "#4ade80") }}
+                      style={{ background:"rgba(150,107,236,0.09)", border:"1px solid rgba(150,107,236,0.25)",
+                        borderRadius:"3px", color:"rgba(150,107,236,0.8)", fontSize:"0.6rem",
+                        padding:"0.12rem 0.45rem", cursor:"pointer", fontFamily:"monospace" }}>
+                      ↑ {upCost}t
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+            {hirableMercs.length > 0 && (
+              <div style={{ marginTop:"0.9rem", paddingTop:"0.65rem", borderTop:`1px solid ${C.borderDim}` }}>
+                <p style={{ color:C.dimmer, fontSize:"0.57rem", letterSpacing:"0.16em", margin:"0 0 0.65rem" }}>AVAILABLE</p>
+                {hirableMercs.map(a => {
+                  const canHire = tokensAvailable >= a.cost
                   return (
-                    <div key={a.id} style={{ display:"flex", alignItems:"center", gap:"0.3rem" }}>
-                      <span style={{
-                        background:"rgba(74,222,128,0.07)", border:"1px solid rgba(74,222,128,0.25)",
-                        borderRadius:"4px", padding:"0.18rem 0.5rem",
-                        color:"rgba(74,222,128,0.8)", fontSize:"0.62rem",
-                      }}>
-                        {(crew?.names[a.id] ?? a.name)} <span style={{ opacity:0.5 }}>lv{lv}</span>
-                      </span>
-                      {canUp && (
-                        <button onClick={() => handleCrewCommand(`upgrade ${a.id.replace("claude_","")}`)} title={`Upgrade ${a.name} — ${AGENT_UPGRADE_COSTS[crew?.upgrades[a.id]??0]}t`} style={{
-                          background:"rgba(150,107,236,0.12)", border:"1px solid rgba(150,107,236,0.3)",
-                          borderRadius:"3px", color:"rgba(150,107,236,0.8)", fontSize:"0.58rem",
-                          padding:"0.12rem 0.4rem", cursor:"pointer", fontFamily:"monospace",
-                        }}>↑ {AGENT_UPGRADE_COSTS[crew?.upgrades[a.id]??0]}t</button>
+                    <div key={a.id} style={{ display:"flex", alignItems:"center", gap:"0.7rem", marginBottom:"0.4rem" }}>
+                      <span style={{ color: canHire ? "rgba(251,146,60,0.6)" : C.dimmer, fontSize:"0.7rem" }}>◇</span>
+                      <span style={{ color: canHire ? "rgba(251,146,60,0.82)" : "rgba(255,255,255,0.25)", fontSize:"0.72rem", minWidth:"11rem" }}>{a.name}</span>
+                      <span style={{ color:C.dimmer, fontSize:"0.64rem" }}>{a.cost}t</span>
+                      {canHire && (
+                        <button onClick={() => { setTokensSpent(s => s + a.cost); onAgentHire?.(a.id); addLog(`${a.name} hired`, "#4ade80") }}
+                          style={{ background:"rgba(251,146,60,0.09)", border:"1px solid rgba(251,146,60,0.25)",
+                            borderRadius:"3px", color:"rgba(251,146,60,0.8)", fontSize:"0.6rem",
+                            padding:"0.12rem 0.45rem", cursor:"pointer", fontFamily:"monospace" }}>
+                          hire
+                        </button>
                       )}
                     </div>
                   )
                 })}
               </div>
             )}
-            {hirableMercs.length > 0 && (
-              <div style={{ display:"flex", flexWrap:"wrap", gap:"0.35rem" }}>
-                {hirableMercs.map(a => {
-                  const canHire = tokensAvailable >= a.cost
-                  return (
-                    <button key={a.id} onClick={() => canHire && handleCrewCommand(`hire ${a.id.replace("claude_","")}`)}
-                      title={a.desc}
-                      style={{
-                        background: canHire ? "rgba(251,146,60,0.08)" : "rgba(255,255,255,0.03)",
-                        border: canHire ? "1px solid rgba(251,146,60,0.3)" : "1px solid rgba(255,255,255,0.08)",
-                        borderRadius:"4px", padding:"0.18rem 0.55rem",
-                        color: canHire ? "rgba(251,146,60,0.85)" : "rgba(255,255,255,0.25)",
-                        fontSize:"0.62rem", fontFamily:"monospace", cursor: canHire ? "pointer" : "default",
-                      }}>
-                      + {a.name} <span style={{ opacity:0.6 }}>{a.cost}t</span>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
+            <div style={{ marginTop:"1.2rem" }}>
+              <span style={{ color:C.dimmer, fontSize:"0.58rem" }}>ESC back  ·  TAB command mode</span>
+            </div>
           </div>
         )}
 
-        {/* ── Terminal log (crew command feedback) ── */}
-        {log.length > 0 && (
-          <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"0.6rem" }}>
-            {log.slice(-6).map((l,i) => (
-              <div key={i} style={{ fontSize:"0.7rem", lineHeight:1.7, color: l.col ?? "rgba(255,255,255,0.55)", fontFamily:"monospace" }}>{l.text}</div>
-            ))}
-            <div ref={logEndRef} />
+        {/* ── CAPY / ARCHIVE placeholder ── */}
+        {(view === ("capy" as string) || view === ("archive" as string)) && (
+          <div>
+            <p style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.7rem" }}>
+              {(view as string).toUpperCase()} — coming soon
+            </p>
+            <p style={{ color:C.dimmer, fontSize:"0.58rem", marginTop:"0.5rem" }}>ESC back</p>
           </div>
         )}
 
       </div>
 
-      {/* ── Power-user command input ── */}
-      <div style={{ borderTop:"1px solid rgba(255,255,255,0.08)", padding:"0.55rem 1.2rem 0.8rem", display:"flex", gap:"0.5rem", alignItems:"center", flexShrink:0 }}>
-        <span style={{ color:"rgba(150,107,236,0.6)", fontSize:"0.8rem" }}>{">"}</span>
-        <input
-          ref={inputRef}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") handleCrewCommand(input) }}
-          placeholder="crew · hire ops · upgrade pm · rename pm GHOST · help"
-          style={{
-            flex:1, background:"transparent", border:"none", outline:"none",
-            color:"rgba(255,255,255,0.75)", fontFamily:"monospace", fontSize:"0.72rem",
-            caretColor:"#966bec",
-          }}
-        />
+      {/* Status bar / command input */}
+      <div style={{ borderTop:`1px solid ${C.borderDim}`, padding:"0.5rem 1.5rem 0.65rem",
+        flexShrink:0, display:"flex", alignItems:"center", gap:"0.5rem" }}>
+        {cmdMode ? (
+          <>
+            <span style={{ color:C.purple, fontSize:"0.8rem" }}>{">"}</span>
+            <input
+              ref={inputRef}
+              value={cmdText}
+              onChange={e => setCmdText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter")  { e.preventDefault(); runCmd(cmdText); setCmdText("") }
+                if (e.key === "Escape") { e.preventDefault(); setCmdMode(false); setCmdText("") }
+              }}
+              placeholder="type a command — help for list"
+              style={{ flex:1, background:"transparent", border:"none", outline:"none",
+                color:"rgba(255,255,255,0.72)", fontFamily:"monospace", fontSize:"0.72rem", caretColor:"#966bec" }}
+            />
+            <span style={{ color:C.dimmer, fontSize:"0.57rem" }}>ESC exit</span>
+          </>
+        ) : (
+          <span style={{ color:C.dimmer, fontSize:"0.57rem", letterSpacing:"0.05em" }}>
+            {view === "menu"
+              ? "↑↓ navigate  ·  ENTER select  ·  TAB command mode"
+              : view === "ship"
+                ? "↑↓ or 1–3 select  ·  ENTER deploy  ·  ESC back"
+                : "ESC back  ·  TAB command mode"}
+          </span>
+        )}
       </div>
+
     </div>
   )
 }
