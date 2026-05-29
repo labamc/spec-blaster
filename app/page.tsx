@@ -2329,62 +2329,67 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
   const charW = 6.8, totalW = chars.length * charW
 
   if (style === "laser") {
-    // ── ASH / DISSOLVE ──────────────────────────────────────────────────
-    // Letters crumble in place — barely move, drift down like ash
+    // ── EVAPORATE IN PLACE ───────────────────────────────────────────────
+    // Letters do not move. The laser neutralises them where they stand.
+    // They flash white then dissolve — clean, instant, column-precise.
     chars.forEach((ch, i) => {
       const startX = word.x - totalW/2 + i*charW + charW/2
-      const lf = 1.4 + Math.random() * 0.6
+      const lf = 0.9 + Math.random() * 0.4
       g.particles.push({
         x: startX, y: word.y,
-        vx: (Math.random()-0.5) * 0.5,
-        vy: 0.15 + Math.random() * 0.4,   // drift downward — ash falls
+        vx: 0, vy: 0,
         life: lf, initLife: lf,
-        glyph: ch, col: "#94a3b8",         // slate-grey ash color
-        rot: (Math.random()-0.5) * 0.5,
-        rotV: (Math.random()-0.5) * 0.01,
+        glyph: ch, col: "#ffffff",  // flash white — pure energy hit
+        rot: 0, rotV: 0,
+        gravity: 0, friction: 0,
       })
     })
-    // Faint dissolution ring
-    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.4, initLife: 0.4, glyph:"", col: "#64748b", ring: true })
+    // Tight white flash ring — laser precision
+    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.35, initLife: 0.35, glyph:"", col: "#ffffff", ring: true })
 
   } else if (style === "mine") {
-    // ── BLAST / RADIAL ───────────────────────────────────────────────────
-    // Letters explode outward in all directions from the mine's ground zero
+    // ── SHOCKWAVE BLAST ──────────────────────────────────────────────────
+    // Depth charge detonates below — letters hurl outward from blast centre,
+    // tumble chaotically, travel far. Heavy rotation, wide spread.
     chars.forEach((ch, i) => {
-      const angle = (i / chars.length) * Math.PI * 2 + Math.random() * 0.8
-      const spd   = 1.8 + Math.random() * 2.2
-      const lf    = 2.0 + Math.random() * 1.0
+      const angle = Math.random() * Math.PI * 2  // truly random direction
+      const spd   = 2.5 + Math.random() * 2.5    // faster than default
+      const lf    = 3.0 + Math.random() * 1.0
       g.particles.push({
         x: word.x, y: word.y,
-        vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd - 0.5,
+        vx: Math.cos(angle) * spd,
+        vy: Math.sin(angle) * spd,
         life: lf, initLife: lf,
         glyph: ch, col,
-        rot: (Math.random()-0.5) * 2.0, rotV: (Math.random()-0.5) * 0.12,
-        gravity: 0.04,
+        rot: Math.random() * Math.PI * 2,  // start at random angle
+        rotV: (Math.random()-0.5) * 0.28,  // heavy tumble
+        gravity: 0.03,
+        friction: 0.95,  // travels ~80px before stopping — wide scatter
       })
     })
-    // Heavy blast ring
-    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.9, initLife: 0.9, glyph:"", col: "#f59e0b", ring: true })
-    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.6, initLife: 0.6, glyph:"", col: "#ffffff", ring: true })
+    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 1.1, initLife: 1.1, glyph:"", col: "#f59e0b", ring: true })
+    g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.65, initLife: 0.65, glyph:"", col: "#ffffff", ring: true })
 
   } else if (style === "spray") {
-    // ── WIDE HORIZONTAL SCATTER ──────────────────────────────────────────
-    // Letters fan out sideways — flat and wide, low arc
+    // ── HORIZONTAL SWEEP ─────────────────────────────────────────────────
+    // Scatter burst knocks letters sideways — almost no vertical component.
+    // Letters slide far left/right like a shotgun swept across the word.
     chars.forEach((ch, i) => {
       const startX = word.x - totalW/2 + i*charW + charW/2
       const dx = startX - word.x
-      const lf = 2.2 + Math.random() * 0.8
+      const lf = 3.0 + Math.random() * 1.0
       g.particles.push({
         x: startX, y: word.y,
-        vx: dx * 0.55 + (Math.random()-0.5) * 3.5,
-        vy: -0.4 - Math.random() * 1.0,
+        vx: dx * 0.7 + (Math.random()-0.5) * 2.5,  // strong lateral push
+        vy: (Math.random()-0.5) * 0.5,              // barely any vertical
         life: lf, initLife: lf,
         glyph: ch, col,
-        rot: (Math.random()-0.5) * 1.2, rotV: (Math.random()-0.5) * 0.05,
-        gravity: 0.03,
+        rot: (Math.random()-0.5) * 0.6,
+        rotV: (Math.random()-0.5) * 0.04,
+        gravity: 0.015,   // very light — they stay at roughly the same height
+        friction: 0.93,   // glide sideways ~50px then stop
       })
     })
-    // Thin horizontal ring
     g.particles.push({ x: word.x, y: word.y, vx:0, vy:0, life: 0.5, initLife: 0.5, glyph:"", col, ring: true })
 
   } else {
