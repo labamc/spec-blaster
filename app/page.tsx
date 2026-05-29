@@ -596,14 +596,21 @@ export default function HomePage() {
   }
 
   function onUpgradePick(id: string) {
+    let pickedName: string | null = null
     if (id !== "__skip__") {
       const g = G.current
       g.upgrades[id] = (g.upgrades[id] ?? 0) + 1
       const def = UPGRADES.find(u => u.id === id)
       if (def?.instant) def.instant(g)
       setLives(g.lives)
+      pickedName = def?.name ?? null
     }
-    const lines = pendingCapyRef.current
+    // Append upgrade install note to the capy briefing
+    const lines = pendingCapyRef.current.map((line, i) =>
+      i === 0 && pickedName
+        ? `${line}\n\n[ ${pickedName} installed ]`
+        : line
+    )
     capyLinesRef.current = lines; capyIdxRef.current = 0
     setCapyLines(lines); setCapyIdx(0)
     pendingCapyRef.current = []
@@ -634,6 +641,22 @@ export default function HomePage() {
         g.endlessWave = 1
         g.lastMiniAt = 0
         g.lastStorm = 0
+        // The Void opens — particle cascade to mark this threshold crossing
+        g.whiteFlash = 14; g.accentFlash = 28; g.accentFlashCol = "#a855f7"
+        for (let vi = 0; vi < 50; vi++) {
+          const va = (vi / 50) * Math.PI * 2
+          const vspd = 3 + Math.random() * 8
+          g.particles.push({
+            x: g.W / 2, y: GH / 2,
+            vx: Math.cos(va) * vspd, vy: Math.sin(va) * vspd - 1,
+            life: 1.4 + Math.random() * 0.8,
+            glyph: vi % 6 === 0 ? "∞" : vi % 6 === 1 ? "✦" : vi % 6 === 2 ? "◈" : vi % 6 === 3 ? "·" : vi % 6 === 4 ? "★" : "×",
+            col: vi % 4 === 0 ? "#a855f7" : vi % 4 === 1 ? "#c084fc" : vi % 4 === 2 ? "#e879f9" : "#f0abfc",
+            gravity: 0.02, friction: 0.97,
+          })
+        }
+        g.particles.push({ x: g.W/2, y: GH/2 - 20, vx: 0, vy: -0.65, life: 2.8, glyph: "THE VOID OPENS", col: "#a855f7", sz: 14, gravity: 0 })
+        g.particles.push({ x: g.W/2, y: GH/2 + 10, vx: 0, vy: -0.4, life: 2.2, glyph: "∞ carry the signal ∞", col: "#c084fc88", sz: 10, gravity: 0 })
       }
       // Wave announcement
       if (g.level <= 4) {
@@ -1248,10 +1271,15 @@ export default function HomePage() {
       if (g.bossWarn) {
         const bw = g.bossWarn
         bw.t++
-        // Slow, deliberate letter easing — feels like a descent, not a scatter
+        // Each boss has a distinct approach speed that matches its character
+        // Recursion: snappy, stack-like; Drift: slow float; Fragment: sharp jerk; Collapse: relentless
+        const easeFactor = bw.name === "THE DRIFT" ? 0.065
+          : bw.name === "THE RECURSION" ? 0.12
+          : bw.name === "THE FRAGMENT"  ? 0.14
+          : 0.10  // THE COLLAPSE
         bw.letters.forEach(l => {
-          l.x += (l.tx - l.x) * 0.10   // faster arrival — letters ARRIVE, don't drift
-          l.y += (l.ty - l.y) * 0.10
+          l.x += (l.tx - l.x) * easeFactor
+          l.y += (l.ty - l.y) * easeFactor
         })
         if (bw.t >= 170) {
           const bd = BOSSES[g.level - 1]
@@ -1294,19 +1322,36 @@ export default function HomePage() {
         const charW = 18
         const nameW = bd.name.length * charW
         const cx = g.W / 2, cy = GH / 2
-        const isCollapse = bd.name === "THE COLLAPSE"
+        const isCollapse  = bd.name === "THE COLLAPSE"
+        const isRecursion = bd.name === "THE RECURSION"
+        const isDrift     = bd.name === "THE DRIFT"
+        const isFragment  = bd.name === "THE FRAGMENT"
         g.bossWarn = {
           name: bd.name, color: bd.color, t: 0,
           letters: bd.name.split("").map((ch, i) => ({
             ch,
-            // THE COLLAPSE: letters converge from all four edges — chaotic finale
-            // All others: letters descend from above, staggered by index — feels like a threat materializing
+            // THE COLLAPSE:  letters converge from all four edges — chaotic terminal event
+            // THE RECURSION: letters rise from below — stack overflow resurfacing
+            // THE DRIFT:     letters float in from left, staggered — meaning bleeding across
+            // THE FRAGMENT:  letters scatter from center outward, then converge — fragmentation
             x: isCollapse
               ? (i % 4 === 0 ? -40 : i % 4 === 1 ? g.W + 40 : i % 4 === 2 ? cx + (Math.random()-0.5)*80 : -40 + Math.random()*g.W)
-              : cx - nameW/2 + i * charW + charW/2,  // already at target x — pure vertical descent
+              : isRecursion
+                ? cx - nameW/2 + i * charW + charW/2  // already at target x — rises vertically
+                : isDrift
+                  ? -60 - i * 20  // all start off left edge, staggered — drift in
+                  : isFragment
+                    ? cx + (Math.random()-0.5) * 120  // scatter from center area
+                    : cx - nameW/2 + i * charW + charW/2,
             y: isCollapse
               ? (i % 3 === 0 ? -50 : i % 3 === 1 ? GH + 50 : Math.random() < 0.5 ? -50 : GH + 50)
-              : -80 - i * 12,  // staggered above screen — last letter starts highest
+              : isRecursion
+                ? GH + 60 + i * 14  // staggered below — rise like stack overflow
+                : isDrift
+                  ? cy + (Math.random()-0.5) * 40  // near target height, drift in horizontally
+                  : isFragment
+                    ? cy + (Math.random()-0.5) * GH * 0.6  // scattered vertically, converge
+                    : -80 - i * 12,
             tx: cx - nameW/2 + i * charW + charW/2,
             ty: cy,
           })),
@@ -1756,16 +1801,21 @@ export default function HomePage() {
             }
             // "one kill to boss" capy warning (non-endless only)
             if (!g.endless && !g.boss && g.wordsKilled === WORDS_TO_BOSS - 1) {
-              const bossName = BOSSES[Math.min(g.level - 1, 3)].name
-              showCapyMsg(g, `One pattern left.\n${bossName} is incoming.\nBe ready.`, now)
+              const preBossMsgs: Record<number, string> = {
+                1: "One loop left.\nTHE RECURSION surfaces.\nFind the exit condition.",
+                2: "One anchor holds.\nTHE DRIFT is here.\nHold your meaning.",
+                3: "One shard remains.\nTHE FRAGMENT breaks loose.\nContain it.",
+                4: "One pattern left.\nTHE COLLAPSE is terminal.\nThis is what it's been building to.",
+              }
+              showCapyMsg(g, preBossMsgs[g.level] ?? `One pattern left.\n${BOSSES[Math.min(g.level-1,3)].name} incoming.`, now)
               sfx.warning()
             }
             // Sector midpoint — narrative beat at halfway through each sector
             if (!g.endless && !g.boss && g.wordsKilled === Math.floor(WORDS_TO_BOSS / 2)) {
               const midMsgs: Record<number, string> = {
                 1: "Halfway through the loops.\nThe recursion is deepening.",
-                2: "Six echoes dissolved.\nThe drift shifts its weight.",
-                3: "Halfway.\nThe fragments are multiplying.",
+                2: "Six signals anchored.\nThe drift shifts its weight.",
+                3: "Halfway.\nThe fragments are multiplying faster.",
                 4: "Six signals silenced.\nThe collapse accelerates.",
               }
               const midMsg = midMsgs[g.level]
