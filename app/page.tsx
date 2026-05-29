@@ -445,7 +445,7 @@ interface GState {
   capyMsg: string; capyMsgEnd: number; capyMsgStart: number; nextCapyMsg: number
   bossWarn: BossWarn | null; mouseX: number; waveAnn: WaveAnn | null; maxCombo: number; lastStorm: number
   paused: boolean; lastMilestone: number; livesAtWave: number; py: number; storyStreak: number
-  lastLifeRegen: number; lastAutoFire: number; firstKill: boolean
+  lastLifeRegen: number; lastAutoFire: number; firstKill: boolean; firstKillSector: number
   redFlash: number; whiteFlash: number; accentFlash: number; accentFlashCol: string; lastMiniAt: number
   pb: number; pbShown: boolean; shotsFired: number
   activeAgents: string[]; endlessWave: number; secUnlockTriggered: boolean
@@ -455,6 +455,7 @@ interface GState {
   trail: Array<{x: number; y: number}>
   retroEnd: number
   sectorClearAt: number
+  deathFadeAt: number
   lastMsWave: number
   bossNextTaunt: number
 }
@@ -481,7 +482,7 @@ function initState(W: number): GState {
     capyMsg: "", capyMsgEnd: 0, capyMsgStart: 0, nextCapyMsg: 0,
     bossWarn: null, mouseX: -1, waveAnn: null, maxCombo: 1, lastStorm: 0,
     paused: false, lastMilestone: 0, livesAtWave: MAX_LIVES, py: PLAYER_Y, storyStreak: 0,
-    lastLifeRegen: 0, lastAutoFire: 0, firstKill: false,
+    lastLifeRegen: 0, lastAutoFire: 0, firstKill: false, firstKillSector: 0,
     redFlash: 0, whiteFlash: 0, accentFlash: 0, accentFlashCol: "#ffffff", lastMiniAt: 0,
     pb: 0, pbShown: false, shotsFired: 0,
     activeAgents: [], endlessWave: 0, secUnlockTriggered: false,
@@ -491,6 +492,7 @@ function initState(W: number): GState {
     trail: [],
     retroEnd: 0,
     sectorClearAt: 0,
+    deathFadeAt: 0,
     lastMsWave: -1,
     bossNextTaunt: 0,
   }
@@ -769,6 +771,32 @@ export default function HomePage() {
         if (now >= g.sectorClearAt) {
           g.sectorClearAt = 0; g.running = false
           phaseRef.current = "upgrade"; setPhase("upgrade")
+        }
+        return
+      }
+
+      // Death ceremony window — keep particles alive, fade to black, then show GameOver
+      if (!g.running && g.deathFadeAt > 0) {
+        g.particles = g.particles.filter(p => { p.x += p.vx; p.y += p.vy; p.vy += (p.gravity ?? 0.14); if (p.friction) { p.vx *= p.friction; p.vy *= p.friction } p.life -= 0.016; return p.life > 0 })
+        if (g.whiteFlash > 0) g.whiteFlash--
+        if (g.redFlash > 0) g.redFlash--
+        if (g.accentFlash > 0) g.accentFlash--
+        if (g.shake > 0) g.shake--
+        draw(ctx, g, canvas.width, now, false)
+        // Fade to black as death window closes
+        const fadeProgress = Math.max(0, 1 - (g.deathFadeAt - now) / 1400)
+        if (fadeProgress > 0.35) {
+          const ctx2 = canvas.getContext("2d")
+          if (ctx2) {
+            ctx2.globalAlpha = Math.min(1, (fadeProgress - 0.35) / 0.65) * 0.88
+            ctx2.fillStyle = "#050508"
+            ctx2.fillRect(0, 0, canvas.width, GH)
+            ctx2.globalAlpha = 1
+          }
+        }
+        if (now >= g.deathFadeAt) {
+          g.deathFadeAt = 0
+          phaseRef.current = "over"; setPhase("over")
         }
         return
       }
@@ -1761,7 +1789,23 @@ export default function HomePage() {
               g.storyStreak = 0
             }
             if (w.type === "powerup") applyPowerup(g, w, now)
-            if (!g.firstKill) { g.firstKill = true; showCapyMsg(g, "First pattern dissolved.\nThe Signal is live.", now) }
+            if (!g.firstKill || g.firstKillSector !== g.level) {
+              g.firstKillSector = g.level
+              if (!g.firstKill) {
+                g.firstKill = true
+                // Very first kill of the run — generic intro
+                showCapyMsg(g, "First pattern dissolved.\nThe Signal is live.", now)
+              } else if (!g.endless) {
+                // First kill of each new sector — contextual sector greeting
+                const sectorFirstKill: Record<number, string> = {
+                  2: "First anchor holds.\nThe drift is real — resist it.",
+                  3: "First shard captured.\nMore are coming. Stay whole.",
+                  4: "First breach contained.\nThe collapse knows you're here.",
+                }
+                const sectorMsg = sectorFirstKill[g.level]
+                if (sectorMsg) showCapyMsg(g, sectorMsg, now)
+              }
+            }
             const killStyle = b.kind === "spray" ? "spray" : b.kind === "homing" ? "homing" : "default"
             spawnLetterExplosion(g, w, pts, g.combo, killStyle)
             // impact ring — powerup gets triple cascading rings
@@ -2324,7 +2368,7 @@ export default function HomePage() {
         // "SIGNAL LOST" floats up from player
         g.particles.push({ x: g.px, y: g.py - 20, vx: 0, vy: -0.9, life: 2.0,
           glyph: "SIGNAL LOST", col: "#f87171", sz: 16, gravity: 0 })
-        g.running = false; stopDrone()
+        g.running = false; g.deathFadeAt = now + 1400; stopDrone()
         setScore(g.score); setLevel(g.level)
         try {
           const pb = parseInt(localStorage.getItem("sb_pb") || "0")
@@ -2347,7 +2391,6 @@ export default function HomePage() {
             if (g.level > spb) { localStorage.setItem("sb_sector_pb", String(g.level)); setPersonalSectorBest(g.level) }
           } catch {}
         }
-        phaseRef.current = "over"; setPhase("over")
       }
     }
 
@@ -2533,7 +2576,7 @@ export default function HomePage() {
             }}
           />}
 
-          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} isNewSectorPB={!G.current.endless && level >= personalSectorBest} onRestart={startGame} unlockedAgents={unlockedAgents} onShowStack={() => setShowAgentModule(true)} endless={G.current.endless} endlessDepth={G.current.endlessWave} prevDepthBest={personalDepthBest} />}
+          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} isNewSectorPB={!G.current.endless && level >= personalSectorBest} onRestart={startGame} unlockedAgents={unlockedAgents} onShowStack={() => setShowAgentModule(true)} endless={G.current.endless} endlessDepth={G.current.endlessWave} prevDepthBest={personalDepthBest} upgrades={G.current.upgrades} />}
 
           {showAgentModule && (
             <AgentModule unlocked={unlockedAgents} selected={selectedAgents}
@@ -3021,6 +3064,129 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   const vgr = ctx.createRadialGradient(cw/2, GH*0.55, GH*0.15, cw/2, GH*0.55, Math.max(cw, GH)*0.78)
   vgr.addColorStop(0, "rgba(0,0,0,0)"); vgr.addColorStop(1, vignetteCol)
   ctx.fillStyle = vgr; ctx.fillRect(0, 0, cw, GH)
+
+  // ── THE RECURSION: sector 1 stack-overflow atmosphere ────────────────────
+  if (!attractMode && !g.endless && g.level === 1) {
+    const boss1 = g.boss?.name === "THE RECURSION"
+    const bossHpFrac1 = boss1 ? (g.boss!.hp / g.boss!.maxHp) : 1
+    const baseI1 = boss1 ? Math.max(0.28, 1 - bossHpFrac1) : 0
+    const pulse1 = baseI1 * (0.75 + 0.25 * Math.abs(Math.sin(now / (boss1 ? 110 : 260))))
+    if (boss1) {
+      // Cold blue-purple edge seep
+      try {
+        const r1g = ctx.createLinearGradient(0, 0, cw * 0.14, 0)
+        r1g.addColorStop(0, `rgba(139,92,246,${pulse1 * 0.2})`); r1g.addColorStop(1, "rgba(139,92,246,0)")
+        ctx.fillStyle = r1g; ctx.fillRect(0, 0, cw * 0.14, GH)
+        const r1g2 = ctx.createLinearGradient(cw, 0, cw * 0.86, 0)
+        r1g2.addColorStop(0, `rgba(139,92,246,${pulse1 * 0.2})`); r1g2.addColorStop(1, "rgba(139,92,246,0)")
+        ctx.fillStyle = r1g2; ctx.fillRect(cw * 0.86, 0, cw * 0.14, GH)
+      } catch {}
+      // Stack address fragments drifting up at left/right margins
+      const stackTick = Math.floor(now / 400) % 12
+      const stackY = GH - (now % (GH * 1.6)) / 1.6
+      const stackAddrs = ["0xDEADBEEF","[depth: ∞]","0x0000001F","ret addr: ???","stack: FULL","0xCAFEBABE"]
+      ctx.save()
+      ctx.globalAlpha = 0.07 + 0.04 * Math.sin(now / 180)
+      ctx.fillStyle = "#a78bfa"; ctx.font = "7px monospace"; ctx.textAlign = "left"
+      ctx.fillText(stackAddrs[stackTick % stackAddrs.length], 4, ((stackY + 0) % GH))
+      ctx.fillText(stackAddrs[(stackTick + 3) % stackAddrs.length], 4, ((stackY + GH * 0.4) % GH))
+      ctx.textAlign = "right"
+      ctx.fillText(stackAddrs[(stackTick + 6) % stackAddrs.length], cw - 4, ((stackY + GH * 0.2) % GH))
+      ctx.fillText(stackAddrs[(stackTick + 9) % stackAddrs.length], cw - 4, ((stackY + GH * 0.6) % GH))
+      ctx.restore()
+      // "STACK OVERFLOW" flicker at <25% HP
+      if (bossHpFrac1 < 0.25 && Math.floor(now / 220) % 4 === 0) {
+        ctx.save()
+        ctx.globalAlpha = 0.14 + 0.09 * Math.abs(Math.sin(now / 60))
+        ctx.fillStyle = "#a78bfa"; ctx.font = "bold 7px monospace"; ctx.textAlign = "center"
+        ctx.fillText("STACK OVERFLOW", cw / 2, GH / 2 - 60)
+        ctx.restore()
+      }
+    }
+  }
+
+  // ── THE DRIFT: sector 2 semantic-drift atmosphere ─────────────────────────
+  if (!attractMode && !g.endless && g.level === 2) {
+    const boss2 = g.boss?.name === "THE DRIFT"
+    const bossHpFrac2 = boss2 ? (g.boss!.hp / g.boss!.maxHp) : 1
+    const baseI2 = boss2 ? Math.max(0.28, 1 - bossHpFrac2) : 0
+    const pulse2 = baseI2 * (0.7 + 0.3 * Math.abs(Math.sin(now / (boss2 ? 130 : 300))))
+    if (boss2) {
+      // Warm orange edge seep
+      try {
+        const d1 = ctx.createLinearGradient(0, GH, 0, GH * 0.72)
+        d1.addColorStop(0, `rgba(251,146,60,${pulse2 * 0.22})`); d1.addColorStop(1, "rgba(251,146,60,0)")
+        ctx.fillStyle = d1; ctx.fillRect(0, GH * 0.72, cw, GH * 0.28)
+        const d2 = ctx.createLinearGradient(0, 0, cw * 0.1, 0)
+        d2.addColorStop(0, `rgba(251,146,60,${pulse2 * 0.16})`); d2.addColorStop(1, "rgba(251,146,60,0)")
+        ctx.fillStyle = d2; ctx.fillRect(0, 0, cw * 0.1, GH)
+      } catch {}
+      // Horizontal drift lines — rows that waver sideways like heat shimmer
+      if (bossHpFrac2 < 0.6 && Math.floor(now / 80) % 7 < 2) {
+        const driftRows = 2 + Math.floor(Math.random() * 3)
+        for (let dr = 0; dr < driftRows; dr++) {
+          const ry = Math.floor(Math.random() * GH)
+          const rh = 1
+          const shift = (Math.random() > 0.5 ? 1 : -1) * (1 + Math.random() * 4)
+          try {
+            ctx.save(); ctx.globalAlpha = 0.22 + Math.random() * 0.15
+            const strip2 = ctx.getImageData(0, ry, cw, rh)
+            ctx.putImageData(strip2, shift, ry)
+            ctx.restore()
+          } catch {}
+        }
+      }
+      // "UNCOUPLING" flicker at <25% HP
+      if (bossHpFrac2 < 0.25 && Math.floor(now / 250) % 3 === 0) {
+        ctx.save()
+        ctx.globalAlpha = 0.15 + 0.08 * Math.abs(Math.sin(now / 65))
+        ctx.fillStyle = "#fb923c"; ctx.font = "bold 7px monospace"; ctx.textAlign = "center"
+        ctx.fillText("UNCOUPLING", cw / 2, GH / 2 - 60)
+        ctx.restore()
+      }
+    }
+  }
+
+  // ── THE FRAGMENT: sector 3 shard-scatter atmosphere ───────────────────────
+  if (!attractMode && !g.endless && g.level === 3) {
+    const boss3 = g.boss?.name === "THE FRAGMENT"
+    const bossHpFrac3 = boss3 ? (g.boss!.hp / g.boss!.maxHp) : 1
+    const baseI3 = boss3 ? Math.max(0.25, 1 - bossHpFrac3) : 0
+    const pulse3 = baseI3 * (0.75 + 0.25 * Math.abs(Math.sin(now / (boss3 ? 100 : 280))))
+    if (boss3) {
+      // Yellow diagonal shard lines at corners
+      try {
+        const f1 = ctx.createLinearGradient(0, 0, 0, GH * 0.13)
+        f1.addColorStop(0, `rgba(250,204,21,${pulse3 * 0.18})`); f1.addColorStop(1, "rgba(250,204,21,0)")
+        ctx.fillStyle = f1; ctx.fillRect(0, 0, cw, GH * 0.13)
+        const f2 = ctx.createLinearGradient(cw, 0, cw * 0.88, 0)
+        f2.addColorStop(0, `rgba(250,204,21,${pulse3 * 0.15})`); f2.addColorStop(1, "rgba(250,204,21,0)")
+        ctx.fillStyle = f2; ctx.fillRect(cw * 0.88, 0, cw * 0.12, GH)
+      } catch {}
+      // Diagonal shard lines fired from edges
+      if (bossHpFrac3 < 0.65 && Math.floor(now / 120) % 11 < 3) {
+        const shards = 1 + Math.floor(Math.random() * 2)
+        ctx.save(); ctx.globalAlpha = 0.12 + Math.random() * 0.12
+        ctx.strokeStyle = "#facc15"; ctx.lineWidth = 0.8
+        for (let sh = 0; sh < shards; sh++) {
+          const sx = Math.random() < 0.5 ? 0 : cw
+          const sy = Math.random() * GH * 0.5
+          const ex = sx === 0 ? cw * (0.15 + Math.random() * 0.35) : cw - cw * (0.15 + Math.random() * 0.35)
+          const ey = sy + (30 + Math.random() * 80) * (Math.random() > 0.5 ? 1 : -1)
+          ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke()
+        }
+        ctx.restore()
+      }
+      // "FRAGMENTING" flicker at <25% HP
+      if (bossHpFrac3 < 0.25 && Math.floor(now / 210) % 4 === 0) {
+        ctx.save()
+        ctx.globalAlpha = 0.15 + 0.09 * Math.abs(Math.sin(now / 58))
+        ctx.fillStyle = "#facc15"; ctx.font = "bold 7px monospace"; ctx.textAlign = "center"
+        ctx.fillText("FRAGMENTING", cw / 2, GH / 2 - 60)
+        ctx.restore()
+      }
+    }
+  }
 
   // ── THE COLLAPSE: sector 4 red-shift + destabilization ───────────────────
   if (!attractMode && !g.endless && g.level === 4) {
@@ -4955,7 +5121,7 @@ function CapyScreen({ text, lineNum, totalLines, level, onAdvance }: {
   )
 }
 
-function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isNewPB, isNewSectorPB, onRestart, unlockedAgents, onShowStack, endless, endlessDepth, prevDepthBest }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; shotsFired: number; isNewPB: boolean; isNewSectorPB: boolean; onRestart: () => void; unlockedAgents: string[]; onShowStack: () => void; endless?: boolean; endlessDepth?: number; prevDepthBest?: number }) {
+function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isNewPB, isNewSectorPB, onRestart, unlockedAgents, onShowStack, endless, endlessDepth, prevDepthBest, upgrades }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; shotsFired: number; isNewPB: boolean; isNewSectorPB: boolean; onRestart: () => void; unlockedAgents: string[]; onShowStack: () => void; endless?: boolean; endlessDepth?: number; prevDepthBest?: number; upgrades?: Record<string, number> }) {
   const [handle, setHandle] = useState(() => {
     try { return localStorage.getItem("sb_handle") ?? "" } catch { return "" }
   })
@@ -5092,6 +5258,30 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
             {nextHint}
           </p>
         </div>
+
+        {/* Carried upgrades — what you had when you fell */}
+        {upgrades && Object.keys(upgrades).some(k => upgrades[k] > 0) && (() => {
+          const carried = UPGRADES.filter(u => (upgrades[u.id] ?? 0) > 0)
+          return (
+            <div style={{ marginBottom:"0.85rem" }}>
+              <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.52rem", fontFamily:"monospace",
+                letterSpacing:"0.22em", margin:"0 0 0.4rem", textTransform:"uppercase" }}>
+                CARRIED INTO THE SIGNAL
+              </p>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:"0.3rem", justifyContent:"center" }}>
+                {carried.map(u => (
+                  <span key={u.id} style={{
+                    color:`rgba(${deathBossRgb},0.7)`, fontSize:"0.58rem", fontFamily:"monospace",
+                    background:`rgba(${deathBossRgb},0.06)`, border:`1px solid rgba(${deathBossRgb},0.18)`,
+                    borderRadius:"3px", padding:"0.15rem 0.4rem", letterSpacing:"0.04em",
+                  }}>
+                    {u.name}{(upgrades[u.id] ?? 0) > 1 ? ` ×${upgrades[u.id]}` : ""}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Primary CTA — "push deeper" framing */}
         <button onClick={onRestart}
