@@ -2347,8 +2347,8 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number)
     const vxBase = dx * 0.22 + (Math.random()-0.5) * 2.8
     // Vertical: short upward pop — gravity arcs them down within view
     const vyBase = -1.2 - Math.random() * 2.2
-    // Life 1.3–1.8s — readable arc, not dominating the screen
-    const lf = 1.3 + Math.random() * 0.5
+    // Life 2.5–3.5 frames-equivalent — letters linger visibly before fading
+    const lf = 2.5 + Math.random() * 1.0
     g.particles.push({
       x: startX, y: word.y,
       vx: vxBase * energy,
@@ -3032,16 +3032,19 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       ctx.beginPath(); ctx.arc(p.x, p.y, progress * 26, 0, Math.PI * 2); ctx.stroke()
       ctx.lineWidth = 1; ctx.globalAlpha = 1; return
     }
-    ctx.globalAlpha = Math.max(0, p.life)
     ctx.fillStyle = p.col
     if (p.rot !== undefined) {
-      // initLife set → size scales from big-to-zero (letter explosions)
-      // otherwise → old formula: shrinks to 7px minimum
-      const sz = p.sz ?? (p.initLife ? Math.max(0, 18 * p.life / p.initLife) : Math.max(7, 13 * p.life))
+      // Letter explosion particles: hold size steady then fade at end
+      // sqrt curve keeps letters readable for ~70% of life before shrinking
+      const ratio = p.initLife ? Math.max(0, p.life / p.initLife) : Math.max(0, p.life)
+      const sz = p.sz ?? (p.initLife ? Math.max(0, 16 * Math.sqrt(ratio)) : Math.max(7, 13 * p.life))
+      const alpha = p.initLife ? Math.min(1, ratio * 3.5) : Math.max(0, p.life)
+      ctx.globalAlpha = alpha
       ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot)
       ctx.font = `${sz}px monospace`; ctx.textAlign = "center"
       ctx.fillText(p.glyph, 0, 0); ctx.restore()
     } else {
+      ctx.globalAlpha = Math.max(0, p.life)
       const sz = p.sz ?? 11
       ctx.font = `${sz}px monospace`; ctx.textAlign = "center"
       ctx.fillText(p.glyph, p.x, p.y)
