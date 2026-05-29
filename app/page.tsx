@@ -1295,8 +1295,49 @@ export default function HomePage() {
         const b = g.boss
         const rageMul = b.raged ? 1.55 : 1
         const moveMul = b.phase === 6 ? 0.6 : 1  // THE VOID moves slower but more threatening
-        b.x += b.dir * (1.4 + (Math.min(b.phase, 4)) * 0.35) * rageMul * moveMul
-        if (b.x > g.W - 50 || b.x < 50) b.dir *= -1
+
+        // ── Boss-specific movement patterns ──────────────────────────────────
+        if (b.name === "THE RECURSION") {
+          // Loop pattern: dashes hard one way, suddenly reverses — like a recursive stack
+          // Every 220 frames: rapid 4-bounce micro-loop (stutter-step back and forth)
+          const inLoop = b.t % 220 < 28
+          const loopMul = inLoop ? 3.2 : 1
+          b.x += b.dir * (1.4 + b.phase * 0.3) * rageMul * loopMul
+          if (b.x > g.W - 50 || b.x < 50) b.dir *= -1
+          if (inLoop && b.t % 4 === 0) b.dir *= -1  // rapid direction flips during loop burst
+        } else if (b.name === "THE DRIFT") {
+          // Sinusoidal drift — slow sweeping arcs, deceptively hard to predict
+          const driftSin = Math.sin(b.t / 90) * (b.raged ? 2.8 : 1.8)
+          b.x += driftSin * rageMul
+          // Occasional long drift — moves toward player side then sweeps away
+          if (b.t % 260 < 80) {
+            const towards = g.px > b.x ? 0.55 : -0.55
+            b.x += towards * rageMul
+          }
+          b.x = Math.max(45, Math.min(g.W - 45, b.x))
+          b.dir = b.x > g.W / 2 ? -1 : 1  // dir tracks which half it's in, for bullet aiming
+        } else if (b.name === "THE FRAGMENT") {
+          // Jitter movement — erratic micro-dashes, hard to track
+          const jitter = (Math.random() - 0.5) * (b.raged ? 6 : 3.5)
+          b.x += b.dir * (1.2 + b.phase * 0.3) * rageMul + jitter
+          if (b.x > g.W - 50 || b.x < 50) b.dir *= -1
+          // Every 130 frames: fragment scatter-jump to a new zone
+          if (b.t % 130 === 0) {
+            b.x = 60 + Math.random() * (g.W - 120)
+            spawnParticles(g, b.x, b.y, "#facc15", "⌁", 6)
+          }
+        } else if (b.name === "THE COLLAPSE") {
+          // Inevitable convergence — steadily homes in on player x, no escape zone
+          const dx = g.px - b.x
+          const pullStr = b.raged ? 0.032 : 0.018
+          b.x += dx * pullStr + b.dir * 0.5 * rageMul
+          if (b.x > g.W - 50 || b.x < 50) b.dir *= -1
+          b.x = Math.max(45, Math.min(g.W - 45, b.x))
+        } else {
+          // Default: standard linear bounce for mini-bosses and THE VOID
+          b.x += b.dir * (1.4 + (Math.min(b.phase, 4)) * 0.35) * rageMul * moveMul
+          if (b.x > g.W - 50 || b.x < 50) b.dir *= -1
+        }
         b.t++
         // Phase 6 (THE VOID) has its own custom firing below — skip the generic shoot interval
         if (b.phase !== 6) {
@@ -2935,7 +2976,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       ctx.fillStyle = flashRed       ? "rgba(253,230,138,0.12)"
         : w.type === "bug"           ? "rgba(249,115,22,0.11)"
         : w.type === "powerup"       ? "rgba(74,222,128,0.10)"
-        : "rgba(8,8,18,0.80)"
+        : "rgba(8,8,18,0.55)"
       roundRect(ctx, boxX2, boxY2, bwBox, boxH2, 3); ctx.fill()
       ctx.strokeStyle = flashRed     ? "rgba(253,230,138,0.55)"
         : w.type === "bug"           ? "rgba(249,115,22,0.45)"
@@ -3557,28 +3598,36 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   const depthLabel = g.endless ? (g.endlessWave > 1 ? `DEPTH ${g.endlessWave}` : "THE VOID") : `SECTOR ${g.level}`
   ctx.fillText(depthLabel, 10, 20)
 
+  // Sector canonical name — sets expedition identity (THE RECURSION, THE DRIFT…)
+  if (!g.endless && !attractMode) {
+    const bossData = BOSSES[Math.min(g.level - 1, BOSSES.length - 1)]
+    ctx.fillStyle = `${bossData.color}55`; ctx.font = "7px monospace"
+    ctx.fillText(bossData.name, 10, 30)
+  }
+
   // SECONDARY: score — useful but not the point
   ctx.fillStyle = "rgba(150,107,236,0.5)"; ctx.font = "8px monospace"
-  ctx.fillText(g.score.toLocaleString(), 10, 32)
+  ctx.fillText(g.score.toLocaleString(), 10, g.endless ? 32 : 40)
 
   // Kills — expedition context
+  const killsY = g.endless ? 43 : 50
   ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.font = "7px monospace"
-  ctx.fillText(`${g.kills} eliminated`, 10, 43)
+  ctx.fillText(`${g.kills} eliminated`, 10, killsY)
 
   // Sector progress bar — how far to the next boss encounter
   if (!g.boss && !g.endless && !g.bossWarn) {
     const wPct = Math.min(1, g.wordsKilled / WORDS_TO_BOSS)
     const remaining = WORDS_TO_BOSS - g.wordsKilled
-    ctx.fillStyle = "rgba(255,255,255,0.07)"; ctx.fillRect(10, 48, 68, 2)
-    ctx.fillStyle = wPct >= 0.85 ? "#f87171" : "rgba(150,107,236,0.6)"; ctx.fillRect(10, 48, 68 * wPct, 2)
+    ctx.fillStyle = "rgba(255,255,255,0.07)"; ctx.fillRect(10, 55, 68, 2)
+    ctx.fillStyle = wPct >= 0.85 ? "#f87171" : "rgba(150,107,236,0.6)"; ctx.fillRect(10, 55, 68 * wPct, 2)
     ctx.font = "7px monospace"; ctx.textAlign = "left"
     if (remaining <= 3 && remaining > 0) {
       const pulse = 0.7 + 0.3 * Math.abs(Math.sin(now / 140))
       ctx.fillStyle = `rgba(248,113,113,${pulse})`
-      ctx.fillText(`BOSS INCOMING · ${remaining}`, 10, 58)
+      ctx.fillText(`BOSS INCOMING · ${remaining}`, 10, 65)
     } else {
       ctx.fillStyle = "rgba(255,255,255,0.18)"
-      ctx.fillText(`${remaining} patterns`, 10, 58)
+      ctx.fillText(`${remaining} patterns`, 10, 65)
     }
   }
 
@@ -3588,7 +3637,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     const comboCol = g.combo >= 20 ? "#facc15" : g.combo >= 10 ? "#fb923c" : "#7dd3fc"
     ctx.fillStyle = `rgba(${comboCol === "#facc15" ? "250,204,21" : comboCol === "#fb923c" ? "251,146,60" : "125,211,252"},${comboAlpha})`
     ctx.font = "7px monospace"; ctx.textAlign = "left"
-    ctx.fillText(`×${g.combo} chain`, 10, g.boss || g.endless ? 55 : 68)
+    ctx.fillText(`×${g.combo} chain`, 10, g.boss || g.endless ? 55 : 76)
   }
   ctx.textAlign = "right"; ctx.fillStyle = "#f87171"; ctx.font = "12px monospace"
   ctx.fillText("♥".repeat(g.lives) + "♡".repeat(Math.max(0, MAX_LIVES - g.lives)), cw - 10, 20)
