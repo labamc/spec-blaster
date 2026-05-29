@@ -558,6 +558,8 @@ export default function HomePage() {
     g.waveAnn = { text: `SECTOR 1 · ${BOSSES[0].name}`, t: 0 }
     // Stamp bg glyphs with sector 1 identity
     { const t1 = sectorTheme(1); g.bg.forEach(b => { b.ch = t1.bgChars[Math.floor(Math.random() * t1.bgChars.length)] }) }
+    // Sector entry Capy fires 3.2s after launch
+    g.nextCapyMsg = Date.now() + 3200
     g.livesAtWave = MAX_LIVES
     startDrone()
     setScore(0); setLevel(1); setLives(MAX_LIVES)
@@ -3750,8 +3752,9 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
   if (!g.boss && !g.endless && !g.bossWarn) {
     const wPct = Math.min(1, g.wordsKilled / WORDS_TO_BOSS)
     const remaining = WORDS_TO_BOSS - g.wordsKilled
+    const sBarCol = BOSSES[Math.min(g.level - 1, BOSSES.length - 1)].color
     ctx.fillStyle = "rgba(255,255,255,0.07)"; ctx.fillRect(10, 55, 68, 2)
-    ctx.fillStyle = wPct >= 0.85 ? "#f87171" : "rgba(150,107,236,0.6)"; ctx.fillRect(10, 55, 68 * wPct, 2)
+    ctx.fillStyle = wPct >= 0.85 ? "#f87171" : `${sBarCol}88`; ctx.fillRect(10, 55, 68 * wPct, 2)
     ctx.font = "7px monospace"; ctx.textAlign = "left"
     if (remaining <= 3 && remaining > 0) {
       const pulse = 0.7 + 0.3 * Math.abs(Math.sin(now / 140))
@@ -3771,8 +3774,19 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.font = "7px monospace"; ctx.textAlign = "left"
     ctx.fillText(`×${g.combo} chain`, 10, g.boss || g.endless ? 55 : 76)
   }
-  ctx.textAlign = "right"; ctx.fillStyle = "#f87171"; ctx.font = "12px monospace"
-  ctx.fillText("♥".repeat(g.lives) + "♡".repeat(Math.max(0, MAX_LIVES - g.lives)), cw - 10, 20)
+  // Lives — pulse red on last life for urgency
+  ctx.textAlign = "right"
+  if (g.lives === 1) {
+    const lifePulse = 0.7 + 0.3 * Math.abs(Math.sin(now / 280))
+    ctx.fillStyle = `rgba(248,113,113,${lifePulse})`
+    ctx.save(); ctx.shadowColor = "#f87171"; ctx.shadowBlur = 8 * lifePulse
+    ctx.font = "12px monospace"
+    ctx.fillText("♥" + "♡".repeat(Math.max(0, MAX_LIVES - 1)), cw - 10, 20)
+    ctx.restore()
+  } else {
+    ctx.fillStyle = "#f87171"; ctx.font = "12px monospace"
+    ctx.fillText("♥".repeat(g.lives) + "♡".repeat(Math.max(0, MAX_LIVES - g.lives)), cw - 10, 20)
+  }
   let pwY = 36; ctx.font = "8px monospace"; ctx.textAlign = "right"
   if (g.shield)                         { ctx.fillStyle = "#4ade80"; ctx.fillText("SHIELD",  cw-10, pwY); pwY += 12 }
   if (g.triple || g.upgrades.triple)    { ctx.fillStyle = "#4ade80"; ctx.fillText("ENGAGE",  cw-10, pwY); pwY += 12 }
