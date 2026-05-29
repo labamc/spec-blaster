@@ -283,8 +283,11 @@ const sfx = {
     tone(440 + combo * 28, 0.07, 0.2, "sawtooth")
     setTimeout(() => tone(660 + combo * 38, 0.05, 0.14, "square"), 35)
   },
-  // Story kill: clean square wave ping
-  kill:     (combo = 1) => tone(1100 + combo * 60, 0.09, 0.18 + combo * 0.02),
+  // Story kill: clean square wave ping — gains low punch at high combo
+  kill:     (combo = 1) => {
+    tone(1100 + combo * 60, 0.09, 0.18 + combo * 0.02)
+    if (combo >= 8) setTimeout(() => tone(380 + combo * 16, 0.05, 0.14, "sawtooth"), 22)
+  },
   split:    () => { tone(780, 0.05, 0.14, "triangle"); setTimeout(() => tone(580, 0.05, 0.12, "triangle"), 55) },
   bossHit:  () => tone(440, 0.12, 0.25),
   bossDead: () => {
@@ -293,7 +296,11 @@ const sfx = {
   },
   warning:  () => { tone(220, 0.25, 0.4, "sawtooth"); setTimeout(() => tone(180, 0.4, 0.4, "sawtooth"), 250) },
   powerup:  () => { tone(600, 0.08, 0.3); setTimeout(() => tone(900, 0.08, 0.3), 90); setTimeout(() => tone(1200, 0.15, 0.3), 180) },
-  combo:    (n: number) => tone(800 + n * 80, 0.12, 0.3),
+  combo:    (n: number) => {
+    tone(800 + n * 80, 0.12, 0.3)
+    if (n >= 10) setTimeout(() => tone(1200 + n * 50, 0.07, 0.26), 55)
+    if (n >= 20) { setTimeout(() => tone(580, 0.1, 0.28, "sawtooth"), 25); setTimeout(() => tone(1600 + n * 28, 0.05, 0.22), 90) }
+  },
   hit:      () => tone(160, 0.4, 0.35, "sawtooth"),
   elite:    () => { tone(300, 0.15, 0.3, "sawtooth"); setTimeout(() => tone(250, 0.2, 0.3, "sawtooth"), 120) },
   shield:   () => tone(620, 0.07, 0.18, "triangle"),
@@ -307,6 +314,14 @@ const sfx = {
   deploy:   () => { tone(240, 0.06, 0.3, "square"); setTimeout(() => tone(480, 0.1, 0.35, "square"), 60); setTimeout(() => tone(960, 0.14, 0.3), 130) },
   // RETROSPECTIVE: slow descending bell — time stretching
   retro:    () => { tone(1200, 0.3, 0.2, "triangle"); setTimeout(() => tone(900, 0.4, 0.18, "triangle"), 180); setTimeout(() => tone(600, 0.55, 0.15, "triangle"), 380) },
+  // RELIC: slow ascending bell chord — discovery fanfare
+  relic:    () => {
+    tone(440, 0.22, 0.4, "triangle"); setTimeout(() => tone(554, 0.18, 0.38, "triangle"), 110)
+    setTimeout(() => tone(659, 0.16, 0.35, "triangle"), 220); setTimeout(() => tone(880, 0.28, 0.5, "triangle"), 360)
+    setTimeout(() => tone(1320, 0.12, 0.4, "sine"), 570)
+  },
+  // RAGE: low-frequency distortion burst when boss hits 50% HP
+  rage:     () => { tone(200, 0.28, 0.48, "sawtooth"); setTimeout(() => tone(160, 0.35, 0.44, "sawtooth"), 100); setTimeout(() => tone(110, 0.4, 0.38, "sawtooth"), 210) },
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -1560,9 +1575,9 @@ export default function HomePage() {
                 g.particles.push({ x: bx.x, y: bx.y, vx: Math.cos(a)*11, vy: Math.sin(a)*11, life: 1.0, glyph: ri % 2 === 0 ? "✦" : "×", col: ri % 3 === 0 ? "#ffffff" : bx.color })
               }
               g.particles.push({ x: bx.x, y: bx.y - 20, vx: 0, vy: -1.2, life: 1.6, glyph: "ENRAGED", col: "#f87171", sz: 12 })
-              g.whiteFlash = 8
+              g.accentFlash = 12; g.accentFlashCol = "#f87171"
               showCapyMsg(g, "Pattern is escalating.\nIt knows you're here.", now)
-              sfx.warning()
+              sfx.rage()
             }
             // boss critical at 20% HP — red edge pulse, final push feeling
             if (bx.hp <= Math.floor(bx.maxHp * 0.2) && bx.hp > 0 && bx.raged) {
@@ -2159,13 +2174,14 @@ function showCapyMsg(g: GState, msg: string, now: number) {
 }
 
 function applyPowerup(g: GState, word: Word, now: number) {
-  sfx.powerup()
   const text = word.text
+  if (!RELIC_SET.has(text)) sfx.powerup()
 
   // ── Rare Relics ────────────────────────────────────────────────────────────
   if (RELIC_SET.has(text)) {
-    // Big flash + shake
-    g.shake = 20; g.whiteFlash = 18
+    sfx.relic()
+    // Gold flash + shake
+    g.shake = 22; g.accentFlash = 22; g.accentFlashCol = "#fde68a"
     // Gold nova burst
     for (let i = 0; i < 32; i++) {
       const a = (i / 32) * Math.PI * 2
