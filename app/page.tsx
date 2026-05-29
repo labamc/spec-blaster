@@ -1055,19 +1055,29 @@ export default function HomePage() {
         bw.t++
         // Slow, deliberate letter easing — feels like a descent, not a scatter
         bw.letters.forEach(l => {
-          l.x += (l.tx - l.x) * 0.06
-          l.y += (l.ty - l.y) * 0.06
+          l.x += (l.tx - l.x) * 0.10   // faster arrival — letters ARRIVE, don't drift
+          l.y += (l.ty - l.y) * 0.10
         })
         if (bw.t >= 170) {
           const bd = BOSSES[g.level - 1]
           g.boss = { x: g.W/2, y: 70, hp: bd.hp, maxHp: bd.hp, name: bd.name, color: bd.color, dir: 1, t: 0, phase: g.level, raged: false, halfTriggered: false }
           g.bossWarn = null
-          g.shake = 18; g.accentFlash = 14; g.accentFlashCol = bd.color
-          // boss materialize burst — particles from spawn point
+          g.shake = 32; g.accentFlash = 45; g.accentFlashCol = bd.color  // slam arrival
+          // boss materialize — dense ring burst from spawn point
           const bCol = bd.color
-          for (let bi = 0; bi < 28; bi++) {
-            const ba = (bi / 28) * Math.PI * 2
-            g.particles.push({ x: g.W/2, y: 70, vx: Math.cos(ba) * (4 + Math.random()*7), vy: Math.sin(ba) * (4 + Math.random()*7), life: 0.8 + Math.random()*0.5, glyph: bi % 3 === 0 ? "✦" : "·", col: bCol })
+          for (let bi = 0; bi < 55; bi++) {
+            const ba = (bi / 55) * Math.PI * 2
+            const spd = 3 + Math.random() * 9
+            g.particles.push({ x: g.W/2, y: 70, vx: Math.cos(ba) * spd, vy: Math.sin(ba) * spd,
+              life: 0.7 + Math.random() * 0.6,
+              glyph: bi % 4 === 0 ? "✦" : bi % 4 === 1 ? bd.name[0] : "·",
+              col: bi % 3 === 0 ? "#fbbf24" : bCol })
+          }
+          // Four rings on slam
+          for (let ri = 0; ri < 4; ri++) {
+            g.particles.push({ x: g.W/2, y: 70, vx: 0, vy: 0,
+              life: 0.9 - ri * 0.18, initLife: 0.9 - ri * 0.18,
+              glyph: "", col: ri % 2 === 0 ? bCol : "#fbbf24", ring: true })
           }
           sfx.miniBoss()
         }
@@ -1623,47 +1633,47 @@ export default function HomePage() {
       if (g.boss && g.boss.hp <= 0) {
         const bx = g.boss
         sfx.bossDead()
-        g.shake = 20 + g.level * 2
-        g.accentFlash = 18; g.accentFlashCol = bx.color
-        // Core particle burst — scaled by sector
-        spawnParticles(g, bx.x, bx.y, bx.color, "★", g.endless ? 28 : 44)
-        // Three shockwave rings — staggered, snappy
-        for (let ri = 0; ri < 3; ri++) {
+        g.shake = 32 + g.level * 4         // heavy sustained shake
+        g.accentFlash = 70; g.accentFlashCol = bx.color  // ~1.2s of boss-color flash
+        // Core burst — generous count
+        spawnParticles(g, bx.x, bx.y, bx.color, "★", g.endless ? 45 : 70)
+        // Four expanding rings — long-lived, staggered timing
+        for (let ri = 0; ri < 4; ri++) {
           g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0,
-            life: 0.65 - ri * 0.12, initLife: 0.65 - ri * 0.12,
-            glyph: "", col: ri === 1 ? "#fbbf24" : bx.color, ring: true })
+            life: 1.1 - ri * 0.18, initLife: 1.1 - ri * 0.18,
+            glyph: "", col: ri % 2 === 0 ? bx.color : "#fbbf24", ring: true })
         }
-        // Boss name letters — true 360° explosive scatter, each letter independent
+        // Boss name letters — slow cascade so they're visible for 2+ seconds
+        // Boss sits at y≈70 (top), so letters spread outward+downward across screen
         bx.name.split("").forEach((ch, i2) => {
-          const angle = Math.random() * Math.PI * 2           // full circle — no bias
-          const spd = 5 + Math.random() * 6                   // 5–11 px/frame burst velocity
-          const lf = 0.48 + Math.random() * 0.36             // 0.48–0.84 (400–700ms at 60fps)
+          const vx = (Math.random() - 0.5) * 5.0              // spread left/right
+          const vy = (Math.random() - 0.5) * 2.0 + 0.8        // mostly downward drift
+          const lf = 2.0 + Math.random() * 1.2                // 2.0–3.2 → 1.5–2.4 seconds visible
           g.particles.push({
-            x: bx.x + (Math.random() - 0.5) * 52,           // spread across boss footprint
-            y: bx.y + (Math.random() - 0.5) * 20,
-            vx: Math.cos(angle) * spd,
-            vy: Math.sin(angle) * spd,
+            x: bx.x + (Math.random() - 0.5) * 56,            // spread across boss footprint
+            y: bx.y + (Math.random() - 0.5) * 18,
+            vx, vy,
             life: lf, initLife: lf,
             glyph: ch, col: bx.color,
-            rot: (Math.random() - 0.5) * Math.PI * 2,       // full random start rotation
-            rotV: (Math.random() - 0.5) * 0.22,             // fast tumble
-            gravity: 0.09 + Math.random() * 0.09,           // 0.09–0.18 — heavy dramatic arcs
-            friction: 0.95 + Math.random() * 0.02,
+            rot: (Math.random() - 0.5) * Math.PI * 2,
+            rotV: (Math.random() - 0.5) * 0.10,              // gentle tumble — readable longer
+            gravity: 0.03 + Math.random() * 0.04,            // 0.03–0.07 — graceful arc
+            friction: 0.99,
           })
         })
-        // Debris sparks — amber + boss color, radial burst
-        for (let di = 0; di < 22; di++) {
-          const a = Math.random() * Math.PI * 2
-          const spd2 = 2.5 + Math.random() * 5.5
-          const lf2 = 0.26 + Math.random() * 0.28
+        // Debris sparks — 50 of them, spread wide, long enough to feel raining down
+        for (let di = 0; di < 50; di++) {
+          const vx2 = (Math.random() - 0.5) * 7
+          const vy2 = (Math.random() - 0.5) * 4 + 0.5        // biased downward
+          const lf2 = 0.7 + Math.random() * 0.7              // 0.7–1.4
           g.particles.push({
-            x: bx.x + (Math.random() - 0.5) * 32,
-            y: bx.y + (Math.random() - 0.5) * 14,
-            vx: Math.cos(a) * spd2, vy: Math.sin(a) * spd2,
+            x: bx.x + (Math.random() - 0.5) * 48,
+            y: bx.y + (Math.random() - 0.5) * 20,
+            vx: vx2, vy: vy2,
             life: lf2, initLife: lf2,
-            glyph: di % 3 === 0 ? "✦" : "·",
-            col: di % 2 === 0 ? "#fbbf24" : bx.color,
-            rot: 0, rotV: 0, gravity: 0.13, friction: 0.91,
+            glyph: di % 4 === 0 ? "✦" : di % 4 === 1 ? "×" : "·",
+            col: di % 3 === 0 ? "#fbbf24" : di % 3 === 1 ? bx.color : "#fde68a",
+            rot: 0, rotV: 0, gravity: 0.05, friction: 0.97,
           })
         }
         g.boss = null; g.mines = [] // clear mines on boss death
