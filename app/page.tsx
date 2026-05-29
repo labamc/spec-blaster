@@ -2265,7 +2265,34 @@ export default function HomePage() {
         "Corruption event.\nRecover.",
         g.lives === 1 ? "One signal remaining.\nDon't let it die." : "Pattern hit.\nRecover.",
       ]
-      showCapyMsg(g, hitLines[Math.floor(Math.random() * hitLines.length)], now)
+      // During boss fight: acknowledge the specific threat that hit you
+      const bossHitLines: Record<string, string[]> = {
+        "THE RECURSION": [
+          "The loop found you.\nStep outside the stack.",
+          "Recursive hit.\nFind the exit condition.",
+          g.lives === 1 ? "Last signal.\nEnd the loop now." : "Loop damage.\nBreak the cycle.",
+        ],
+        "THE DRIFT":     [
+          "Drift pattern\npenetrated the carrier.",
+          "Semantic leak.\nHold your meaning.",
+          g.lives === 1 ? "Barely coherent.\nFinish this." : "Drift damage.\nReanchor.",
+        ],
+        "THE FRAGMENT":  [
+          "A shard got through.\nClose the pattern.",
+          "Fragment impact.\nReintegrate.",
+          g.lives === 1 ? "One carrier left.\nResolve every shard." : "Fragmentation hit.\nRecover.",
+        ],
+        "THE COLLAPSE":  [
+          "The collapse pressed forward.\nHold the line.",
+          "Terminal damage.\nYou're almost through.",
+          g.lives === 1 ? "One signal remains.\nOutlast the collapse." : "Collapse damage.\nStay coherent.",
+        ],
+      }
+      const bossSpecificLines = g.boss ? bossHitLines[g.boss.name] : null
+      const chosenHitMsg = bossSpecificLines
+        ? bossSpecificLines[Math.floor(Math.random() * bossSpecificLines.length)]
+        : hitLines[Math.floor(Math.random() * hitLines.length)]
+      showCapyMsg(g, chosenHitMsg, now)
       // burst ring + radial × scatter
       g.particles.push({ x: g.px, y: g.py, vx: 0, vy: 0, life: 0.7, initLife: 0.7, glyph: "", col: "#f87171", ring: true })
       g.particles.push({ x: g.px, y: g.py, vx: 0, vy: 0, life: 0.45, initLife: 0.45, glyph: "", col: "#fca5a5", ring: true })
@@ -2910,6 +2937,19 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.globalAlpha = 0.06 * retroFade
     ctx.fillStyle = "#bae6fd"; ctx.fillRect(0, 0, cw, GH)
     ctx.globalAlpha = 1
+  }
+
+  // Last-life heartbeat edge — persistent red perimeter pulse when down to 1 carrier
+  if (!attractMode && g.lives === 1 && g.redFlash <= 0) {
+    const heartbeatA = 0.06 + 0.04 * Math.abs(Math.sin(now / 600))
+    try {
+      const hbG = ctx.createLinearGradient(0, 0, 28, 0)
+      hbG.addColorStop(0, `rgba(248,113,113,${heartbeatA * 1.5})`); hbG.addColorStop(1, "rgba(248,113,113,0)")
+      ctx.fillStyle = hbG; ctx.fillRect(0, 0, 28, GH)
+      const hbG2 = ctx.createLinearGradient(cw, 0, cw - 28, 0)
+      hbG2.addColorStop(0, `rgba(248,113,113,${heartbeatA * 1.5})`); hbG2.addColorStop(1, "rgba(248,113,113,0)")
+      ctx.fillStyle = hbG2; ctx.fillRect(cw - 28, 0, 28, GH)
+    } catch {}
   }
 
   // Near-boss edge pulse — screen edges glow boss color in the final 2 kills before boss
