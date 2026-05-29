@@ -1628,18 +1628,24 @@ export default function HomePage() {
             life: 1.4 - ri * 0.3, initLife: 1.4 - ri * 0.3,
             glyph: "", col: ri === 1 ? "#ffffff" : bx.color, ring: true })
         }
-        // Boss name letters drift apart slowly — visible for a long time
+        // Boss name letters — scatter in all directions, each one independent
         bx.name.split("").forEach((ch, i2) => {
           const spread = bx.name.length / 2
-          const lf = 5.0 + Math.random() * 1.5
+          const charX = bx.x + (i2 - spread) * 9
+          // Random angle biased upward (±117° from straight up) — true scatter
+          const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.3
+          const spd = 2.8 + Math.random() * 2.8
+          const lf = 2.8 + Math.random() * 2.0
           g.particles.push({
-            x: bx.x + (i2 - spread) * 9, y: bx.y,
-            vx: (i2 - spread) * 0.38 + (Math.random()-0.5) * 1.0,
-            vy: -0.4 - Math.random() * 0.8,
+            x: charX, y: bx.y,
+            vx: Math.cos(angle) * spd,
+            vy: Math.sin(angle) * spd,
             life: lf, initLife: lf,
             glyph: ch, col: bx.color,
-            rot: (Math.random()-0.5) * 1.2, rotV: (Math.random()-0.5) * 0.04,
-            gravity: 0.014, friction: 0.97,
+            rot: (Math.random() - 0.5) * 1.8,
+            rotV: (Math.random() - 0.5) * 0.12,
+            gravity: 0.035,
+            friction: 0.99,
           })
         })
         // Central impact glyph — hovers in place
