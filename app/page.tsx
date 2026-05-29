@@ -2445,6 +2445,13 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
 }
 
 function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number, attractMode: boolean) {
+  // Reset shadow state — prevents cross-frame glow bleed
+  ctx.shadowBlur = 0; ctx.shadowColor = "transparent"
+
+  // Clear entire canvas BEFORE shake transform — shake offsets the background fill,
+  // leaving uncovered strips at edges that accumulate across frames
+  ctx.clearRect(0, 0, cw, GH)
+
   // screen shake
   let shook = false
   if (g.shake > 0) {
