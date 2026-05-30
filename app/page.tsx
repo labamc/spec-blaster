@@ -24,6 +24,7 @@ const _stationState = {
   turretAngle:   -Math.PI / 2,  // pointing up by default
   turretWeapon:  "standard" as "standard" | "triple" | "spray",
   commsLog:      [] as string[],  // last 4 first-line capy message snippets
+  sectorStart:   0,              // timestamp of current sector start (ms)
 }
 
 interface Station {
@@ -479,7 +480,7 @@ interface WaveAnn   { text: string; t: number }
 interface GState {
   px: number; lives: number; score: number; kills: number; level: number; endless: boolean
   words: Word[]; bullets: Bullet[]; particles: Particle[]; bg: BgGlyph[]; boss: Boss | null
-  keys: Set<string>; lastShot: number; lastWord: number; wordsKilled: number; bossSpawned: boolean
+  keys: Set<string>; lastShot: number; lastWord: number; wordsKilled: number; wordsEscaped: number; bossSpawned: boolean
   shield: boolean; shieldEnd: number; triple: boolean; tripleEnd: number; fast: boolean; fastEnd: number
   invuln: boolean; invulnEnd: number; W: number; running: boolean
   upgrades: Record<string, number>; shieldRegenAt: number
@@ -516,7 +517,7 @@ function initState(W: number): GState {
     px: W / 2, lives: MAX_LIVES, score: 0, kills: 0, level: 1, endless: false,
     words: [], bullets: [], particles: [], boss: null,
     bg: makeBg(W),
-    keys: new Set(), lastShot: 0, lastWord: 0, wordsKilled: 0, bossSpawned: false,
+    keys: new Set(), lastShot: 0, lastWord: 0, wordsKilled: 0, wordsEscaped: 0, bossSpawned: false,
     shield: false, shieldEnd: 0, triple: false, tripleEnd: 0, fast: false, fastEnd: 0,
     invuln: false, invulnEnd: 0, W, running: false,
     upgrades: {}, shieldRegenAt: 0,
@@ -587,6 +588,8 @@ export default function HomePage() {
     upgrades: {} as Record<string, number>,
     shield: false,
     commsLog: [] as string[],
+    elapsedSec: 0,
+    wordsEscaped: 0,
   })
   useEffect(() => {
     const id = setInterval(() => {
@@ -605,6 +608,8 @@ export default function HomePage() {
         upgrades:    { ...g.upgrades },
         shield:      g.shield,
         commsLog:    [..._stationState.commsLog],
+        elapsedSec:  _stationState.sectorStart > 0 ? Math.floor((Date.now() - _stationState.sectorStart) / 1000) : 0,
+        wordsEscaped: g.wordsEscaped,
       })
     }, 150)
     return () => clearInterval(id)
@@ -697,6 +702,8 @@ export default function HomePage() {
     g.livesAtWave = MAX_LIVES
     startDrone()
     setScore(0); setLevel(1); setLives(MAX_LIVES)
+    _stationState.sectorStart = Date.now()
+    _stationState.commsLog = []  // fresh run — clear transmission history
     phaseRef.current = "playing"
     setPhase("playing")
   }
@@ -795,6 +802,7 @@ export default function HomePage() {
         const secDur = secLv >= 3 ? 4500 : secLv >= 2 ? 3000 : 2000
         g.invuln = true; g.invulnEnd = Date.now() + secDur
       }
+      _stationState.sectorStart = Date.now()
       phaseRef.current = "playing"; setPhase("playing")
     }
   }
@@ -1824,6 +1832,7 @@ export default function HomePage() {
             g.boss.hp = Math.min(g.boss.maxHp, g.boss.hp + 2)
             spawnParticles(g, g.boss.x, g.boss.y, "#818cf8", "↑", 4)
           } else if (w.type !== "powerup" && !w.fragment && !g.invuln) {
+            g.wordsEscaped++
             loseLife(g, now)
           }
           return false
@@ -5865,6 +5874,8 @@ type LiveGSnapshot = {
   upgrades: Record<string, number>
   shield: boolean
   commsLog: string[]
+  elapsedSec: number
+  wordsEscaped: number
 }
 
 function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, onTurretFire }: {
@@ -5972,6 +5983,11 @@ function BridgeStationView({ phase, level, score, liveG }: {
           <StatusRow label="SECTOR"  value={level <= 4 ? `${level} · ${sectorNames[level] ?? ""}` : "∞ THE VOID"} valueCol="rgba(196,181,253,0.75)" />
           <StatusRow label="SCORE"   value={score.toLocaleString()} valueCol="rgba(255,255,255,0.45)" />
           <StatusRow label="KILLS"   value={String(liveG.kills)} valueCol="rgba(255,255,255,0.45)" />
+          {liveG.elapsedSec > 0 && (
+            <StatusRow label="ELAPSED"
+              value={`${Math.floor(liveG.elapsedSec/60)}:${String(liveG.elapsedSec%60).padStart(2,"0")}`}
+              valueCol="rgba(255,255,255,0.3)" />
+          )}
           {liveG.combo > 3 && (
             <StatusRow label="CHAIN" value={`×${liveG.combo}`} valueCol={liveG.combo >= 20 ? "#facc15" : liveG.combo >= 10 ? "#fb923c" : "#c4b5fd"} />
           )}
@@ -6222,6 +6238,9 @@ function SalvageStationView({ liveG, score, phase }: {
           <StatusRow label="SIGNAL PTS" value={score.toLocaleString()} valueCol="rgba(255,255,255,0.5)" />
           <StatusRow label="KILLS"       value={String(liveG.kills)} valueCol="rgba(255,255,255,0.4)" />
           <StatusRow label="TOKENS"      value={`${tokens}t`} valueCol="rgba(74,222,128,0.7)" />
+          {liveG.wordsEscaped > 0 && (
+            <StatusRow label="SIGNALS LOST" value={String(liveG.wordsEscaped)} valueCol="rgba(248,113,113,0.55)" />
+          )}
         </>
       )}
       <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "0.35rem", marginTop: "0.1rem" }}>
