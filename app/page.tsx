@@ -2731,7 +2731,7 @@ export default function HomePage() {
           <canvas ref={canvasRef} height={GH} style={{ display:"block", width:"100%", height:GH, cursor:"crosshair" }} />
         </div>
         {/* ── Ship Station Row ─────────────────────────────────────────────── */}
-        <div style={{ display:"flex", gap:"0.5rem", marginTop:"0.5rem" }}>
+        <div style={{ display:"flex", gap:"0.5rem", marginTop:"0.5rem", alignItems:"stretch" }}>
           <ShipStatusPanel
             hull={{ maxHull: MAX_LIVES, currentHull: lives }}
             stations={STATION_DEFS}
@@ -5610,6 +5610,8 @@ function StationShell({ children, style }: { children: React.ReactNode; style?: 
       borderRadius: "6px",
       fontFamily: "monospace",
       overflow: "hidden",
+      display: "flex",
+      flexDirection: "column",
       ...style,
     }}>
       {children}
