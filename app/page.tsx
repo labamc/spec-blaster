@@ -577,6 +577,10 @@ export default function HomePage() {
     kills: 0, wordsKilled: 0, combo: 1,
     bossHpPct: null as number | null, bossName: null as string | null,
     capyMsg: "",
+    wordCount: 0,
+    // Simplified word positions: [{xPct, yPct, isBug}] for threat radar
+    wordDots: [] as Array<{ x: number; y: number; bug: boolean }>,
+    bossX: null as number | null, bossY: null as number | null,
   })
   useEffect(() => {
     const id = setInterval(() => {
@@ -588,6 +592,10 @@ export default function HomePage() {
         bossHpPct:   g.boss ? g.boss.hp / g.boss.maxHp : null,
         bossName:    g.boss ? g.boss.name : null,
         capyMsg:     g.capyMsg,
+        wordCount:   g.words.length,
+        wordDots:    g.words.slice(0, 20).map(w => ({ x: w.x / (g.W || GW), y: w.y / GH, bug: w.type === "bug" })),
+        bossX:       g.boss ? g.boss.x / (g.W || GW) : null,
+        bossY:       g.boss ? g.boss.y / GH : null,
       })
     }, 150)
     return () => clearInterval(id)
@@ -5825,6 +5833,9 @@ function ShipBlueprint({ activeStation }: { activeStation: StationId }) {
 type LiveGSnapshot = {
   kills: number; wordsKilled: number; combo: number
   bossHpPct: number | null; bossName: string | null; capyMsg: string
+  wordCount: number
+  wordDots: Array<{ x: number; y: number; bug: boolean }>
+  bossX: number | null; bossY: number | null
 }
 
 function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, onTurretFire }: {
@@ -5848,6 +5859,46 @@ function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, 
         {activeStation === "salvage" && <SalvageStationView liveG={liveG} score={score} phase={phase} />}
       </div>
     </StationShell>
+  )
+}
+
+// ── Threat Radar ───────────────────────────────────────────────────────────
+// Mini top-down dot map of the battlefield — pure display
+function ThreatRadar({ dots, bossX, bossY }: {
+  dots: Array<{ x: number; y: number; bug: boolean }>
+  bossX: number | null; bossY: number | null
+}) {
+  const W = 110, H = 52  // radar dimensions in px
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.14rem" }}>
+        <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", letterSpacing:"0.1em" }}>THREAT RADAR</span>
+        <span style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.5rem" }}>{dots.length} contacts</span>
+      </div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display:"block", border:"1px solid rgba(150,107,236,0.12)", borderRadius:"3px", background:"rgba(0,0,0,0.3)" }}>
+        {/* Grid lines */}
+        <line x1={W/2} y1={0} x2={W/2} y2={H} stroke="rgba(150,107,236,0.1)" strokeWidth="0.5" />
+        <line x1={0} y1={H*0.8} x2={W} y2={H*0.8} stroke="rgba(150,107,236,0.1)" strokeWidth="0.5" strokeDasharray="2 3" />
+        {/* Player position at bottom-center */}
+        <polygon points={`${W/2},${H-3} ${W/2-3},${H+1} ${W/2+3},${H+1}`} fill="#a78bfa" opacity="0.9" />
+        <circle cx={W/2} cy={H-4} r="2.5" fill="#a78bfa" />
+        {/* Enemy word dots */}
+        {dots.map((d, i) => {
+          const dx = d.x * W
+          const dy = d.y * H
+          if (dy < 0 || dy > H || dx < 0 || dx > W) return null
+          return <circle key={i} cx={dx} cy={dy} r={d.bug ? 2.5 : 1.8}
+            fill={d.bug ? "#f97316" : "rgba(196,181,253,0.7)"} />
+        })}
+        {/* Boss dot */}
+        {bossX !== null && bossY !== null && (
+          <>
+            <circle cx={bossX * W} cy={bossY * H} r="5" fill="none" stroke="#f87171" strokeWidth="1" opacity="0.7" />
+            <circle cx={bossX * W} cy={bossY * H} r="2.5" fill="#f87171" opacity="0.9" />
+          </>
+        )}
+      </svg>
+    </div>
   )
 }
 
@@ -5909,6 +5960,9 @@ function BridgeStationView({ phase, level, score, liveG }: {
               </div>
             </div>
           )}
+
+          {/* Threat radar — dot map of current word positions */}
+          <ThreatRadar dots={liveG.wordDots} bossX={liveG.bossX} bossY={liveG.bossY} />
 
           {/* Last capy transmission */}
           {liveG.capyMsg && (
