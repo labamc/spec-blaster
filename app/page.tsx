@@ -2737,6 +2737,7 @@ export default function HomePage() {
             stations={STATION_DEFS}
             activeStation={activeStation}
             onSelectStation={setActiveStation}
+            liveG={liveG}
           />
           <ActiveStationPanel
             activeStation={activeStation}
@@ -3902,6 +3903,32 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
         ctx.shadowColor = "#f59e0b"; ctx.shadowBlur = 6
         ctx.fillStyle = "#fb923c"
         ctx.beginPath(); ctx.arc(b.x, b.y, 3, 0, Math.PI*2); ctx.fill()
+        ctx.restore()
+      } else if (b.kind === "turret") {
+        // turret bolt — oriented along travel direction, violet plasma streak
+        const bAng = Math.atan2(b.vy ?? -9, b.vx ?? 0)
+        const bLen = 14
+        const tx = Math.cos(bAng) * bLen, ty = Math.sin(bAng) * bLen
+        ctx.save()
+        ctx.shadowColor = "#a78bfa"; ctx.shadowBlur = 10
+        // glow trail (opposite direction)
+        ctx.globalAlpha = 0.2; ctx.strokeStyle = "#7c3aed"; ctx.lineWidth = 3
+        ctx.lineCap = "round"
+        ctx.beginPath(); ctx.moveTo(b.x - tx * 0.6, b.y - ty * 0.6); ctx.lineTo(b.x - tx, b.y - ty); ctx.stroke()
+        // main bolt
+        ctx.globalAlpha = 1
+        try {
+          const bg = ctx.createLinearGradient(b.x - tx, b.y - ty, b.x + tx * 0.3, b.y + ty * 0.3)
+          bg.addColorStop(0, "rgba(0,0,0,0)")
+          bg.addColorStop(0.5, "#a78bfa")
+          bg.addColorStop(1, "#ffffff")
+          ctx.strokeStyle = bg
+        } catch { ctx.strokeStyle = "#a78bfa" }
+        ctx.lineWidth = 2.5
+        ctx.beginPath(); ctx.moveTo(b.x - tx, b.y - ty); ctx.lineTo(b.x + tx * 0.3, b.y + ty * 0.3); ctx.stroke()
+        // hot tip
+        ctx.globalAlpha = 0.9; ctx.fillStyle = "#e9d5ff"
+        ctx.beginPath(); ctx.arc(b.x + tx * 0.3, b.y + ty * 0.3, 2, 0, Math.PI * 2); ctx.fill()
         ctx.restore()
       } else {
         const bulletCol = g.upgrades.spray ? "#22d3ee" : (g.triple || g.upgrades.triple) ? "#4ade80" : "#966bec"
@@ -5601,11 +5628,12 @@ function StationHeader({ label, sublabel }: { label: string; sublabel?: string }
 }
 
 // ── Ship Status Panel ──────────────────────────────────────────────────────
-function ShipStatusPanel({ hull, stations, activeStation, onSelectStation }: {
+function ShipStatusPanel({ hull, stations, activeStation, onSelectStation, liveG }: {
   hull: HullStatus
   stations: Station[]
   activeStation: StationId
   onSelectStation: (id: StationId) => void
+  liveG: LiveGSnapshot
 }) {
   const hullPct     = Math.round((hull.currentHull / hull.maxHull) * 100)
   const hullCol     = hullPct > 60 ? "#4ade80" : hullPct > 30 ? "#facc15" : "#f87171"
@@ -5627,7 +5655,10 @@ function ShipStatusPanel({ hull, stations, activeStation, onSelectStation }: {
 
   return (
     <StationShell style={{ flex: "0 0 220px", minWidth: 0 }}>
-      <StationHeader label="SHIP STATUS" sublabel="THE SIGNAL" />
+      <StationHeader
+        label="SHIP STATUS"
+        sublabel={liveG.bossName ? `⚠ ${liveG.bossName}` : "THE SIGNAL"}
+      />
       <div style={{ padding: "0.6rem 0.75rem", display: "flex", flexDirection: "column", gap: "0.55rem" }}>
 
         {/* Hull integrity */}
@@ -5737,7 +5768,7 @@ function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, 
       <div style={{ padding: "0.5rem 0.75rem" }}>
         {activeStation === "bridge"  && <BridgeStationView phase={phase} level={level} score={score} liveG={liveG} />}
         {activeStation === "turret"  && <TurretStationView onFire={onTurretFire} phase={phase} />}
-        {activeStation === "salvage" && <SalvageStationView />}
+        {activeStation === "salvage" && <SalvageStationView liveG={liveG} score={score} phase={phase} />}
       </div>
     </StationShell>
   )
@@ -5939,15 +5970,29 @@ function TurretStationView({ onFire, phase }: {
 }
 
 // ── Salvage Station ────────────────────────────────────────────────────────
-function SalvageStationView() {
+function SalvageStationView({ liveG, score, phase }: {
+  liveG: LiveGSnapshot; score: number; phase: string
+}) {
+  // Tokens = same formula as CLIScreen (score/6 + kills*3)
+  const tokens = Math.floor(score / 6) + liveG.kills * 3
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem" }}>
       <StatusRow label="SALVAGE BAY" value="ACTIVE" valueCol="#4ade80" />
-      <StatusRow label="GRAPPLE SYSTEM" value="OFFLINE" valueCol="rgba(255,113,113,0.65)" />
-      <StatusRow label="CARGO HOLD" value="EMPTY" valueCol="rgba(255,255,255,0.3)" />
-      <div style={{ marginTop: "0.35rem", borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "0.4rem" }}>
+      <StatusRow label="GRAPPLE SYSTEM" value="OFFLINE" valueCol="rgba(248,113,113,0.55)" />
+      {phase === "playing" && (
+        <>
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "0.35rem", marginTop: "0.05rem" }}>
+            <span style={{ color: "rgba(255,255,255,0.2)", fontSize: "0.52rem", letterSpacing: "0.12em" }}>RECOVERED</span>
+          </div>
+          <StatusRow label="SIGNAL PTS" value={score.toLocaleString()} valueCol="rgba(255,255,255,0.5)" />
+          <StatusRow label="KILLS"       value={String(liveG.kills)} valueCol="rgba(255,255,255,0.4)" />
+          <StatusRow label="TOKENS"      value={`${tokens}t`} valueCol="rgba(74,222,128,0.7)" />
+        </>
+      )}
+      <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "0.35rem", marginTop: "0.1rem" }}>
         <span style={{ color: "rgba(255,255,255,0.12)", fontSize: "0.52rem", fontStyle: "italic" }}>
-          Future: grapple hook · cargo recovery · rescue operations
+          Future: grapple hook · cargo recovery · rescue
         </span>
       </div>
     </div>
