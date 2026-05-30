@@ -617,13 +617,15 @@ export default function HomePage() {
   }, [])
 
   // Turret fire — fires from player position at turret barrel angle
-  // Rate-limited to ~300ms; weapon mode reads from _stationState.turretWeapon
+  // Rate-limited; scales with Signal Amplifier (fire_rate) upgrade
   const turretLastFire = useRef(0)
   function onTurretFire(angle: number) {
     const g = G.current
     if (!g.running || g.paused) return
     const now = Date.now()
-    if (now - turretLastFire.current < 300) return
+    const fireRateLvl = g.upgrades.fire_rate ?? 0
+    const rateLimit = Math.round(300 * Math.pow(0.85, fireRateLvl))
+    if (now - turretLastFire.current < rateLimit) return
     turretLastFire.current = now
     const SPEED = 10
     const weapon = _stationState.turretWeapon
@@ -5755,8 +5757,14 @@ function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSel
   // Dynamic crew roster: capy + player + unlocked agents + empty
   const crewRoster: CrewOption[] = ["capy", "player", ...unlockedAgents, null]
 
-  // Local crew assignment state — cycles through roster on click
+  // Local crew assignment state — persisted to localStorage
   const [crewAssign, setCrewAssign] = useState<Record<StationId, CrewOption>>(() => {
+    // Try to restore saved crew assignments
+    try {
+      const saved = localStorage.getItem("sb_crew_assign")
+      if (saved) return JSON.parse(saved) as Record<StationId, CrewOption>
+    } catch {}
+    // Default: use STATION_DEFS defaults
     const m: Record<string, CrewOption> = {}
     initialStations.forEach(s => { m[s.id] = s.assignedCrew ?? null })
     return m as Record<StationId, CrewOption>
@@ -5767,7 +5775,9 @@ function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSel
       const cur = prev[stationId]
       const idx = crewRoster.indexOf(cur)
       const next = crewRoster[(idx + 1) % crewRoster.length]
-      return { ...prev, [stationId]: next }
+      const updated = { ...prev, [stationId]: next }
+      try { localStorage.setItem("sb_crew_assign", JSON.stringify(updated)) } catch {}
+      return updated
     })
   }
 
