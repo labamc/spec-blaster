@@ -23,6 +23,7 @@ const _stationState = {
   active:        "bridge" as StationId,
   turretAngle:   -Math.PI / 2,  // pointing up by default
   turretWeapon:  "standard" as "standard" | "triple" | "spray",
+  commsLog:      [] as string[],  // last 4 first-line capy message snippets
 }
 
 interface Station {
@@ -585,6 +586,7 @@ export default function HomePage() {
     bossX: null as number | null, bossY: null as number | null,
     upgrades: {} as Record<string, number>,
     shield: false,
+    commsLog: [] as string[],
   })
   useEffect(() => {
     const id = setInterval(() => {
@@ -602,6 +604,7 @@ export default function HomePage() {
         bossY:       g.boss ? g.boss.y / GH : null,
         upgrades:    { ...g.upgrades },
         shield:      g.shield,
+        commsLog:    [..._stationState.commsLog],
       })
     }, 150)
     return () => clearInterval(id)
@@ -2818,6 +2821,9 @@ function showCapyMsg(g: GState, msg: string, now: number) {
   const displayMs = Math.max(2200, Math.min(4500, 1800 + lineCount * 380 + charCount * 12))
   g.capyMsgEnd = now + displayMs
   g.nextCapyMsg = now + 28000
+  // Append to Bridge comms log (first line only, max 4 entries)
+  const firstLine = msg.split("\n")[0].trim()
+  if (firstLine) _stationState.commsLog = [firstLine, ..._stationState.commsLog].slice(0, 4)
 }
 
 function applyPowerup(g: GState, word: Word, now: number) {
@@ -5858,6 +5864,7 @@ type LiveGSnapshot = {
   bossX: number | null; bossY: number | null
   upgrades: Record<string, number>
   shield: boolean
+  commsLog: string[]
 }
 
 function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, onTurretFire }: {
@@ -5902,6 +5909,20 @@ function ThreatRadar({ dots, bossX, bossY }: {
         {/* Grid lines */}
         <line x1={W/2} y1={0} x2={W/2} y2={H} stroke="rgba(150,107,236,0.1)" strokeWidth="0.5" />
         <line x1={0} y1={H*0.8} x2={W} y2={H*0.8} stroke="rgba(150,107,236,0.1)" strokeWidth="0.5" strokeDasharray="2 3" />
+        {/* Turret aim line (when turret station active) */}
+        {_stationState.active === "turret" && (() => {
+          const playerY = H * (1 - 50 / GH)  // PLAYER_Y normalized
+          const aimLen  = 18
+          const ax = W / 2 + Math.cos(_stationState.turretAngle) * aimLen
+          const ay = playerY  + Math.sin(_stationState.turretAngle) * aimLen
+          return (
+            <>
+              <line x1={W/2} y1={playerY} x2={ax} y2={ay}
+                stroke="#a78bfa" strokeWidth="0.8" strokeDasharray="2 2" opacity="0.7" />
+              <circle cx={ax} cy={ay} r="1.8" fill="none" stroke="#c4b5fd" strokeWidth="0.8" opacity="0.6" />
+            </>
+          )
+        })()}
         {/* Player position at bottom-center */}
         <polygon points={`${W/2},${H-3} ${W/2-3},${H+1} ${W/2+3},${H+1}`} fill="#a78bfa" opacity="0.9" />
         <circle cx={W/2} cy={H-4} r="2.5" fill="#a78bfa" />
@@ -5987,14 +6008,20 @@ function BridgeStationView({ phase, level, score, liveG }: {
           {/* Threat radar — dot map of current word positions */}
           <ThreatRadar dots={liveG.wordDots} bossX={liveG.bossX} bossY={liveG.bossY} />
 
-          {/* Last capy transmission */}
-          {liveG.capyMsg && (
-            <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "0.35rem", marginTop: "0.1rem" }}>
-              <span style={{ color: "rgba(196,181,253,0.35)", fontSize: "0.5rem", letterSpacing: "0.1em" }}>🦫 COMMS</span>
-              <p style={{ color: "rgba(196,181,253,0.55)", fontSize: "0.56rem", margin: "0.2rem 0 0",
-                lineHeight: 1.5, whiteSpace: "pre-line", fontStyle: "italic" }}>
-                {liveG.capyMsg.split("\n").slice(0, 2).join("\n")}
-              </p>
+          {/* Comms log — rolling capy transmission history */}
+          {liveG.commsLog.length > 0 && (
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "0.35rem", marginTop: "0.05rem" }}>
+              <span style={{ color: "rgba(196,181,253,0.3)", fontSize: "0.5rem", letterSpacing: "0.1em" }}>🦫 COMMS</span>
+              <div style={{ display:"flex", flexDirection:"column", gap:"0.1rem", marginTop:"0.2rem" }}>
+                {liveG.commsLog.map((line, i) => (
+                  <p key={i} style={{ color:`rgba(196,181,253,${0.6 - i * 0.13})`,
+                    fontSize: i === 0 ? "0.57rem" : "0.5rem",
+                    margin:0, fontStyle:"italic", overflow:"hidden",
+                    textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {line}
+                  </p>
+                ))}
+              </div>
             </div>
           )}
         </>
@@ -6258,8 +6285,25 @@ function EngineeringStationView({ liveG, phase }: { liveG: LiveGSnapshot; phase:
         </p>
       )}
 
+      {/* Power grid — visual indicator of installed system count */}
       <div style={{ borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:"0.35rem", marginTop:"0.05rem" }}>
-        <span style={{ color:"rgba(255,255,255,0.12)", fontSize:"0.52rem", fontStyle:"italic" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.22rem" }}>
+          <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", letterSpacing:"0.12em" }}>SIGNAL OUTPUT</span>
+          <span style={{ color:"rgba(150,107,236,0.5)", fontSize:"0.5rem" }}>{systemCount}/{UPGRADES.length}</span>
+        </div>
+        <div style={{ display:"flex", gap:"0.15rem", flexWrap:"wrap" }}>
+          {UPGRADES.map((u, i) => {
+            const lv = liveG.upgrades[u.id] ?? 0
+            return (
+              <div key={u.id} title={lv > 0 ? `${u.name} ×${lv}` : u.name}
+                style={{ width:"12px", height:"8px", borderRadius:"1px",
+                  background: lv > 0 ? (u.id === "shield_regen" && liveG.shield ? "#4ade80" : "rgba(150,107,236,0.7)") : "rgba(255,255,255,0.06)",
+                  border:`1px solid ${lv > 0 ? "rgba(150,107,236,0.4)" : "rgba(255,255,255,0.08)"}`,
+                  boxShadow: lv > 0 ? "0 0 3px rgba(150,107,236,0.4)" : "none" }} />
+            )
+          })}
+        </div>
+        <span style={{ color:"rgba(255,255,255,0.1)", fontSize:"0.5rem", fontStyle:"italic", display:"block", marginTop:"0.3rem" }}>
           Future: repair · power allocation · module swap
         </span>
       </div>
