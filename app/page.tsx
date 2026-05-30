@@ -20,12 +20,17 @@ type StationId = "bridge" | "turret" | "salvage" | "engineering"
 // Module-level station state — readable by the draw() function without prop drilling
 // Written by station component event handlers, read by the canvas renderer
 const _stationState = {
-  active:        "bridge" as StationId,
-  turretAngle:   -Math.PI / 2,  // pointing up by default
-  turretWeapon:  "standard" as "standard" | "triple" | "spray",
-  turretFiring:  false,          // true during muzzle flash window
-  commsLog:      [] as string[],  // last 4 first-line capy message snippets
-  sectorStart:   0,              // timestamp of current sector start (ms)
+  active:           "bridge" as StationId,
+  turretAngle:      -Math.PI / 2,
+  turretWeapon:     "standard" as "standard" | "triple" | "spray",
+  turretFiring:     false,
+  commsLog:         [] as string[],
+  sectorStart:      0,
+  // Phase 2: target marking (Bridge → Turret cooperation)
+  markedTargetId:   null as number | null,
+  markedAt:         0,  // timestamp for pulse animation
+  // Phase 2: engineering power allocation (10 points to distribute)
+  power: { turret: 3, shields: 3, engines: 2, sensors: 2 } as Record<string, number>,
 }
 
 interface Station {
@@ -470,7 +475,7 @@ const sfx = {
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Behavior = "fall" | "charge" | "zigzag" | "sine"
-interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean; age: number; regenBoss?: boolean; fragment?: boolean }
+interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean; age: number; regenBoss?: boolean; fragment?: boolean; id: number }
 interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean; cluster?: boolean; col?: string; bounce?: boolean; drift?: number; splitAt?: number; kind?: "spray"|"triple"|"homing"|"laser"|"mine"|"turret" }
 interface Mine      { x: number; y: number; age: number; armAt: number }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number; gravity?: number; friction?: number }
@@ -481,7 +486,7 @@ interface WaveAnn   { text: string; t: number }
 interface GState {
   px: number; lives: number; score: number; kills: number; level: number; endless: boolean
   words: Word[]; bullets: Bullet[]; particles: Particle[]; bg: BgGlyph[]; boss: Boss | null
-  keys: Set<string>; lastShot: number; lastWord: number; wordsKilled: number; wordsEscaped: number; bossSpawned: boolean
+  keys: Set<string>; lastShot: number; lastWord: number; wordsKilled: number; wordsEscaped: number; bossSpawned: boolean; nextWordId: number
   shield: boolean; shieldEnd: number; triple: boolean; tripleEnd: number; fast: boolean; fastEnd: number
   invuln: boolean; invulnEnd: number; W: number; running: boolean
   upgrades: Record<string, number>; shieldRegenAt: number
@@ -502,6 +507,10 @@ interface GState {
   deathFadeAt: number
   lastMsWave: number
   bossNextTaunt: number
+  // Engineering power allocation (read from _stationState each frame)
+  _powerTurret?: number; _powerShields?: number; _powerEngines?: number; _powerSensors?: number
+  // Capy crew auto-fire timestamp
+  _capyLastFire?: number
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -518,7 +527,7 @@ function initState(W: number): GState {
     px: W / 2, lives: MAX_LIVES, score: 0, kills: 0, level: 1, endless: false,
     words: [], bullets: [], particles: [], boss: null,
     bg: makeBg(W),
-    keys: new Set(), lastShot: 0, lastWord: 0, wordsKilled: 0, wordsEscaped: 0, bossSpawned: false,
+    keys: new Set(), lastShot: 0, lastWord: 0, wordsKilled: 0, wordsEscaped: 0, bossSpawned: false, nextWordId: 1,
     shield: false, shieldEnd: 0, triple: false, tripleEnd: 0, fast: false, fastEnd: 0,
     invuln: false, invulnEnd: 0, W, running: false,
     upgrades: {}, shieldRegenAt: 0,
@@ -584,7 +593,7 @@ export default function HomePage() {
     bossHpPct: null as number | null, bossName: null as string | null,
     capyMsg: "",
     wordCount: 0,
-    wordDots: [] as Array<{ x: number; y: number; bug: boolean }>,
+    wordDots: [] as Array<{ x: number; y: number; bug: boolean; id: number; elite: boolean }>,
     bossX: null as number | null, bossY: null as number | null,
     upgrades: {} as Record<string, number>,
     shield: false,
@@ -603,7 +612,7 @@ export default function HomePage() {
         bossName:    g.boss ? g.boss.name : null,
         capyMsg:     g.capyMsg,
         wordCount:   g.words.length,
-        wordDots:    g.words.slice(0, 20).map(w => ({ x: w.x / (g.W || GW), y: w.y / GH, bug: w.type === "bug" })),
+        wordDots:    g.words.slice(0, 20).map(w => ({ x: w.x / (g.W || GW), y: w.y / GH, bug: w.type === "bug", id: w.id, elite: w.elite })),
         bossX:       g.boss ? g.boss.x / (g.W || GW) : null,
         bossY:       g.boss ? g.boss.y / GH : null,
         upgrades:    { ...g.upgrades },
@@ -624,7 +633,9 @@ export default function HomePage() {
     if (!g.running || g.paused) return
     const now = Date.now()
     const fireRateLvl = g.upgrades.fire_rate ?? 0
-    const rateLimit = Math.round(300 * Math.pow(0.85, fireRateLvl))
+    // Engineering turret power: each point reduces rate limit by 5% (max 50% at 10pts)
+    const powerBonus = Math.pow(0.95, _stationState.power.turret)
+    const rateLimit = Math.round(300 * Math.pow(0.85, fireRateLvl) * powerBonus)
     if (now - turretLastFire.current < rateLimit) return
     turretLastFire.current = now
     const SPEED = 10
@@ -888,7 +899,7 @@ export default function HomePage() {
           if (r < 0.25)      { type = "bug"; text = BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)] }
           else if (r < 0.32) { type = "powerup"; text = POWERUP_WORDS[Math.floor(Math.random() * POWERUP_WORDS.length)] }
           const ox = 40 + Math.random() * (g.W - 80)
-          g.words.push({ x: ox, y: -18, text, type, spd: 0.65 + Math.random() * 0.35, beh: "fall", ph: 0, ox, hp: 1, hitFlash: 0, elite: false, age: 0 })
+          g.words.push({ x: ox, y: -18, text, type, spd: 0.65 + Math.random() * 0.35, beh: "fall", ph: 0, ox, hp: 1, hitFlash: 0, elite: false, age: 0, id: g.nextWordId++ })
         }
         // attract: auto-fire toward nearest word every 900ms
         if (now - g.lastShot > 900) {
@@ -966,6 +977,9 @@ export default function HomePage() {
         return
       }
 
+      // Apply engineering power allocation effects each frame
+      applyPowerEffects(g)
+
       const spd = g.fast && now < g.fastEnd ? 8 : 5
 
       // expire powerups
@@ -975,9 +989,11 @@ export default function HomePage() {
       if (g.invuln && now > g.invulnEnd) g.invuln = false
 
       // shield regen upgrade (claude_qa scales: base 17s → lv2 13s → lv3 10s)
+      // Engineering shields power: each point reduces regen interval by 8% (max ~57% faster at 10pts)
       if (g.upgrades.shield_regen) {
         const qaLv = g.activeAgents.includes("claude_qa") ? 1 + (g.agentUpgrades.claude_qa ?? 0) : 0
-        const srInterval = qaLv >= 3 ? 10000 : qaLv >= 2 ? 13000 : qaLv >= 1 ? 17000 : 25000
+        const baseInterval = qaLv >= 3 ? 10000 : qaLv >= 2 ? 13000 : qaLv >= 1 ? 17000 : 25000
+        const srInterval = Math.round(baseInterval * Math.pow(0.92, _stationState.power.shields))
         if (g.shieldRegenAt === 0) g.shieldRegenAt = now + srInterval
         if (!g.shield && now > g.shieldRegenAt) {
           g.shield = true; g.shieldEnd = now + 20000; g.shieldRegenAt = now + srInterval
@@ -1173,6 +1189,37 @@ export default function HomePage() {
         }
       }
 
+      // Capy crew auto-fire — when Capy is assigned to Turret station
+      // Fires every 3.5s at a random visible word, 70% accuracy (30% miss = wide angle)
+      if (_stationState.active === "turret" || true) {  // Capy fires regardless of active station
+        const turretCrew = (_stationState as any)._crewAssign?.turret ?? null
+        // Read from localStorage since crewAssign is in React state
+        const capyAtTurret = (() => {
+          try { const ca = localStorage.getItem("sb_crew_assign"); return ca ? JSON.parse(ca).turret === "capy" : false } catch { return false }
+        })()
+        if (capyAtTurret && g.words.length > 0 && !g.bossWarn) {
+          if (!g._capyLastFire) g._capyLastFire = now
+          if (now - g._capyLastFire > 3500) {
+            g._capyLastFire = now
+            const targets = g.words.filter(w => !w.fragment && w.type !== "powerup")
+            if (targets.length > 0) {
+              const target = targets[Math.floor(Math.random() * targets.length)]
+              const dx = target.x - g.px, dy = target.y - g.py
+              const dist = Math.sqrt(dx*dx + dy*dy) || 1
+              // 70% accuracy: 30% chance adds random angle offset
+              const missAngle = Math.random() < 0.3 ? (Math.random() - 0.5) * 0.8 : 0
+              const ang = Math.atan2(dy, dx) + missAngle
+              const SPEED = 10
+              g.bullets.push({ x: g.px, y: g.py - 20,
+                vx: Math.cos(ang) * SPEED, vy: Math.sin(ang) * SPEED,
+                kind: "turret", col: "#86efac" })  // green — capy's color
+              g.particles.push({ x: g.px, y: g.py - 22, vx: 0, vy: -0.8, life: 0.8,
+                glyph: "🦫", col: "#86efac", sz: 10, gravity: 0 })
+            }
+          }
+        }
+      }
+
       // spawn words (not during boss warning)
       // Pause background word rain while any boss is active — boss fight is the focus
       if (!g.bossWarn && !g.boss) {
@@ -1202,12 +1249,14 @@ export default function HomePage() {
             }
           }
           const slowFactor = Math.pow(0.85, g.upgrades.word_slow ?? 0)
+          // Engineering engines power: each point slows words by 4% (max 34% at 10pts)
+          const enginesSlow = Math.pow(0.96, _stationState.power.engines)
           // claude_design scales: base 12% slower → lv2 20% → lv3 28%
           const designLv = g.activeAgents.includes("claude_design") ? 1 + (g.agentUpgrades.claude_design ?? 0) : 0
           const designMul = designLv >= 3 ? 0.72 : designLv >= 2 ? 0.80 : designLv >= 1 ? 0.88 : 1
           // Speed: sector 1 ~0.78, sector 4 ~1.26, endless capped at 2.2
           const rawSpd = (0.62 + g.level * 0.16 + (g.endless ? Math.floor(g.score / 1200) * 0.05 : 0))
-          const spd2 = Math.min(rawSpd, 2.2) * slowFactor * designMul
+          const spd2 = Math.min(rawSpd, 2.2) * slowFactor * designMul * enginesSlow
           const br = Math.random()
           let beh: Behavior = "fall"
           if (type !== "powerup") {
@@ -1223,7 +1272,7 @@ export default function HomePage() {
           const ox = 30 + Math.random() * (g.W - 60)
           // Elite words in endless: 3 HP, worth 3× score, slightly slower
           const isElite = g.endless && type !== "powerup" && Math.random() < 0.12
-          g.words.push({ x: ox, y: -18, text, type, spd: spd2 * (isElite ? 0.7 : 1), beh, ph: Math.random() * Math.PI * 2, ox, hp: isElite ? 3 : 1, hitFlash: 0, elite: isElite, age: 0 })
+          g.words.push({ x: ox, y: -18, text, type, spd: spd2 * (isElite ? 0.7 : 1), beh, ph: Math.random() * Math.PI * 2, ox, hp: isElite ? 3 : 1, hitFlash: 0, elite: isElite, age: 0, id: g.nextWordId++ })
         }
       }
 
@@ -1243,7 +1292,7 @@ export default function HomePage() {
               : STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)]
             const sox = 30 + Math.random() * (g.W - 60)
             const beh: Behavior = ["fall","charge","zigzag","sine"][Math.floor(Math.random()*4)] as Behavior
-            g.words.push({ x: sox, y: -18 - si * 22, text: stormText, type: Math.random() < 0.35 ? "bug" : "story", spd: stormSpd, beh, ph: Math.random() * Math.PI * 2, ox: sox, hp: 1, hitFlash: 0, elite: false, age: 0 })
+            g.words.push({ x: sox, y: -18 - si * 22, text: stormText, type: Math.random() < 0.35 ? "bug" : "story", spd: stormSpd, beh, ph: Math.random() * Math.PI * 2, ox: sox, hp: 1, hitFlash: 0, elite: false, age: 0, id: g.nextWordId++ })
           }
           if (stormCount > 0) {
             showCapyMsg(g, "Semantic storm.\nCoherence under pressure.", now)
@@ -1670,7 +1719,7 @@ export default function HomePage() {
         // The Roadmap: periodically spawns healing words
         if (b.name === "THE ROADMAP" && b.t % 140 === 0) {
           const rx = 40 + Math.random() * (g.W - 80)
-          g.words.push({ x: rx, y: -18, text: "roadmap item", type: "story", spd: 0.8, beh: "fall", ph: 0, ox: rx, hp: 1, hitFlash: 0, elite: false, age: 0, regenBoss: true })
+          g.words.push({ x: rx, y: -18, text: "roadmap item", type: "story", spd: 0.8, beh: "fall", ph: 0, ox: rx, hp: 1, hitFlash: 0, elite: false, age: 0, regenBoss: true, id: g.nextWordId++ })
         }
         // The Pivot: teleports + fires 360° burst every 180 frames
         if (b.name === "THE PIVOT" && b.t > 0 && b.t % 180 === 0) {
@@ -1725,7 +1774,7 @@ export default function HomePage() {
           const dx = 40 + Math.random() * (g.W - 80)
           const deps = ["legacy code","vendor lock","npm audit","circular dep","peer dep","semver range"]
           const depText = deps[Math.floor(Math.random() * deps.length)]
-          g.words.push({ x: dx, y: -18, text: depText, type: "bug", spd: 1.6, beh: "fall", ph: 0, ox: dx, hp: 1, hitFlash: 0, elite: false, age: 0 })
+          g.words.push({ x: dx, y: -18, text: depText, type: "bug", spd: 1.6, beh: "fall", ph: 0, ox: dx, hp: 1, hitFlash: 0, elite: false, age: 0, id: g.nextWordId++ })
           spawnParticles(g, b.x, b.y, "#a3e635", "⇣", 4)
         }
         // The Void (phase 6): deep endless boss — phase-fires expanding rings + tracked burst
@@ -1872,11 +1921,16 @@ export default function HomePage() {
           const hw = w.text.length * 5.5 + 8
           if (Math.abs(b.x - w.x) < hw && Math.abs(b.y - w.y) < 14) {
             if (!g.upgrades.piercing) g.bullets.splice(i, 1)
+            // Marked targets take 2 HP per turret hit (bridged targeting bonus)
+            const isTurretHit = b.kind === "turret"
+            const isThisMarked = _stationState.markedTargetId !== null && w.id === _stationState.markedTargetId
+            const hpDrain = (isTurretHit && isThisMarked) ? 2 : 1
             if (w.hp > 1) {
               // elite word takes a hit
-              w.hp--; w.hitFlash = 10; sfx.elite()
-              spawnParticles(g, w.x, w.y, "#f87171", "✦", 3)
-              if (g.upgrades.piercing) { break } else { continue outer }
+              w.hp = Math.max(0, w.hp - hpDrain); w.hitFlash = 10; sfx.elite()
+              spawnParticles(g, w.x, w.y, isThisMarked ? "#f87171" : "#f87171", "✦", isThisMarked ? 5 : 3)
+              if (w.hp > 0) { if (g.upgrades.piercing) { break } else { continue outer } }
+              // hp reached 0 via multi-drain — fall through to kill
             }
             // kill — push spawn timer forward so rapid kills create a breathing gap
             const elapsed = now - g.lastKill
@@ -1916,6 +1970,15 @@ export default function HomePage() {
                 sfx.bossDead()
               }
             }
+            // Bridge target marking bonus — +50% score, clear mark on kill
+            const isMarked = _stationState.markedTargetId !== null && w.id === _stationState.markedTargetId
+            if (isMarked) {
+              _stationState.markedTargetId = null
+              g.particles.push({ x: w.x, y: w.y - 16, vx: 0, vy: -1.1, life: 1.6,
+                glyph: "TARGET ELIMINATED", col: "#f87171", sz: 10, gravity: 0 })
+              g.accentFlash = 10; g.accentFlashCol = "#f87171"
+            }
+            const markedMul = isMarked ? 1.5 : 1
             const base = w.type === "bug" ? 75 : w.type === "powerup" ? 0 : 10
             const eliteMul = w.elite ? 3 : 1
             const mult = g.combo >= 3 ? 1 + (g.combo - 2) * 0.2 : 1
@@ -1925,7 +1988,7 @@ export default function HomePage() {
             // claude_data: +10% score per upgrade level (mercs don't have boss unlocks)
             const dataLv = g.activeAgents.includes("claude_data") ? 1 + (g.agentUpgrades.claude_data ?? 0) : 0
             const dataMul = 1 + dataLv * 0.10
-            const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul * pmMul * dataMul)
+            const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul * pmMul * dataMul * markedMul)
             g.score += pts
             g.kills++; if (!w.fragment) g.wordsKilled++
             // Kill milestones — expedition checkpoints
@@ -2028,11 +2091,11 @@ export default function HomePage() {
               const fragSpd = w.spd * 1.35
               if (frag1) {
                 const ox1 = Math.max(30, w.x - 22)
-                g.words.push({ x: ox1, y: w.y, text: frag1, type: "bug", spd: fragSpd, beh: "zigzag", ph: 0, ox: ox1, hp: 1, hitFlash: 0, elite: false, age: 7 })
+                g.words.push({ x: ox1, y: w.y, text: frag1, type: "bug", spd: fragSpd, beh: "zigzag", ph: 0, ox: ox1, hp: 1, hitFlash: 0, elite: false, age: 7, id: g.nextWordId++ })
               }
               if (frag2) {
                 const ox2 = Math.min(g.W - 30, w.x + 22)
-                g.words.push({ x: ox2, y: w.y, text: frag2, type: "bug", spd: fragSpd, beh: "zigzag", ph: Math.PI, ox: ox2, hp: 1, hitFlash: 0, elite: false, age: 7 })
+                g.words.push({ x: ox2, y: w.y, text: frag2, type: "bug", spd: fragSpd, beh: "zigzag", ph: Math.PI, ox: ox2, hp: 1, hitFlash: 0, elite: false, age: 7, id: g.nextWordId++ })
               }
               g.particles.push({ x: w.x, y: w.y - 10, vx: 0, vy: -0.9, life: 1.1, glyph: "SPLIT", col: "#fdba74", sz: 9 })
               sfx.split()
@@ -2250,7 +2313,7 @@ export default function HomePage() {
             }
             showCapyMsg(g, miniBossDeathMsgs[bx.name] ?? "Pattern dissolved.\nThe Signal holds.", now)
           }
-          g.words.push({ x: bx.x, y: Math.min(bx.y + 55, GH - 80), text: "KNOWLEDGE", type: "powerup", spd: 0.85, beh: "fall", ph: 0, ox: bx.x, hp: 1, hitFlash: 0, elite: false, age: 7 })
+          g.words.push({ x: bx.x, y: Math.min(bx.y + 55, GH - 80), text: "KNOWLEDGE", type: "powerup", spd: 0.85, beh: "fall", ph: 0, ox: bx.x, hp: 1, hitFlash: 0, elite: false, age: 7, id: g.nextWordId++ })
         } else {
           const noReg = g.lives >= g.livesAtWave
           g.score += 500
@@ -3130,6 +3193,7 @@ function spawnLetterExplosion(g: GState, word: Word, pts: number, combo: number,
       hp: 1, hitFlash: 0,
       elite: false, age: 0,
       fragment: true,
+      id: g.nextWordId++,
     })
   }
 }
@@ -4482,6 +4546,44 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.globalAlpha = 0.3; ctx.fillStyle = "rgba(0,0,0,0.8)"
     ctx.fillRect(cw * 0.5 - 0.5, 0, 1, bBarH)
     ctx.restore()
+  }
+
+  // ── Bridge target marking — locked target gets visual on battlefield ────────
+  if (!attractMode && _stationState.markedTargetId !== null) {
+    const target = g.words.find(w => w.id === _stationState.markedTargetId)
+    if (target) {
+      const age = Date.now() - _stationState.markedAt
+      const pulse = 0.6 + 0.3 * Math.abs(Math.sin(now / 180))
+      ctx.save()
+      ctx.globalAlpha = pulse
+      ctx.strokeStyle = "#f87171"; ctx.lineWidth = 1.2
+      ctx.shadowColor = "#f87171"; ctx.shadowBlur = 8
+      // pulsing diamond around target
+      const ds = 14 + 3 * Math.abs(Math.sin(now / 240))
+      ctx.beginPath()
+      ctx.moveTo(target.x, target.y - ds)
+      ctx.lineTo(target.x + ds, target.y)
+      ctx.lineTo(target.x, target.y + ds)
+      ctx.lineTo(target.x - ds, target.y)
+      ctx.closePath(); ctx.stroke()
+      // corner ticks
+      ctx.globalAlpha = pulse * 0.6; ctx.lineWidth = 1
+      const cs = ds + 5
+      for (const [sx, sy, ex, ey] of [
+        [target.x - cs, target.y - 4, target.x - cs, target.y + 4],
+        [target.x + cs, target.y - 4, target.x + cs, target.y + 4],
+      ] as [number,number,number,number][]) {
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke()
+      }
+      // "LOCKED" label
+      ctx.globalAlpha = 0.7; ctx.shadowBlur = 0
+      ctx.fillStyle = "#f87171"; ctx.font = "bold 7px monospace"; ctx.textAlign = "center"
+      ctx.fillText("LOCKED", target.x, target.y - ds - 5)
+      ctx.restore()
+    } else {
+      // target died or left field — clear mark
+      _stationState.markedTargetId = null
+    }
   }
 
   // ── Turret station reticle — draws when turret station is active ──────────
@@ -5904,7 +6006,7 @@ type LiveGSnapshot = {
   kills: number; wordsKilled: number; combo: number
   bossHpPct: number | null; bossName: string | null; capyMsg: string
   wordCount: number
-  wordDots: Array<{ x: number; y: number; bug: boolean }>
+  wordDots: Array<{ x: number; y: number; bug: boolean; id: number; elite: boolean }>
   bossX: number | null; bossY: number | null
   upgrades: Record<string, number>
   shield: boolean
@@ -5941,44 +6043,67 @@ function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, 
 // ── Threat Radar ───────────────────────────────────────────────────────────
 // Mini top-down dot map of the battlefield — pure display
 function ThreatRadar({ dots, bossX, bossY }: {
-  dots: Array<{ x: number; y: number; bug: boolean }>
+  dots: Array<{ x: number; y: number; bug: boolean; id: number; elite: boolean }>
   bossX: number | null; bossY: number | null
 }) {
-  const W = 110, H = 52  // radar dimensions in px
+  const W = 110, H = 52
+  const [markedId, setMarkedId] = useState<number | null>(null)
+
+  function handleDotClick(id: number) {
+    const next = _stationState.markedTargetId === id ? null : id
+    _stationState.markedTargetId = next
+    _stationState.markedAt = Date.now()
+    setMarkedId(next)
+  }
+
+  // Sync local state if mark was cleared by a kill
+  useEffect(() => {
+    if (_stationState.markedTargetId !== markedId) setMarkedId(_stationState.markedTargetId)
+  })
+
   return (
     <div>
-      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.14rem" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.14rem", alignItems:"baseline" }}>
         <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", letterSpacing:"0.1em" }}>THREAT RADAR</span>
-        <span style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.5rem" }}>{dots.length} contacts</span>
+        <span style={{ color: markedId !== null ? "#f87171" : "rgba(255,255,255,0.15)", fontSize:"0.5rem" }}>
+          {markedId !== null ? "TARGET LOCKED" : `${dots.length} contacts`}
+        </span>
       </div>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display:"block", border:"1px solid rgba(150,107,236,0.12)", borderRadius:"3px", background:"rgba(0,0,0,0.3)" }}>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`}
+        style={{ display:"block", border:`1px solid ${markedId !== null ? "rgba(248,113,113,0.3)" : "rgba(150,107,236,0.12)"}`,
+          borderRadius:"3px", background:"rgba(0,0,0,0.3)", cursor:"crosshair", transition:"border-color 0.2s" }}>
         {/* Grid lines */}
         <line x1={W/2} y1={0} x2={W/2} y2={H} stroke="rgba(150,107,236,0.1)" strokeWidth="0.5" />
         <line x1={0} y1={H*0.8} x2={W} y2={H*0.8} stroke="rgba(150,107,236,0.1)" strokeWidth="0.5" strokeDasharray="2 3" />
-        {/* Turret aim line (when turret station active) */}
+        {/* Turret aim line */}
         {_stationState.active === "turret" && (() => {
-          const playerY = H * (1 - 50 / GH)  // PLAYER_Y normalized
-          const aimLen  = 18
-          const ax = W / 2 + Math.cos(_stationState.turretAngle) * aimLen
-          const ay = playerY  + Math.sin(_stationState.turretAngle) * aimLen
+          const playerY = H * (1 - 50 / GH)
+          const ax = W / 2 + Math.cos(_stationState.turretAngle) * 18
+          const ay = playerY + Math.sin(_stationState.turretAngle) * 18
           return (
             <>
-              <line x1={W/2} y1={playerY} x2={ax} y2={ay}
-                stroke="#a78bfa" strokeWidth="0.8" strokeDasharray="2 2" opacity="0.7" />
+              <line x1={W/2} y1={playerY} x2={ax} y2={ay} stroke="#a78bfa" strokeWidth="0.8" strokeDasharray="2 2" opacity="0.7" />
               <circle cx={ax} cy={ay} r="1.8" fill="none" stroke="#c4b5fd" strokeWidth="0.8" opacity="0.6" />
             </>
           )
         })()}
-        {/* Player position at bottom-center */}
+        {/* Player */}
         <polygon points={`${W/2},${H-3} ${W/2-3},${H+1} ${W/2+3},${H+1}`} fill="#a78bfa" opacity="0.9" />
         <circle cx={W/2} cy={H-4} r="2.5" fill="#a78bfa" />
-        {/* Enemy word dots */}
+        {/* Word dots — clickable to mark */}
         {dots.map((d, i) => {
-          const dx = d.x * W
-          const dy = d.y * H
+          const dx = d.x * W; const dy = d.y * H
           if (dy < 0 || dy > H || dx < 0 || dx > W) return null
-          return <circle key={i} cx={dx} cy={dy} r={d.bug ? 2.5 : 1.8}
-            fill={d.bug ? "#f97316" : "rgba(196,181,253,0.7)"} />
+          const isLocked = d.id === markedId
+          const r = d.elite ? 3.5 : d.bug ? 2.5 : 1.8
+          return (
+            <g key={i} onClick={() => handleDotClick(d.id)} style={{ cursor:"pointer" }}>
+              {isLocked && <circle cx={dx} cy={dy} r={r + 4} fill="none" stroke="#f87171" strokeWidth="1" strokeDasharray="2 2" opacity="0.8" />}
+              <circle cx={dx} cy={dy} r={r}
+                fill={isLocked ? "#f87171" : d.bug ? "#f97316" : d.elite ? "#facc15" : "rgba(196,181,253,0.7)"}
+                opacity={isLocked ? 1 : 0.85} />
+            </g>
+          )
         })}
         {/* Boss dot */}
         {bossX !== null && bossY !== null && (
@@ -5988,6 +6113,9 @@ function ThreatRadar({ dots, bossX, bossY }: {
           </>
         )}
       </svg>
+      <p style={{ color:"rgba(255,255,255,0.14)", fontSize:"0.48rem", margin:"0.18rem 0 0", fontFamily:"monospace" }}>
+        click contact to lock · +50% score on kill
+      </p>
     </div>
   )
 }
@@ -6288,79 +6416,108 @@ function SalvageStationView({ liveG, score, phase }: {
 }
 
 // ── Engineering Station ────────────────────────────────────────────────────
+// Power system constants
+const POWER_POOL   = 10  // total points to distribute
+const POWER_SYSTEMS = [
+  { id: "turret",  label: "TURRET",  icon: "⊕", desc: "fire rate",  col: "#a78bfa" },
+  { id: "shields", label: "SHIELDS", icon: "◈", desc: "hull regen", col: "#4ade80" },
+  { id: "engines", label: "ENGINES", icon: "▲", desc: "word speed", col: "#fb923c" },
+  { id: "sensors", label: "SENSORS", icon: "◇", desc: "radar range",col: "#7dd3fc" },
+] as const
+type PowerKey = "turret" | "shields" | "engines" | "sensors"
+
+// Read power levels from _stationState and apply effects to GState
+// Called from the game loop every frame
+function applyPowerEffects(g: GState) {
+  // Stored on g for turret fire rate calculation
+  g._powerTurret  = _stationState.power.turret
+  g._powerShields = _stationState.power.shields
+  g._powerEngines = _stationState.power.engines
+  g._powerSensors = _stationState.power.sensors
+}
+
 function EngineeringStationView({ liveG, phase }: { liveG: LiveGSnapshot; phase: string }) {
   const installedUpgrades = UPGRADES.filter(u => (liveG.upgrades[u.id] ?? 0) > 0)
   const systemCount = installedUpgrades.length
-  const shieldOnline = (liveG.upgrades.shield_regen ?? 0) >= 1
+  const [power, setPower] = useState({ ...(_stationState.power) })
+  const remaining = POWER_POOL - Object.values(power).reduce((a, b) => a + b, 0)
 
-  // System status color
-  function sysCol(id: string): string {
-    if (id === "shield_regen") return liveG.shield ? "#4ade80" : "rgba(255,255,255,0.45)"
-    return "#4ade80"
-  }
-  function sysStatus(id: string): string {
-    if (id === "shield_regen") return liveG.shield ? "ACTIVE" : "STANDBY"
-    return "ONLINE"
+  function adjustPower(key: PowerKey, delta: number) {
+    setPower(prev => {
+      const cur = prev[key]
+      const next = Math.max(0, Math.min(10, cur + delta))
+      const diff = next - cur
+      // Check pool
+      const used = Object.values(prev).reduce((a, b) => a + b, 0)
+      if (diff > 0 && used + diff > POWER_POOL) return prev
+      const updated = { ...prev, [key]: next }
+      _stationState.power = updated
+      return updated
+    })
   }
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:"0.45rem" }}>
       <StatusRow label="ENGINEERING" value="ACTIVE" valueCol="#4ade80" />
-      <StatusRow label="SYSTEMS ONLINE" value={`${systemCount}`} valueCol={systemCount > 0 ? "#c4b5fd" : "rgba(255,255,255,0.3)"} />
-      {shieldOnline && (
-        <StatusRow label="ADAPTIVE FIREWALL" value={liveG.shield ? "ACTIVE ◈" : "STANDBY"} valueCol={liveG.shield ? "#4ade80" : "rgba(255,255,255,0.4)"} />
-      )}
 
-      {/* Installed systems list */}
-      {phase === "playing" && installedUpgrades.length > 0 && (
-        <div style={{ borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:"0.35rem", marginTop:"0.05rem" }}>
-          <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", letterSpacing:"0.12em" }}>INSTALLED SYSTEMS</span>
-          <div style={{ display:"flex", flexDirection:"column", gap:"0.12rem", marginTop:"0.3rem" }}>
-            {installedUpgrades.map(u => {
-              const lv = liveG.upgrades[u.id] ?? 0
-              return (
-                <div key={u.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <span style={{ color:"rgba(196,181,253,0.65)", fontSize:"0.58rem" }}>
-                    {u.name}{lv > 1 ? ` ×${lv}` : ""}
-                  </span>
-                  <span style={{ color: sysCol(u.id), fontSize:"0.52rem", letterSpacing:"0.06em" }}>
-                    {sysStatus(u.id)}
-                  </span>
+      {/* Power allocation — the core mechanic */}
+      <div style={{ borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:"0.35rem" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.3rem" }}>
+          <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", letterSpacing:"0.12em" }}>POWER ALLOCATION</span>
+          <span style={{ color: remaining === 0 ? "rgba(255,113,113,0.6)" : "rgba(150,107,236,0.6)", fontSize:"0.5rem" }}>
+            {remaining} free
+          </span>
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:"0.28rem" }}>
+          {POWER_SYSTEMS.map(sys => {
+            const val = power[sys.id]
+            const pct = (val / POWER_POOL) * 100
+            return (
+              <div key={sys.id} style={{ display:"flex", alignItems:"center", gap:"0.35rem" }}>
+                <span style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.56rem", width:"0.6rem" }}>{sys.icon}</span>
+                <span style={{ color:"rgba(255,255,255,0.4)", fontSize:"0.52rem", width:"3.2rem", letterSpacing:"0.06em" }}>
+                  {sys.label}
+                </span>
+                {/* Bar */}
+                <div style={{ flex:1, height:"6px", background:"rgba(255,255,255,0.06)", borderRadius:"3px", position:"relative" }}>
+                  <div style={{ height:"100%", width:`${pct}%`, background:sys.col, borderRadius:"3px",
+                    boxShadow:`0 0 4px ${sys.col}66`, transition:"width 0.12s" }} />
                 </div>
+                {/* Controls */}
+                <button onClick={() => adjustPower(sys.id, -1)}
+                  style={{ background:"none", border:"1px solid rgba(255,255,255,0.12)", borderRadius:"2px",
+                    color:"rgba(255,255,255,0.4)", fontSize:"0.6rem", padding:"0 0.3rem", cursor:"pointer", lineHeight:"1.2" }}>−</button>
+                <span style={{ color:sys.col, fontSize:"0.6rem", width:"0.6rem", textAlign:"center", fontWeight:700 }}>{val}</span>
+                <button onClick={() => adjustPower(sys.id, 1)}
+                  style={{ background:"none", border:"1px solid rgba(255,255,255,0.12)", borderRadius:"2px",
+                    color:"rgba(255,255,255,0.4)", fontSize:"0.6rem", padding:"0 0.3rem", cursor:"pointer", lineHeight:"1.2" }}>+</button>
+              </div>
+            )
+          })}
+        </div>
+        <p style={{ color:"rgba(255,255,255,0.12)", fontSize:"0.48rem", margin:"0.3rem 0 0", fontStyle:"italic" }}>
+          {POWER_POOL} pts · turret=fire rate · shields=regen · engines=word slow · sensors=radar
+        </p>
+      </div>
+
+      {/* Installed systems compact list */}
+      {systemCount > 0 && (
+        <div style={{ borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:"0.3rem" }}>
+          <span style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.5rem", letterSpacing:"0.1em" }}>SYSTEMS · {systemCount} online</span>
+          <div style={{ display:"flex", gap:"0.15rem", flexWrap:"wrap", marginTop:"0.22rem" }}>
+            {UPGRADES.map(u => {
+              const lv = liveG.upgrades[u.id] ?? 0; if (!lv) return null
+              const isShield = u.id === "shield_regen"
+              return (
+                <div key={u.id} title={`${u.name} ×${lv}`}
+                  style={{ width:"12px", height:"8px", borderRadius:"1px",
+                    background: isShield && liveG.shield ? "#4ade80" : "rgba(150,107,236,0.65)",
+                    border:`1px solid rgba(150,107,236,0.35)`, boxShadow:"0 0 3px rgba(150,107,236,0.35)" }} />
               )
             })}
           </div>
         </div>
       )}
-
-      {phase === "playing" && installedUpgrades.length === 0 && (
-        <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.56rem", margin:"0.2rem 0", fontStyle:"italic" }}>
-          No systems installed — survive a sector to upgrade.
-        </p>
-      )}
-
-      {/* Power grid — visual indicator of installed system count */}
-      <div style={{ borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:"0.35rem", marginTop:"0.05rem" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.22rem" }}>
-          <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", letterSpacing:"0.12em" }}>SIGNAL OUTPUT</span>
-          <span style={{ color:"rgba(150,107,236,0.5)", fontSize:"0.5rem" }}>{systemCount}/{UPGRADES.length}</span>
-        </div>
-        <div style={{ display:"flex", gap:"0.15rem", flexWrap:"wrap" }}>
-          {UPGRADES.map((u, i) => {
-            const lv = liveG.upgrades[u.id] ?? 0
-            return (
-              <div key={u.id} title={lv > 0 ? `${u.name} ×${lv}` : u.name}
-                style={{ width:"12px", height:"8px", borderRadius:"1px",
-                  background: lv > 0 ? (u.id === "shield_regen" && liveG.shield ? "#4ade80" : "rgba(150,107,236,0.7)") : "rgba(255,255,255,0.06)",
-                  border:`1px solid ${lv > 0 ? "rgba(150,107,236,0.4)" : "rgba(255,255,255,0.08)"}`,
-                  boxShadow: lv > 0 ? "0 0 3px rgba(150,107,236,0.4)" : "none" }} />
-            )
-          })}
-        </div>
-        <span style={{ color:"rgba(255,255,255,0.1)", fontSize:"0.5rem", fontStyle:"italic", display:"block", marginTop:"0.3rem" }}>
-          Future: repair · power allocation · module swap
-        </span>
-      </div>
     </div>
   )
 }
