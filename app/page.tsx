@@ -458,7 +458,7 @@ const sfx = {
 // ── Types ──────────────────────────────────────────────────────────────────
 type Behavior = "fall" | "charge" | "zigzag" | "sine"
 interface Word      { x: number; y: number; text: string; type: "bug"|"story"|"powerup"; spd: number; beh: Behavior; ph: number; ox: number; hp: number; hitFlash: number; elite: boolean; age: number; regenBoss?: boolean; fragment?: boolean }
-interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean; cluster?: boolean; col?: string; bounce?: boolean; drift?: number; splitAt?: number; kind?: "spray"|"triple"|"homing"|"laser"|"mine" }
+interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: boolean; cluster?: boolean; col?: string; bounce?: boolean; drift?: number; splitAt?: number; kind?: "spray"|"triple"|"homing"|"laser"|"mine"|"turret" }
 interface Mine      { x: number; y: number; age: number; armAt: number }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number; gravity?: number; friction?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
@@ -563,6 +563,48 @@ export default function HomePage() {
 
   // ── Station system state ────────────────────────────────────────────────
   const [activeStation, setActiveStation] = useState<StationId>("bridge")
+
+  // Live game snapshot — polled every 150ms so station panels stay current
+  // without adding setState calls inside the RAF loop
+  const [liveG, setLiveG] = useState({
+    kills: 0, wordsKilled: 0, combo: 1,
+    bossHpPct: null as number | null, bossName: null as string | null,
+    capyMsg: "",
+  })
+  useEffect(() => {
+    const id = setInterval(() => {
+      const g = G.current
+      setLiveG({
+        kills:       g.kills,
+        wordsKilled: g.wordsKilled,
+        combo:       g.combo,
+        bossHpPct:   g.boss ? g.boss.hp / g.boss.maxHp : null,
+        bossName:    g.boss ? g.boss.name : null,
+        capyMsg:     g.capyMsg,
+      })
+    }, 150)
+    return () => clearInterval(id)
+  }, [])
+
+  // Turret fire — fires from player position at turret barrel angle
+  // Rate-limited to ~300ms; does nothing if game isn't running
+  const turretLastFire = useRef(0)
+  function onTurretFire(angle: number) {
+    const g = G.current
+    if (!g.running || g.paused) return
+    const now = Date.now()
+    if (now - turretLastFire.current < 300) return
+    turretLastFire.current = now
+    const SPEED = 10
+    g.bullets.push({
+      x:   g.px,
+      y:   g.py - 20,
+      vx:  Math.cos(angle) * SPEED,
+      vy:  Math.sin(angle) * SPEED,
+      kind: "turret",
+      col: "#a78bfa",
+    })
+  }
 
   // ── Station keyboard shortcuts (1/2/3) ─────────────────────────────────
   // Disabled during "upgrade" phase where 1/2/3 already select upgrade cards
@@ -1698,7 +1740,7 @@ export default function HomePage() {
             g.particles.push({ x: b.x, y: b.y, vx: missDir * 1.5, vy: -0.8, life: 0.25, glyph: "×", col: b.col ?? "#f87171" })
           }
         }
-        if (b.cluster) return b.y < GH + 10 && b.y > -10 && b.x > -10 && b.x < g.W + 10
+        if (b.cluster || b.kind === "turret") return b.y < GH + 10 && b.y > -10 && b.x > -10 && b.x < g.W + 10
         return b.enemy ? b.y < GH + 10 : b.y > -10
       })
       // THE FRAGMENT: bullets that split at a target Y position
@@ -2702,6 +2744,8 @@ export default function HomePage() {
             score={score}
             level={level}
             phase={phase}
+            liveG={liveG}
+            onTurretFire={onTurretFire}
           />
         </div>
 
@@ -5568,21 +5612,36 @@ function ShipStatusPanel({ hull, stations, activeStation, onSelectStation }: {
   const hullBarW    = `${hullPct}%`
   const stationKeys: Record<StationId, string> = { bridge: "1", turret: "2", salvage: "3" }
 
+  // Hull damage pulse — flashes red when lives drop
+  const [hullDamaged, setHullDamaged] = useState(false)
+  const prevHull = useRef(hull.currentHull)
+  useEffect(() => {
+    if (hull.currentHull < prevHull.current) {
+      setHullDamaged(true)
+      const id = setTimeout(() => setHullDamaged(false), 500)
+      prevHull.current = hull.currentHull
+      return () => clearTimeout(id)
+    }
+    prevHull.current = hull.currentHull
+  }, [hull.currentHull])
+
   return (
     <StationShell style={{ flex: "0 0 220px", minWidth: 0 }}>
       <StationHeader label="SHIP STATUS" sublabel="THE SIGNAL" />
       <div style={{ padding: "0.6rem 0.75rem", display: "flex", flexDirection: "column", gap: "0.55rem" }}>
 
         {/* Hull integrity */}
-        <div>
+        <div style={{ transition: "opacity 0.1s", opacity: hullDamaged ? 0.55 : 1 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.22rem" }}>
-            <span style={{ color: "rgba(255,255,255,0.35)", fontSize: "0.56rem", letterSpacing: "0.1em" }}>HULL</span>
-            <span style={{ color: hullCol, fontSize: "0.58rem", fontWeight: 700 }}>{hullPct}%</span>
+            <span style={{ color: hullDamaged ? "#f87171" : "rgba(255,255,255,0.35)", fontSize: "0.56rem", letterSpacing: "0.1em", transition: "color 0.15s" }}>HULL</span>
+            <span style={{ color: hullDamaged ? "#f87171" : hullCol, fontSize: "0.58rem", fontWeight: 700, transition: "color 0.15s" }}>{hullPct}%</span>
           </div>
-          <div style={{ height: "4px", background: "rgba(255,255,255,0.07)", borderRadius: "2px" }}>
-            <div style={{ height: "100%", width: hullBarW, background: hullCol,
-              borderRadius: "2px", transition: "width 0.4s, background 0.4s",
-              boxShadow: `0 0 6px ${hullCol}66` }} />
+          <div style={{ height: "4px", background: "rgba(255,255,255,0.07)", borderRadius: "2px",
+            boxShadow: hullDamaged ? "0 0 8px rgba(248,113,113,0.5)" : "none", transition: "box-shadow 0.2s" }}>
+            <div style={{ height: "100%", width: hullBarW,
+              background: hullDamaged ? "#f87171" : hullCol,
+              borderRadius: "2px", transition: "width 0.4s, background 0.2s",
+              boxShadow: `0 0 6px ${hullDamaged ? "#f87171" : hullCol}66` }} />
           </div>
         </div>
 
@@ -5655,12 +5714,19 @@ function ShipBlueprint({ activeStation }: { activeStation: StationId }) {
 }
 
 // ── Active Station Panel ───────────────────────────────────────────────────
-function ActiveStationPanel({ activeStation, lives, score, level, phase }: {
+type LiveGSnapshot = {
+  kills: number; wordsKilled: number; combo: number
+  bossHpPct: number | null; bossName: string | null; capyMsg: string
+}
+
+function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, onTurretFire }: {
   activeStation: StationId
   lives: number
   score: number
   level: number
   phase: string
+  liveG: LiveGSnapshot
+  onTurretFire: (angle: number) => void
 }) {
   return (
     <StationShell style={{ flex: 1, minWidth: 0 }}>
@@ -5668,9 +5734,9 @@ function ActiveStationPanel({ activeStation, lives, score, level, phase }: {
         label={activeStation.toUpperCase()}
         sublabel={activeStation === "bridge" ? "1" : activeStation === "turret" ? "2" : "3"}
       />
-      <div style={{ padding: "0.5rem 0.75rem", height: "calc(100% - 2rem)" }}>
-        {activeStation === "bridge"  && <BridgeStationView phase={phase} level={level} score={score} />}
-        {activeStation === "turret"  && <TurretStationView />}
+      <div style={{ padding: "0.5rem 0.75rem" }}>
+        {activeStation === "bridge"  && <BridgeStationView phase={phase} level={level} score={score} liveG={liveG} />}
+        {activeStation === "turret"  && <TurretStationView onFire={onTurretFire} phase={phase} />}
         {activeStation === "salvage" && <SalvageStationView />}
       </div>
     </StationShell>
@@ -5678,96 +5744,196 @@ function ActiveStationPanel({ activeStation, lives, score, level, phase }: {
 }
 
 // ── Bridge Station ─────────────────────────────────────────────────────────
-function BridgeStationView({ phase, level, score }: { phase: string; level: number; score: number }) {
+function BridgeStationView({ phase, level, score, liveG }: {
+  phase: string; level: number; score: number; liveG: LiveGSnapshot
+}) {
   const sectorNames: Record<number, string> = {
     1: "THE RECURSION", 2: "THE DRIFT", 3: "THE FRAGMENT", 4: "THE COLLAPSE",
   }
-  const statusLine = phase === "playing" ? "NAVIGATION ONLINE"
+  const statusLine = phase === "playing" ? "ONLINE"
     : phase === "attract"              ? "AWAITING LAUNCH"
     : phase === "over"                 ? "SIGNAL LOST"
-    : phase === "upgrade"              ? "SYSTEMS UPGRADE"
+    : phase === "upgrade"              ? "UPGRADE IN PROGRESS"
     : "TRANSMISSION"
+  const statusCol  = phase === "over" ? "#f87171" : phase === "playing" ? "#4ade80" : "rgba(255,255,255,0.45)"
+
+  const wordsLeft  = Math.max(0, WORDS_TO_BOSS - liveG.wordsKilled)
+  const progPct    = Math.min(1, liveG.wordsKilled / WORDS_TO_BOSS)
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem" }}>
-      <StatusRow label="BRIDGE" value="ACTIVE" valueCol="#4ade80" />
-      <StatusRow label="NAVIGATION" value={statusLine} valueCol={phase === "over" ? "#f87171" : "rgba(255,255,255,0.55)"} />
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem" }}>
+      <StatusRow label="NAVIGATION" value={statusLine} valueCol={statusCol} />
+
       {phase === "playing" && (
         <>
-          <StatusRow label="SECTOR" value={`${level} · ${sectorNames[level] ?? "THE VOID"}`} valueCol="rgba(196,181,253,0.75)" />
-          <StatusRow label="SCORE" value={score.toLocaleString()} valueCol="rgba(255,255,255,0.5)" />
+          <StatusRow label="SECTOR"  value={level <= 4 ? `${level} · ${sectorNames[level] ?? ""}` : "∞ THE VOID"} valueCol="rgba(196,181,253,0.75)" />
+          <StatusRow label="SCORE"   value={score.toLocaleString()} valueCol="rgba(255,255,255,0.45)" />
+          <StatusRow label="KILLS"   value={String(liveG.kills)} valueCol="rgba(255,255,255,0.45)" />
+          {liveG.combo > 3 && (
+            <StatusRow label="CHAIN" value={`×${liveG.combo}`} valueCol={liveG.combo >= 20 ? "#facc15" : liveG.combo >= 10 ? "#fb923c" : "#c4b5fd"} />
+          )}
+
+          {/* Boss HP bar */}
+          {liveG.bossHpPct !== null && liveG.bossName && (
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.18rem" }}>
+                <span style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.52rem", letterSpacing: "0.08em" }}>{liveG.bossName}</span>
+                <span style={{ color: "#f87171", fontSize: "0.52rem" }}>{Math.round(liveG.bossHpPct * 100)}%</span>
+              </div>
+              <div style={{ height: "3px", background: "rgba(255,255,255,0.07)", borderRadius: "2px" }}>
+                <div style={{ height: "100%", width: `${liveG.bossHpPct * 100}%`,
+                  background: liveG.bossHpPct > 0.5 ? "#f87171" : liveG.bossHpPct > 0.25 ? "#facc15" : "#ff4444",
+                  borderRadius: "2px", transition: "width 0.2s" }} />
+              </div>
+            </div>
+          )}
+
+          {/* Sector progress bar (only when no boss) */}
+          {liveG.bossHpPct === null && (
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.18rem" }}>
+                <span style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.52rem", letterSpacing: "0.08em" }}>PATTERNS</span>
+                <span style={{ color: "rgba(255,255,255,0.3)", fontSize: "0.52rem" }}>{wordsLeft} remaining</span>
+              </div>
+              <div style={{ height: "3px", background: "rgba(255,255,255,0.07)", borderRadius: "2px" }}>
+                <div style={{ height: "100%", width: `${progPct * 100}%`,
+                  background: "rgba(150,107,236,0.7)", borderRadius: "2px", transition: "width 0.3s" }} />
+              </div>
+            </div>
+          )}
+
+          {/* Last capy transmission */}
+          {liveG.capyMsg && (
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "0.35rem", marginTop: "0.1rem" }}>
+              <span style={{ color: "rgba(196,181,253,0.35)", fontSize: "0.5rem", letterSpacing: "0.1em" }}>🦫 COMMS</span>
+              <p style={{ color: "rgba(196,181,253,0.55)", fontSize: "0.56rem", margin: "0.2rem 0 0",
+                lineHeight: 1.5, whiteSpace: "pre-line", fontStyle: "italic" }}>
+                {liveG.capyMsg.split("\n").slice(0, 2).join("\n")}
+              </p>
+            </div>
+          )}
         </>
       )}
-      <div style={{ marginTop: "0.35rem", borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "0.4rem" }}>
-        <span style={{ color: "rgba(255,255,255,0.12)", fontSize: "0.52rem", fontStyle: "italic" }}>
-          Future: crew management · navigation · tactical overview
-        </span>
-      </div>
+
+      {phase !== "playing" && (
+        <div style={{ marginTop: "0.3rem" }}>
+          <span style={{ color: "rgba(255,255,255,0.12)", fontSize: "0.52rem", fontStyle: "italic" }}>
+            Future: crew management · tactical overview
+          </span>
+        </div>
+      )}
     </div>
   )
 }
 
 // ── Turret Station ─────────────────────────────────────────────────────────
-// MVP: rotating barrel that tracks the mouse within this viewport.
-// No firing, no damage integration — proof of concept only.
-function TurretStationView() {
-  const viewRef  = useRef<HTMLDivElement>(null)
-  const [angle, setAngle] = useState(-Math.PI / 2)  // default: pointing up
+// Rotating barrel tracks mouse. Click to fire into the main battlefield.
+function TurretStationView({ onFire, phase }: {
+  onFire: (angle: number) => void
+  phase: string
+}) {
+  const viewRef   = useRef<HTMLDivElement>(null)
+  const [angle, setAngle]    = useState(-Math.PI / 2)  // default: point up
+  const [firing, setFiring]  = useState(false)          // recoil flash state
+  const canFire = phase === "playing"
 
-  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
-    const el = viewRef.current; if (!el) return
+  function getAngleFromMouse(e: React.MouseEvent<HTMLDivElement>): number {
+    const el = viewRef.current; if (!el) return angle
     const rect = el.getBoundingClientRect()
-    const cx = rect.left + rect.width  / 2
-    const cy = rect.top  + rect.height / 2
-    setAngle(Math.atan2(e.clientY - cy, e.clientX - cx))
+    return Math.atan2(e.clientY - (rect.top + rect.height / 2), e.clientX - (rect.left + rect.width / 2))
   }
 
-  // Barrel tip & length
-  const BARREL_LEN = 32
-  const tipX = Math.cos(angle) * BARREL_LEN
-  const tipY = Math.sin(angle) * BARREL_LEN
+  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    setAngle(getAngleFromMouse(e))
+  }
+
+  function handleClick(e: React.MouseEvent<HTMLDivElement>) {
+    const a = getAngleFromMouse(e)
+    setAngle(a)
+    if (!canFire) return
+    onFire(a)
+    // brief recoil flash
+    setFiring(true)
+    setTimeout(() => setFiring(false), 90)
+  }
+
+  // Barrel geometry
+  const BARREL_LEN   = 32
+  const RECOIL_PULL  = firing ? 4 : 0  // barrel shortens slightly on fire
+  const barrelEnd    = BARREL_LEN - RECOIL_PULL
+  const tipX = Math.cos(angle) * barrelEnd
+  const tipY = Math.sin(angle) * barrelEnd
+  // Muzzle flash position (slightly beyond tip)
+  const flashX = Math.cos(angle) * (barrelEnd + 5)
+  const flashY = Math.sin(angle) * (barrelEnd + 5)
+  const degDisplay = Math.round(((angle * 180 / Math.PI) + 360) % 360)
 
   return (
-    <div ref={viewRef} onMouseMove={handleMouseMove}
-      style={{ position: "relative", height: "100px", display: "flex", alignItems: "center",
-        justifyContent: "center", cursor: "crosshair",
-        background: "rgba(0,0,0,0.25)", borderRadius: "4px",
-        border: "1px solid rgba(150,107,236,0.1)" }}>
+    <div>
+      <div ref={viewRef}
+        onMouseMove={handleMouseMove}
+        onClick={handleClick}
+        style={{
+          position: "relative", height: "110px",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          cursor: canFire ? "crosshair" : "not-allowed",
+          background: firing ? "rgba(167,139,250,0.06)" : "rgba(0,0,0,0.25)",
+          borderRadius: "4px",
+          border: `1px solid ${firing ? "rgba(167,139,250,0.4)" : "rgba(150,107,236,0.12)"}`,
+          transition: "background 0.08s, border-color 0.08s",
+          userSelect: "none",
+        }}>
 
-      {/* Range ring */}
-      <div style={{ position: "absolute",
-        width: "80px", height: "80px", borderRadius: "50%",
-        border: "1px solid rgba(150,107,236,0.18)" }} />
-      <div style={{ position: "absolute",
-        width: "48px", height: "48px", borderRadius: "50%",
-        border: "1px solid rgba(150,107,236,0.1)" }} />
+        {/* Range rings */}
+        <div style={{ position:"absolute", width:"84px", height:"84px", borderRadius:"50%", border:"1px solid rgba(150,107,236,0.15)" }} />
+        <div style={{ position:"absolute", width:"50px", height:"50px", borderRadius:"50%", border:"1px solid rgba(150,107,236,0.09)" }} />
 
-      {/* SVG turret */}
-      <svg width="120" height="100" style={{ position: "absolute", top: 0, left: "50%", transform: "translateX(-50%)", overflow: "visible" }}>
-        <g transform="translate(60,50)">
-          {/* Barrel */}
-          <line x1={0} y1={0} x2={tipX} y2={tipY}
-            stroke="#a78bfa" strokeWidth="2.5" strokeLinecap="round" />
-          {/* Barrel tip accent */}
-          <circle cx={tipX} cy={tipY} r="2.5" fill="#c4b5fd" />
-          {/* Base crosshair */}
-          <line x1={-18} y1={0} x2={18} y2={0} stroke="rgba(150,107,236,0.4)" strokeWidth="1" />
-          <line x1={0} y1={-18} x2={0} y2={18} stroke="rgba(150,107,236,0.4)" strokeWidth="1" />
-          {/* Pivot */}
-          <circle cx={0} cy={0} r="5" fill="#13131c" stroke="#966bec" strokeWidth="1.5" />
-          <circle cx={0} cy={0} r="2" fill="#a78bfa" />
-        </g>
-      </svg>
+        {/* SVG turret */}
+        <svg width="140" height="110" style={{ position:"absolute", top:0, left:"50%", transform:"translateX(-50%)", overflow:"visible", pointerEvents:"none" }}>
+          <g transform="translate(70,55)">
+            {/* Base crosshair */}
+            <line x1={-20} y1={0} x2={20} y2={0} stroke="rgba(150,107,236,0.3)" strokeWidth="0.8" />
+            <line x1={0} y1={-20} x2={0} y2={20} stroke="rgba(150,107,236,0.3)" strokeWidth="0.8" />
+            {/* Barrel */}
+            <line x1={0} y1={0} x2={tipX} y2={tipY}
+              stroke={firing ? "#c4b5fd" : "#a78bfa"} strokeWidth="2.5" strokeLinecap="round" />
+            {/* Barrel guard */}
+            <line x1={Math.cos(angle + Math.PI/2) * 5} y1={Math.sin(angle + Math.PI/2) * 5}
+                  x2={Math.cos(angle - Math.PI/2) * 5} y2={Math.sin(angle - Math.PI/2) * 5}
+                  stroke="rgba(150,107,236,0.5)" strokeWidth="1.5" strokeLinecap="round" />
+            {/* Muzzle flash */}
+            {firing && (
+              <>
+                <circle cx={flashX} cy={flashY} r="5" fill="#c4b5fd" opacity="0.8" />
+                <circle cx={flashX} cy={flashY} r="9" fill="rgba(167,139,250,0.3)" />
+              </>
+            )}
+            {/* Barrel tip */}
+            <circle cx={tipX} cy={tipY} r={firing ? 3 : 2} fill={firing ? "#ffffff" : "#c4b5fd"} />
+            {/* Pivot ring */}
+            <circle cx={0} cy={0} r="6" fill="#0c0c16" stroke={firing ? "#c4b5fd" : "#966bec"} strokeWidth="1.5" />
+            <circle cx={0} cy={0} r="2.5" fill={firing ? "#c4b5fd" : "#a78bfa"} />
+          </g>
+        </svg>
 
-      {/* Angle readout */}
-      <span style={{ position: "absolute", bottom: "0.25rem", right: "0.5rem",
-        color: "rgba(150,107,236,0.45)", fontSize: "0.5rem" }}>
-        {Math.round(((angle * 180 / Math.PI) + 360) % 360)}°
-      </span>
-      <span style={{ position: "absolute", bottom: "0.25rem", left: "0.5rem",
-        color: "rgba(255,255,255,0.14)", fontSize: "0.5rem", fontStyle: "italic" }}>
-        no fire · MVP
-      </span>
+        {/* Readouts */}
+        <span style={{ position:"absolute", bottom:"0.25rem", right:"0.5rem",
+          color: firing ? "rgba(196,181,253,0.7)" : "rgba(150,107,236,0.4)", fontSize:"0.5rem" }}>
+          {degDisplay}°
+        </span>
+        {!canFire && (
+          <span style={{ position:"absolute", bottom:"0.25rem", left:"0.5rem",
+            color:"rgba(255,255,255,0.18)", fontSize:"0.5rem", fontStyle:"italic" }}>
+            offline
+          </span>
+        )}
+      </div>
+
+      {/* Fire hint */}
+      <p style={{ color: canFire ? "rgba(150,107,236,0.45)" : "rgba(255,255,255,0.15)",
+        fontSize: "0.52rem", margin: "0.35rem 0 0", fontFamily:"monospace", textAlign:"center" }}>
+        {canFire ? "click to fire · aim with mouse" : "launch mission to arm turret"}
+      </p>
     </div>
   )
 }
