@@ -480,6 +480,7 @@ interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: bo
 interface Mine      { x: number; y: number; age: number; armAt: number }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number; gravity?: number; friction?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
+interface SalvageItem { id: number; x: number; y: number; vx: number; vy: number; type: "scrap"|"fragment"|"artifact"; spawnTime: number; life: number }
 interface Boss      { x: number; y: number; hp: number; maxHp: number; name: string; color: string; dir: number; t: number; phase: number; raged: boolean; halfTriggered: boolean; quarterTriggered?: boolean; hitFlash?: number }
 interface BossWarn  { name: string; color: string; t: number; letters: Array<{ ch: string; x: number; y: number; tx: number; ty: number }> }
 interface WaveAnn   { text: string; t: number }
@@ -509,8 +510,13 @@ interface GState {
   bossNextTaunt: number
   // Engineering power allocation (read from _stationState each frame)
   _powerTurret?: number; _powerShields?: number; _powerEngines?: number; _powerSensors?: number
-  // Capy crew auto-fire timestamp
-  _capyLastFire?: number
+  // Capy crew timestamps
+  _capyLastFire?: number; _capyLastSalvage?: number
+  // Phase 2: salvage system
+  salvage: SalvageItem[]; nextSalvageId: number
+  salvageCollected: number  // total items collected this run
+  // Phase 2: room damage (0 = intact, 1 = damaged, 2 = critical, 3 = offline)
+  roomDamage: Partial<Record<StationId, number>>
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -548,6 +554,8 @@ function initState(W: number): GState {
     deathFadeAt: 0,
     lastMsWave: -1,
     bossNextTaunt: 0,
+    salvage: [], nextSalvageId: 1, salvageCollected: 0,
+    roomDamage: {},
   }
 }
 
@@ -600,6 +608,10 @@ export default function HomePage() {
     commsLog: [] as string[],
     elapsedSec: 0,
     wordsEscaped: 0,
+    salvageCount: 0,
+    salvageCollected: 0,
+    salvageItems: [] as Array<{ id: number; type: SalvageItem["type"] }>,
+    roomDamage: {} as Partial<Record<StationId, number>>,
   })
   useEffect(() => {
     const id = setInterval(() => {
@@ -620,6 +632,10 @@ export default function HomePage() {
         commsLog:    [..._stationState.commsLog],
         elapsedSec:  _stationState.sectorStart > 0 ? Math.floor((Date.now() - _stationState.sectorStart) / 1000) : 0,
         wordsEscaped: g.wordsEscaped,
+        salvageCount: g.salvage.length,
+        salvageCollected: g.salvageCollected,
+        salvageItems: g.salvage.slice(0, 12).map(s => ({ id: s.id, type: s.type })),
+        roomDamage: { ...g.roomDamage },
       })
     }, 150)
     return () => clearInterval(id)
@@ -633,9 +649,11 @@ export default function HomePage() {
     if (!g.running || g.paused) return
     const now = Date.now()
     const fireRateLvl = g.upgrades.fire_rate ?? 0
-    // Engineering turret power: each point reduces rate limit by 5% (max 50% at 10pts)
+    // Engineering turret power: each point reduces rate limit by 5%
     const powerBonus = Math.pow(0.95, _stationState.power.turret)
-    const rateLimit = Math.round(300 * Math.pow(0.85, fireRateLvl) * powerBonus)
+    // Turret room damage: each damage level adds 20% fire rate penalty
+    const turretDmgPenalty = Math.pow(1.2, g.roomDamage.turret ?? 0)
+    const rateLimit = Math.round(300 * Math.pow(0.85, fireRateLvl) * powerBonus * turretDmgPenalty)
     if (now - turretLastFire.current < rateLimit) return
     turretLastFire.current = now
     const SPEED = 10
@@ -653,6 +671,34 @@ export default function HomePage() {
       }
     } else {
       g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(angle) * SPEED, vy: Math.sin(angle) * SPEED, ...base })
+    }
+  }
+
+  // Salvage grapple — collects all field salvage, converts to score + tokens
+  function onGrapple() {
+    const g = G.current
+    if (!g.running || g.salvage.length === 0) return
+    // Check salvage room isn't offline (damage level 3)
+    if ((g.roomDamage.salvage ?? 0) >= 3) return
+    // Grapple range reduced by salvage room damage
+    const rangePct = 1 - (g.roomDamage.salvage ?? 0) * 0.25  // 25% reduction per damage
+    let total = 0
+    const collected = [...g.salvage]
+    g.salvage = []
+    collected.forEach(s => {
+      const bonus = s.type === "artifact" ? 500 : s.type === "fragment" ? 150 : 50
+      total += bonus; g.salvageCollected++
+      g.particles.push({ x: s.x, y: s.y, vx: (g.px - s.x) * 0.08, vy: (g.py - s.y) * 0.08,
+        life: 0.7, glyph: s.type === "artifact" ? "★" : s.type === "fragment" ? "◈" : "◆",
+        col: s.type === "artifact" ? "#facc15" : s.type === "fragment" ? "#c4b5fd" : "#94a3b8",
+        gravity: 0, friction: 0.92 })
+    })
+    g.score += total
+    setScore(g.score)
+    if (total > 0) {
+      g.particles.push({ x: g.W/2, y: GH * 0.6, vx: 0, vy: -0.7, life: 2.0,
+        glyph: `SALVAGE +${total}`, col: "#4ade80", sz: 12, gravity: 0 })
+      g.accentFlash = 12; g.accentFlashCol = "#4ade80"
     }
   }
 
@@ -1910,6 +1956,35 @@ export default function HomePage() {
         return p.life > 0
       })
 
+      // salvage item physics — drift upward slowly, despawn after life expires
+      g.salvage = g.salvage.filter(s => {
+        s.x += s.vx; s.y += s.vy
+        s.vx *= 0.98  // slight horizontal drag
+        s.vy = Math.max(s.vy, -0.3)  // terminal upward velocity
+        return (now - s.spawnTime) < s.life
+      })
+
+      // Capy salvage auto-collect — when Capy assigned to Salvage station
+      if (g.salvage.length > 0) {
+        const capyAtSalvage = (() => {
+          try { const ca = localStorage.getItem("sb_crew_assign"); return ca ? JSON.parse(ca).salvage === "capy" : false } catch { return false }
+        })()
+        if (capyAtSalvage && now - (g._capyLastSalvage ?? 0) > 4000) {
+          g._capyLastSalvage = now
+          // Auto-collect nearest salvage item
+          const nearest = g.salvage.reduce((best, s) =>
+            Math.hypot(s.x - g.px, s.y - g.py) < Math.hypot(best.x - g.px, best.y - g.py) ? s : best
+          )
+          if (Math.hypot(nearest.x - g.px, nearest.y - g.py) < 200) {
+            const collected = g.salvage.splice(g.salvage.indexOf(nearest), 1)[0]
+            const bonus = collected.type === "artifact" ? 500 : collected.type === "fragment" ? 150 : 50
+            g.score += bonus; g.salvageCollected++
+            g.particles.push({ x: collected.x, y: collected.y, vx: 0, vy: -0.9, life: 1.4,
+              glyph: `🦫 +${bonus}`, col: "#86efac", sz: 10, gravity: 0 })
+          }
+        }
+      }
+
       // player bullets vs words
       outer:
       for (let i = g.bullets.length - 1; i >= 0; i--) {
@@ -1991,6 +2066,12 @@ export default function HomePage() {
             const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul * pmMul * dataMul * markedMul)
             g.score += pts
             g.kills++; if (!w.fragment) g.wordsKilled++
+            // Salvage drops — resources for the Salvage station
+            if (w.type !== "powerup" && !w.fragment) {
+              if (w.type === "bug")    spawnSalvage(g, w.x, w.y, "scrap",    now)
+              if (w.elite)             spawnSalvage(g, w.x, w.y, "fragment", now)
+              else if (w.type === "story" && Math.random() < 0.28) spawnSalvage(g, w.x, w.y, "scrap", now)
+            }
             // Kill milestones — expedition checkpoints
             if ([10, 25, 50, 100].includes(g.kills)) {
               const sCol = sectorTheme(g.level).storyCol
@@ -2166,6 +2247,8 @@ export default function HomePage() {
                 "THE COLLAPSE":  "The collapse is fracturing.\nYou are almost through.",
               }
               showCapyMsg(g, critLines[bx.name] ?? "Critical. Finish it.", now)
+              // Boss critical — drops an artifact for Salvage
+              spawnSalvage(g, bx.x, bx.y, "artifact", now)
             }
           }
         }
@@ -2419,7 +2502,20 @@ export default function HomePage() {
               }
               g.particles.push({ x: g.px, y: g.py - 22, vx: 0, vy: -1.0, life: 1.2, glyph: "DEFLECTED", col: "#4ade80", sz: 10 })
               showCapyMsg(g, "Shield absorbed.\nSignal integrity: maintained.", now)
-            } else loseLife(g, now)
+            } else {
+              loseLife(g, now)
+              // Room damage — boss bullet hit has 35% chance to damage a random station room
+              if (g.boss && Math.random() < 0.35) {
+                const rooms: StationId[] = ["bridge", "turret", "salvage", "engineering"]
+                const room = rooms[Math.floor(Math.random() * rooms.length)]
+                const cur = g.roomDamage[room] ?? 0
+                if (cur < 3) {
+                  g.roomDamage[room] = cur + 1
+                  g.particles.push({ x: g.px, y: g.py - 28, vx: 0, vy: -0.9, life: 1.8,
+                    glyph: `${room.toUpperCase()} DAMAGED`, col: "#f87171", sz: 9, gravity: 0 })
+                }
+              }
+            }
           }
         }
       }
@@ -2851,6 +2947,7 @@ export default function HomePage() {
             liveG={liveG}
             unlockedAgents={unlockedAgents}
             agentNames={agentNames}
+            roomDamage={liveG.roomDamage}
           />
           <ActiveStationPanel
             activeStation={activeStation}
@@ -2860,6 +2957,7 @@ export default function HomePage() {
             phase={phase}
             liveG={liveG}
             onTurretFire={onTurretFire}
+            onGrapple={onGrapple}
           />
         </div>
 
@@ -3050,6 +3148,19 @@ function applyPowerup(g: GState, word: Word, now: number) {
     sfx.retro()
     showCapyMsg(g, "Retrospective.\nAll patterns slowed.\nUse the time well.", now)
   }
+}
+
+// ── Salvage drop helper ────────────────────────────────────────────────────
+function spawnSalvage(g: GState, x: number, y: number, type: SalvageItem["type"], now: number) {
+  g.salvage.push({
+    id: g.nextSalvageId++,
+    x, y,
+    vx: (Math.random() - 0.5) * 0.9,
+    vy: -(0.5 + Math.random() * 0.5),  // drifts upward
+    type,
+    spawnTime: now,
+    life: 9000,  // 9 seconds before despawn
+  })
 }
 
 function spawnParticles(g: GState, x: number, y: number, col: string, glyph: string, n: number) {
@@ -4369,6 +4480,25 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       ctx.font = "6px monospace"; ctx.textAlign = "center"
       ctx.fillText("M", mine.x, mine.y - 7)
       ctx.globalAlpha = 1
+    })
+  }
+
+  // Salvage items — floating debris waiting to be grappled
+  if (!attractMode && g.salvage.length > 0) {
+    const salvageGlyphs: Record<SalvageItem["type"], string> = { scrap: "◆", fragment: "◈", artifact: "★" }
+    const salvageColors: Record<SalvageItem["type"], string> = { scrap: "#94a3b8", fragment: "#c4b5fd", artifact: "#facc15" }
+    g.salvage.forEach(s => {
+      const age    = now - s.spawnTime
+      const fadeIn = Math.min(1, age / 400)
+      const fadeOut= Math.max(0, 1 - Math.max(0, age - (s.life - 1500)) / 1500)
+      const alpha  = fadeIn * fadeOut * (0.7 + 0.2 * Math.abs(Math.sin(now / 500 + s.id)))
+      ctx.save()
+      ctx.globalAlpha = alpha
+      ctx.fillStyle = salvageColors[s.type]
+      ctx.shadowColor = salvageColors[s.type]; ctx.shadowBlur = s.type === "artifact" ? 10 : 5
+      ctx.font = `${s.type === "artifact" ? 11 : 9}px monospace`; ctx.textAlign = "center"
+      ctx.fillText(salvageGlyphs[s.type], s.x, s.y)
+      ctx.restore()
     })
   }
 
@@ -5842,7 +5972,7 @@ function StationHeader({ label, sublabel }: { label: string; sublabel?: string }
 type CrewOption = string | null  // "capy" | "player" | agent_id | null
 
 // ── Ship Status Panel ──────────────────────────────────────────────────────
-function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSelectStation, liveG, unlockedAgents, agentNames }: {
+function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSelectStation, liveG, unlockedAgents, agentNames, roomDamage }: {
   hull: HullStatus
   stations: Station[]
   activeStation: StationId
@@ -5850,6 +5980,7 @@ function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSel
   liveG: LiveGSnapshot
   unlockedAgents: string[]
   agentNames: Record<string, string>
+  roomDamage: Partial<Record<StationId, number>>
 }) {
   const hullPct     = Math.round((hull.currentHull / hull.maxHull) * 100)
   const hullCol     = hullPct > 60 ? "#4ade80" : hullPct > 30 ? "#facc15" : "#f87171"
@@ -5961,7 +6092,7 @@ function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSel
         </div>
 
         {/* Ship blueprint */}
-        <ShipBlueprint activeStation={activeStation} />
+        <ShipBlueprint activeStation={activeStation} roomDamage={roomDamage} />
 
       </div>
     </StationShell>
@@ -5969,7 +6100,13 @@ function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSel
 }
 
 // ── Ship Blueprint ─────────────────────────────────────────────────────────
-function ShipBlueprint({ activeStation }: { activeStation: StationId }) {
+const DAMAGE_COLORS = ["", "#facc15", "#fb923c", "#f87171"]  // 0=intact, 1=dmg, 2=crit, 3=offline
+const DAMAGE_LABELS = ["", "DMG", "CRIT", "OFFLINE"]
+
+function ShipBlueprint({ activeStation, roomDamage }: {
+  activeStation: StationId
+  roomDamage: Partial<Record<StationId, number>>
+}) {
   const rooms: Array<{ id: StationId; label: string; icon: string }> = [
     { id: "bridge",      label: "BRIDGE",      icon: "◈" },
     { id: "turret",      label: "TURRET",      icon: "⊕" },
@@ -5981,18 +6118,22 @@ function ShipBlueprint({ activeStation }: { activeStation: StationId }) {
       <span style={{ color: "rgba(255,255,255,0.2)", fontSize: "0.52rem", letterSpacing: "0.14em" }}>BLUEPRINT</span>
       <div style={{ marginTop: "0.3rem", display: "flex", flexDirection: "column", gap: "0.18rem" }}>
         {rooms.map(r => {
-          const active = r.id === activeStation
+          const active  = r.id === activeStation
+          const dmg     = roomDamage[r.id] ?? 0
+          const dmgCol  = dmg > 0 ? DAMAGE_COLORS[dmg] : null
+          const dmgLbl  = dmg > 0 ? DAMAGE_LABELS[dmg] : null
           return (
             <div key={r.id} style={{ display: "flex", alignItems: "center", gap: "0.4rem",
               padding: "0.18rem 0.35rem",
-              border: `1px solid ${active ? "rgba(150,107,236,0.45)" : "rgba(255,255,255,0.08)"}`,
+              border: `1px solid ${dmg > 0 ? `${dmgCol}55` : active ? "rgba(150,107,236,0.45)" : "rgba(255,255,255,0.08)"}`,
               borderRadius: "3px",
-              background: active ? "rgba(150,107,236,0.06)" : "transparent" }}>
-              <span style={{ color: active ? "#a78bfa" : "rgba(255,255,255,0.22)", fontSize: "0.6rem" }}>{r.icon}</span>
-              <span style={{ color: active ? "rgba(196,181,253,0.75)" : "rgba(255,255,255,0.2)", fontSize: "0.54rem", letterSpacing: "0.08em" }}>
+              background: dmg > 0 ? `${dmgCol}08` : active ? "rgba(150,107,236,0.06)" : "transparent" }}>
+              <span style={{ color: dmg > 0 ? dmgCol! : active ? "#a78bfa" : "rgba(255,255,255,0.22)", fontSize: "0.6rem" }}>{r.icon}</span>
+              <span style={{ color: dmg > 0 ? dmgCol! : active ? "rgba(196,181,253,0.75)" : "rgba(255,255,255,0.2)", fontSize: "0.54rem", letterSpacing: "0.08em" }}>
                 {r.label}
               </span>
-              {active && <span style={{ marginLeft: "auto", color: "rgba(150,107,236,0.6)", fontSize: "0.48rem" }}>ACTIVE</span>}
+              {dmgLbl && <span style={{ marginLeft:"auto", color:dmgCol!, fontSize:"0.45rem", letterSpacing:"0.08em" }}>{dmgLbl}</span>}
+              {!dmgLbl && active && <span style={{ marginLeft: "auto", color: "rgba(150,107,236,0.6)", fontSize: "0.48rem" }}>ACTIVE</span>}
             </div>
           )
         })}
@@ -6013,9 +6154,13 @@ type LiveGSnapshot = {
   commsLog: string[]
   elapsedSec: number
   wordsEscaped: number
+  salvageCount: number
+  salvageCollected: number
+  salvageItems: Array<{ id: number; type: SalvageItem["type"] }>
+  roomDamage: Partial<Record<StationId, number>>
 }
 
-function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, onTurretFire }: {
+function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, onTurretFire, onGrapple }: {
   activeStation: StationId
   lives: number
   score: number
@@ -6023,6 +6168,7 @@ function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, 
   phase: string
   liveG: LiveGSnapshot
   onTurretFire: (angle: number) => void
+  onGrapple: () => void
 }) {
   return (
     <StationShell style={{ flex: 1, minWidth: 0 }}>
@@ -6033,7 +6179,7 @@ function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, 
       <div style={{ padding: "0.5rem 0.75rem" }}>
         {activeStation === "bridge"      && <BridgeStationView phase={phase} level={level} score={score} liveG={liveG} />}
         {activeStation === "turret"      && <TurretStationView onFire={onTurretFire} phase={phase} liveG={liveG} />}
-        {activeStation === "salvage"     && <SalvageStationView liveG={liveG} score={score} phase={phase} />}
+        {activeStation === "salvage"     && <SalvageStationView liveG={liveG} score={score} phase={phase} onGrapple={onGrapple} />}
         {activeStation === "engineering" && <EngineeringStationView liveG={liveG} phase={phase} />}
       </div>
     </StationShell>
@@ -6383,34 +6529,74 @@ function TurretStationView({ onFire, phase, liveG }: {
 }
 
 // ── Salvage Station ────────────────────────────────────────────────────────
-function SalvageStationView({ liveG, score, phase }: {
-  liveG: LiveGSnapshot; score: number; phase: string
+function SalvageStationView({ liveG, score, phase, onGrapple }: {
+  liveG: LiveGSnapshot; score: number; phase: string; onGrapple: () => void
 }) {
-  // Tokens = same formula as CLIScreen (score/6 + kills*3)
-  const tokens = Math.floor(score / 6) + liveG.kills * 3
+  const tokens    = Math.floor(score / 6) + liveG.kills * 3
+  const grappleDmg = liveG.roomDamage.salvage ?? 0
+  const grappleOffline = grappleDmg >= 3
+  const hasDebris = liveG.salvageCount > 0
+  const [firing, setFiring] = useState(false)
+
+  function fireGrapple() {
+    if (!hasDebris || grappleOffline || phase !== "playing") return
+    setFiring(true); onGrapple()
+    setTimeout(() => setFiring(false), 400)
+  }
+
+  // Breakdown of field debris by type
+  const scraps    = liveG.salvageItems.filter(s => s.type === "scrap").length
+  const fragments = liveG.salvageItems.filter(s => s.type === "fragment").length
+  const artifacts = liveG.salvageItems.filter(s => s.type === "artifact").length
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.42rem" }}>
       <StatusRow label="SALVAGE BAY" value="ACTIVE" valueCol="#4ade80" />
-      <StatusRow label="GRAPPLE SYSTEM" value="OFFLINE" valueCol="rgba(248,113,113,0.55)" />
+      <StatusRow label="GRAPPLE SYSTEM"
+        value={grappleOffline ? "OFFLINE" : grappleDmg > 0 ? `DEGRADED (−${grappleDmg * 25}% range)` : "ONLINE"}
+        valueCol={grappleOffline ? "#f87171" : grappleDmg > 0 ? "#facc15" : "#4ade80"} />
+
       {phase === "playing" && (
         <>
-          <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "0.35rem", marginTop: "0.05rem" }}>
-            <span style={{ color: "rgba(255,255,255,0.2)", fontSize: "0.52rem", letterSpacing: "0.12em" }}>RECOVERED</span>
+          {/* Field debris */}
+          <div style={{ borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:"0.3rem" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.2rem" }}>
+              <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", letterSpacing:"0.1em" }}>FIELD DEBRIS</span>
+              <span style={{ color: hasDebris ? "rgba(74,222,128,0.7)" : "rgba(255,255,255,0.2)", fontSize:"0.5rem" }}>
+                {liveG.salvageCount} items
+              </span>
+            </div>
+            {hasDebris ? (
+              <div style={{ display:"flex", gap:"0.5rem", marginBottom:"0.3rem" }}>
+                {scraps > 0    && <span style={{ color:"#94a3b8", fontSize:"0.56rem" }}>◆ {scraps} scrap</span>}
+                {fragments > 0 && <span style={{ color:"#c4b5fd", fontSize:"0.56rem" }}>◈ {fragments} frag</span>}
+                {artifacts > 0 && <span style={{ color:"#facc15", fontSize:"0.56rem" }}>★ {artifacts} artifact</span>}
+              </div>
+            ) : (
+              <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.54rem", margin:"0.1rem 0 0.3rem", fontStyle:"italic" }}>
+                No debris in field
+              </p>
+            )}
+            {/* Grapple button */}
+            <button onClick={fireGrapple} disabled={!hasDebris || grappleOffline || phase !== "playing"}
+              style={{ width:"100%", background: firing ? "rgba(74,222,128,0.2)" : hasDebris && !grappleOffline ? "rgba(74,222,128,0.08)" : "rgba(255,255,255,0.03)",
+                border:`1px solid ${firing ? "rgba(74,222,128,0.6)" : hasDebris && !grappleOffline ? "rgba(74,222,128,0.3)" : "rgba(255,255,255,0.1)"}`,
+                borderRadius:"4px", padding:"0.35rem", cursor: hasDebris && !grappleOffline ? "pointer" : "not-allowed",
+                color: hasDebris && !grappleOffline ? "#4ade80" : "rgba(255,255,255,0.2)",
+                fontSize:"0.6rem", fontFamily:"monospace", letterSpacing:"0.1em",
+                transition:"all 0.1s" }}>
+              {firing ? "GRAPPLING..." : grappleOffline ? "GRAPPLE OFFLINE" : "⬡ GRAPPLE ALL"}
+            </button>
           </div>
-          <StatusRow label="SIGNAL PTS" value={score.toLocaleString()} valueCol="rgba(255,255,255,0.5)" />
-          <StatusRow label="KILLS"       value={String(liveG.kills)} valueCol="rgba(255,255,255,0.4)" />
-          <StatusRow label="TOKENS"      value={`${tokens}t`} valueCol="rgba(74,222,128,0.7)" />
-          {liveG.wordsEscaped > 0 && (
-            <StatusRow label="SIGNALS LOST" value={String(liveG.wordsEscaped)} valueCol="rgba(248,113,113,0.55)" />
-          )}
+
+          {/* Session totals */}
+          <div style={{ borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:"0.3rem", display:"flex", flexDirection:"column", gap:"0.12rem" }}>
+            <StatusRow label="COLLECTED" value={String(liveG.salvageCollected)} valueCol="rgba(74,222,128,0.65)" />
+            <StatusRow label="SIGNALS LOST" value={liveG.wordsEscaped > 0 ? String(liveG.wordsEscaped) : "—"} valueCol={liveG.wordsEscaped > 0 ? "rgba(248,113,113,0.55)" : "rgba(255,255,255,0.2)"} />
+            <StatusRow label="TOKENS" value={`${tokens}t`} valueCol="rgba(74,222,128,0.6)" />
+          </div>
         </>
       )}
-      <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "0.35rem", marginTop: "0.1rem" }}>
-        <span style={{ color: "rgba(255,255,255,0.12)", fontSize: "0.52rem", fontStyle: "italic" }}>
-          Future: grapple hook · cargo recovery · rescue
-        </span>
-      </div>
     </div>
   )
 }
@@ -6429,11 +6615,12 @@ type PowerKey = "turret" | "shields" | "engines" | "sensors"
 // Read power levels from _stationState and apply effects to GState
 // Called from the game loop every frame
 function applyPowerEffects(g: GState) {
-  // Stored on g for turret fire rate calculation
-  g._powerTurret  = _stationState.power.turret
-  g._powerShields = _stationState.power.shields
-  g._powerEngines = _stationState.power.engines
-  g._powerSensors = _stationState.power.sensors
+  // Engineering room damage reduces effective power levels by 1 per damage level
+  const engDmg = g.roomDamage.engineering ?? 0
+  g._powerTurret  = Math.max(0, _stationState.power.turret  - engDmg)
+  g._powerShields = Math.max(0, _stationState.power.shields - engDmg)
+  g._powerEngines = Math.max(0, _stationState.power.engines - engDmg)
+  g._powerSensors = Math.max(0, _stationState.power.sensors - engDmg)
 }
 
 function EngineeringStationView({ liveG, phase }: { liveG: LiveGSnapshot; phase: string }) {
