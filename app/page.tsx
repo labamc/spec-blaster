@@ -26,11 +26,15 @@ const _stationState = {
   turretFiring:     false,
   commsLog:         [] as string[],
   sectorStart:      0,
-  // Phase 2: target marking (Bridge → Turret cooperation)
   markedTargetId:   null as number | null,
-  markedAt:         0,  // timestamp for pulse animation
-  // Phase 2: engineering power allocation (10 points to distribute)
+  markedAt:         0,
   power: { turret: 3, shields: 3, engines: 2, sensors: 2 } as Record<string, number>,
+  // Phase 4: crew AI
+  opsFeedBuffer:    [] as Array<{ crew: string; message: string; type: string; ts: number }>,
+  roomActions:      {} as Partial<Record<StationId, { text: string; until: number }>>,
+  lastCrewAI:       0,
+  crewAssignCache:  {} as Partial<Record<StationId, string>>,
+  crewCacheTime:    0,
 }
 
 interface Station {
@@ -604,11 +608,11 @@ interface GState {
   // Phase 2: room damage (0 = intact, 1 = damaged, 2 = critical, 3 = offline)
   roomDamage: Partial<Record<StationId, number>>
   // Phase 3: artifact system
-  artifacts: string[]          // active artifact IDs this run
-  _hardenedUsed: boolean       // hardened_bulkheads per-sector reset
-  _powerSurgeKills: number     // kill counter for power_surge artifact
-  _battleHardenedStacks: number
-  engineeringPoolBonus: number // extra pool from engine_of_war / battle_hardened
+  artifacts: string[]
+  _hardenedUsed: boolean; _powerSurgeKills: number; _battleHardenedStacks: number
+  engineeringPoolBonus: number
+  // Phase 4: crew stats (accumulated across sectors)
+  crewStats: Partial<Record<string, number>>
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -649,7 +653,7 @@ function initState(W: number): GState {
     salvage: [], nextSalvageId: 1, salvageCollected: 0, fragmentsEarned: 0,
     roomDamage: {},
     artifacts: [], _hardenedUsed: false, _powerSurgeKills: 0, _battleHardenedStacks: 0,
-    engineeringPoolBonus: 0,
+    engineeringPoolBonus: 0, crewStats: {},
   }
 }
 
@@ -689,6 +693,36 @@ export default function HomePage() {
 
   // ── Station system state ────────────────────────────────────────────────
   const [activeStation, setActiveStation] = useState<StationId>("bridge")
+
+  // Phase 4: operations feed + crew stats (driven by 250ms crew AI interval)
+  type OpsFeedEntry = { id: number; crew: string; message: string; type: string; ts: number }
+  const [opsFeed, setOpsFeed] = useState<OpsFeedEntry[]>([])
+  const [crewStatsSnap, setCrewStatsSnap] = useState<Partial<Record<string, number>>>({})
+  const opsFeedIdRef = useRef(0)
+  const [roomActionsSnap, setRoomActionsSnap] = useState<Partial<Record<StationId, string>>>({})
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const g = G.current; const now = Date.now()
+      runCrewAI(g, now)
+      // Drain ops feed buffer into React state (max 25 entries)
+      if (_stationState.opsFeedBuffer.length > 0) {
+        const newEntries = _stationState.opsFeedBuffer.splice(0).map(e => ({
+          ...e, id: ++opsFeedIdRef.current,
+        }))
+        setOpsFeed(prev => [...newEntries, ...prev].slice(0, 25))
+      }
+      // Update room action states
+      const actions: Partial<Record<StationId, string>> = {}
+      for (const [k, v] of Object.entries(_stationState.roomActions)) {
+        if (v && v.until > now) actions[k as StationId] = v.text
+      }
+      setRoomActionsSnap(actions)
+      // Snapshot crew stats
+      setCrewStatsSnap({ ...g.crewStats })
+    }, 250)
+    return () => clearInterval(id)
+  }, [])
 
   // Live game snapshot — polled every 150ms so station panels stay current
   // without adding setState calls inside the RAF loop
@@ -1430,36 +1464,7 @@ export default function HomePage() {
         }
       }
 
-      // Capy crew auto-fire — when Capy is assigned to Turret station
-      // Fires every 3.5s at a random visible word, 70% accuracy (30% miss = wide angle)
-      if (_stationState.active === "turret" || true) {  // Capy fires regardless of active station
-        const turretCrew = (_stationState as any)._crewAssign?.turret ?? null
-        // Read from localStorage since crewAssign is in React state
-        const capyAtTurret = (() => {
-          try { const ca = localStorage.getItem("sb_crew_assign"); return ca ? JSON.parse(ca).turret === "capy" : false } catch { return false }
-        })()
-        if (capyAtTurret && g.words.length > 0 && !g.bossWarn) {
-          if (!g._capyLastFire) g._capyLastFire = now
-          if (now - g._capyLastFire > 3500) {
-            g._capyLastFire = now
-            const targets = g.words.filter(w => !w.fragment && w.type !== "powerup")
-            if (targets.length > 0) {
-              const target = targets[Math.floor(Math.random() * targets.length)]
-              const dx = target.x - g.px, dy = target.y - g.py
-              const dist = Math.sqrt(dx*dx + dy*dy) || 1
-              // 70% accuracy: 30% chance adds random angle offset
-              const missAngle = Math.random() < 0.3 ? (Math.random() - 0.5) * 0.8 : 0
-              const ang = Math.atan2(dy, dx) + missAngle
-              const SPEED = 10
-              g.bullets.push({ x: g.px, y: g.py - 20,
-                vx: Math.cos(ang) * SPEED, vy: Math.sin(ang) * SPEED,
-                kind: "turret", col: "#86efac" })  // green — capy's color
-              g.particles.push({ x: g.px, y: g.py - 22, vx: 0, vy: -0.8, life: 0.8,
-                glyph: "🦫", col: "#86efac", sz: 10, gravity: 0 })
-            }
-          }
-        }
-      }
+      // Crew AI handled by 250ms React interval — no game loop crew logic here
 
       // spawn words (not during boss warning)
       // Pause background word rain while any boss is active — boss fight is the focus
@@ -2159,27 +2164,7 @@ export default function HomePage() {
         return (now - s.spawnTime) < s.life
       })
 
-      // Capy salvage auto-collect — when Capy assigned to Salvage station
-      if (g.salvage.length > 0) {
-        const capyAtSalvage = (() => {
-          try { const ca = localStorage.getItem("sb_crew_assign"); return ca ? JSON.parse(ca).salvage === "capy" : false } catch { return false }
-        })()
-        if (capyAtSalvage && now - (g._capyLastSalvage ?? 0) > 4000) {
-          g._capyLastSalvage = now
-          // Auto-collect nearest salvage item
-          const nearest = g.salvage.reduce((best, s) =>
-            Math.hypot(s.x - g.px, s.y - g.py) < Math.hypot(best.x - g.px, best.y - g.py) ? s : best
-          )
-          if (Math.hypot(nearest.x - g.px, nearest.y - g.py) < 200) {
-            const collected = g.salvage.splice(g.salvage.indexOf(nearest), 1)[0]
-            const bonus = collected.type === "artifact" ? 500 : collected.type === "fragment" ? 150 : 50
-            g.score += bonus; g.salvageCollected++
-            if (collected.type === "fragment" || collected.type === "artifact") g.fragmentsEarned++
-            g.particles.push({ x: collected.x, y: collected.y, vx: 0, vy: -0.9, life: 1.4,
-              glyph: `🦫 +${bonus}`, col: "#86efac", sz: 10, gravity: 0 })
-          }
-        }
-      }
+      // Salvage auto-collect handled by crew AI interval
 
       // player bullets vs words
       outer:
@@ -2262,6 +2247,9 @@ export default function HomePage() {
             const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul * pmMul * dataMul * markedMul)
             g.score += pts
             g.kills++; if (!w.fragment) g.wordsKilled++
+            // Track veteran gunner kills
+            if (b.col === "#fbbf24") { crewStat(g, "veteran_kills"); if (w.elite) crewStat(g, "veteran_eliteKills") }
+            if (b.col === "#86efac") { crewStat(g, "capy_assists") }
             applyArtifactOnKill(g, w, now)
             // Salvage drops — resources for the Salvage station
             if (w.type !== "powerup" && !w.fragment) {
@@ -3173,6 +3161,8 @@ export default function HomePage() {
             unlockedAgents={unlockedAgents}
             agentNames={agentNames}
             roomDamage={liveG.roomDamage}
+            roomActions={roomActionsSnap}
+            crewStats={crewStatsSnap}
           />
           <ActiveStationPanel
             activeStation={activeStation}
@@ -3184,6 +3174,7 @@ export default function HomePage() {
             onTurretFire={onTurretFire}
             onGrapple={onGrapple}
           />
+          <OperationsFeed entries={opsFeed} />
         </div>
 
         {isTouchDevice && phase === "playing" && (
@@ -6240,7 +6231,7 @@ function StationHeader({ label, sublabel }: { label: string; sublabel?: string }
 type CrewOption = string | null  // "capy" | "player" | agent_id | null
 
 // ── Ship Status Panel ──────────────────────────────────────────────────────
-function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSelectStation, liveG, unlockedAgents, agentNames, roomDamage }: {
+function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSelectStation, liveG, unlockedAgents, agentNames, roomDamage, roomActions, crewStats }: {
   hull: HullStatus
   stations: Station[]
   activeStation: StationId
@@ -6249,6 +6240,8 @@ function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSel
   unlockedAgents: string[]
   agentNames: Record<string, string>
   roomDamage: Partial<Record<StationId, number>>
+  roomActions: Partial<Record<StationId, string>>
+  crewStats: Partial<Record<string, number>>
 }) {
   const hullPct     = Math.round((hull.currentHull / hull.maxHull) * 100)
   const hullCol     = hullPct > 60 ? "#4ade80" : hullPct > 30 ? "#facc15" : "#f87171"
@@ -6359,8 +6352,17 @@ function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSel
           })}
         </div>
 
-        {/* Ship blueprint */}
-        <ShipBlueprint activeStation={activeStation} roomDamage={roomDamage} />
+        {/* Ship blueprint with crew presence */}
+        <ShipBlueprint
+          activeStation={activeStation}
+          roomDamage={roomDamage}
+          crewAssign={crewAssign}
+          roomActions={roomActions}
+          agentNames={agentNames}
+        />
+
+        {/* Crew statistics */}
+        <CrewStatsPanel crewAssign={crewAssign} crewStats={crewStats} agentNames={agentNames} />
 
       </div>
     </StationShell>
@@ -6371,9 +6373,12 @@ function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSel
 const DAMAGE_COLORS = ["", "#facc15", "#fb923c", "#f87171"]  // 0=intact, 1=dmg, 2=crit, 3=offline
 const DAMAGE_LABELS = ["", "DMG", "CRIT", "OFFLINE"]
 
-function ShipBlueprint({ activeStation, roomDamage }: {
+function ShipBlueprint({ activeStation, roomDamage, crewAssign, roomActions, agentNames }: {
   activeStation: StationId
   roomDamage: Partial<Record<StationId, number>>
+  crewAssign: Partial<Record<StationId, string | null>>
+  roomActions: Partial<Record<StationId, string>>
+  agentNames: Record<string, string>
 }) {
   const rooms: Array<{ id: StationId; label: string; icon: string }> = [
     { id: "bridge",      label: "BRIDGE",      icon: "◈" },
@@ -6386,22 +6391,90 @@ function ShipBlueprint({ activeStation, roomDamage }: {
       <span style={{ color: "rgba(255,255,255,0.2)", fontSize: "0.52rem", letterSpacing: "0.14em" }}>BLUEPRINT</span>
       <div style={{ marginTop: "0.3rem", display: "flex", flexDirection: "column", gap: "0.18rem" }}>
         {rooms.map(r => {
-          const active  = r.id === activeStation
-          const dmg     = roomDamage[r.id] ?? 0
-          const dmgCol  = dmg > 0 ? DAMAGE_COLORS[dmg] : null
-          const dmgLbl  = dmg > 0 ? DAMAGE_LABELS[dmg] : null
+          const active   = r.id === activeStation
+          const dmg      = roomDamage[r.id] ?? 0
+          const dmgCol   = dmg > 0 ? DAMAGE_COLORS[dmg] : null
+          const crew     = crewAssign[r.id] ?? null
+          const action   = roomActions[r.id]
+          const crewName = crewLabel(crew, agentNames)
+          const statusLine = action
+            ? action
+            : crew ? "ACTIVE"
+            : "EMPTY"
+          const statusCol = action
+            ? "#4ade80"
+            : crew === "player" ? "#a78bfa"
+            : crew ? "#86efac"
+            : "rgba(255,255,255,0.2)"
           return (
-            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: "0.4rem",
-              padding: "0.18rem 0.35rem",
-              border: `1px solid ${dmg > 0 ? `${dmgCol}55` : active ? "rgba(150,107,236,0.45)" : "rgba(255,255,255,0.08)"}`,
+            <div key={r.id} style={{ display: "flex", alignItems: "flex-start", gap: "0.35rem",
+              padding: "0.2rem 0.35rem",
+              border: `1px solid ${dmg > 0 ? `${dmgCol}55` : active ? "rgba(150,107,236,0.4)" : "rgba(255,255,255,0.07)"}`,
               borderRadius: "3px",
-              background: dmg > 0 ? `${dmgCol}08` : active ? "rgba(150,107,236,0.06)" : "transparent" }}>
-              <span style={{ color: dmg > 0 ? dmgCol! : active ? "#a78bfa" : "rgba(255,255,255,0.22)", fontSize: "0.6rem" }}>{r.icon}</span>
-              <span style={{ color: dmg > 0 ? dmgCol! : active ? "rgba(196,181,253,0.75)" : "rgba(255,255,255,0.2)", fontSize: "0.54rem", letterSpacing: "0.08em" }}>
-                {r.label}
+              background: dmg > 0 ? `${dmgCol}08` : active ? "rgba(150,107,236,0.05)" : "transparent" }}>
+              <span style={{ color: dmg > 0 ? dmgCol! : active ? "#a78bfa" : "rgba(255,255,255,0.2)", fontSize: "0.58rem", lineHeight:"1.3rem" }}>{r.icon}</span>
+              <div style={{ flex:1 }}>
+                <div style={{ display:"flex", justifyContent:"space-between" }}>
+                  <span style={{ color: dmg > 0 ? dmgCol! : "rgba(255,255,255,0.45)", fontSize: "0.52rem", letterSpacing: "0.08em" }}>
+                    {r.label}
+                    {dmg > 0 && <span style={{ color:dmgCol!, marginLeft:"0.3rem", fontSize:"0.44rem" }}>{DAMAGE_LABELS[dmg]}</span>}
+                  </span>
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:"0.3rem" }}>
+                  {crew && <span style={{ color:"rgba(255,255,255,0.5)", fontSize:"0.5rem" }}>{crewName}</span>}
+                  <span style={{ color:statusCol, fontSize:"0.48rem", letterSpacing:"0.06em",
+                    animation: action ? "none" : "none" }}>
+                    {statusLine}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Crew Statistics Panel ──────────────────────────────────────────────────
+function CrewStatsPanel({ crewAssign, crewStats, agentNames }: {
+  crewAssign: Partial<Record<StationId, string | null>>
+  crewStats: Partial<Record<string, number>>
+  agentNames: Record<string, string>
+}) {
+  const assignedCrew = new Set(Object.values(crewAssign).filter(Boolean) as string[])
+  if (assignedCrew.size === 0) return null
+  const STAT_LABELS: Record<string, Array<[string, string]>> = {
+    capy:           [["capy_marks", "Targets Marked"], ["capy_assists", "Assists"], ["capy_eliteMarks", "Elite Marks"]],
+    veteran_gunner: [["veteran_kills", "Kills"], ["veteran_eliteKills", "Elite Kills"], ["veteran_shots", "Shots Fired"]],
+    engineer_bot:   [["engineer_repairs", "Repairs"]],
+    salvager_bot:   [["salvager_fragment", "Fragments"], ["salvager_artifact", "Artifacts"], ["salvager_scrap", "Scrap"]],
+    scout_drone:    [["scout_threats", "Threats Found"], ["scout_artifacts", "Artifacts Found"]],
+  }
+  const hasStats = Object.values(crewStats).some(v => (v ?? 0) > 0)
+  if (!hasStats) return null
+  return (
+    <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"0.4rem", marginTop:"0.2rem" }}>
+      <span style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.5rem", letterSpacing:"0.14em" }}>CREW STATS</span>
+      <div style={{ display:"flex", flexDirection:"column", gap:"0.3rem", marginTop:"0.25rem" }}>
+        {[...assignedCrew].map(crew => {
+          const labels = STAT_LABELS[crew]; if (!labels) return null
+          const anyStats = labels.some(([key]) => (crewStats[key] ?? 0) > 0)
+          if (!anyStats) return null
+          return (
+            <div key={crew}>
+              <span style={{ color:"rgba(255,255,255,0.35)", fontSize:"0.5rem", fontWeight:600, letterSpacing:"0.06em" }}>
+                {crewLabel(crew, agentNames).toUpperCase()}
               </span>
-              {dmgLbl && <span style={{ marginLeft:"auto", color:dmgCol!, fontSize:"0.45rem", letterSpacing:"0.08em" }}>{dmgLbl}</span>}
-              {!dmgLbl && active && <span style={{ marginLeft: "auto", color: "rgba(150,107,236,0.6)", fontSize: "0.48rem" }}>ACTIVE</span>}
+              {labels.map(([key, label]) => {
+                const val = crewStats[key] ?? 0; if (!val) return null
+                return (
+                  <div key={key} style={{ display:"flex", justifyContent:"space-between", paddingLeft:"0.5rem" }}>
+                    <span style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.48rem" }}>{label}</span>
+                    <span style={{ color:"rgba(255,255,255,0.5)", fontSize:"0.5rem", fontWeight:600 }}>{val}</span>
+                  </div>
+                )
+              })}
             </div>
           )
         })}
@@ -6915,6 +6988,196 @@ type PowerKey = "turret" | "shields" | "engines" | "sensors"
 
 // Read power levels from _stationState and apply effects to GState
 // Called from the game loop every frame
+// ── Crew Utility AI ────────────────────────────────────────────────────────
+// Runs every 250ms. Each crew member evaluates state, scores actions, executes best.
+
+function crewStat(g: GState, key: string, delta = 1) {
+  g.crewStats[key] = (g.crewStats[key] ?? 0) + delta
+}
+
+function crewLog(crew: string, message: string, type = "action") {
+  _stationState.opsFeedBuffer.push({ crew, message, type, ts: Date.now() })
+  if (_stationState.opsFeedBuffer.length > 40) _stationState.opsFeedBuffer.shift()
+}
+
+function setRoomAction(station: StationId, text: string, durationMs = 2000) {
+  _stationState.roomActions[station] = { text, until: Date.now() + durationMs }
+}
+
+function getCrewAssignments(): Partial<Record<StationId, string>> {
+  if (Date.now() - _stationState.crewCacheTime > 800) {
+    try {
+      const saved = localStorage.getItem("sb_crew_assign")
+      _stationState.crewAssignCache = saved ? JSON.parse(saved) : {}
+    } catch { _stationState.crewAssignCache = {} }
+    _stationState.crewCacheTime = Date.now()
+  }
+  return _stationState.crewAssignCache
+}
+
+function runCrewAI(g: GState, now: number) {
+  if (!g.running || g.paused) return
+  const assign = getCrewAssignments()
+  const entries = Object.entries(assign) as [StationId, string][]
+  for (const [station, crew] of entries) {
+    if (!crew || crew === "player") continue
+    switch (crew) {
+      case "capy":           runCapyAI(g, station, now); break
+      case "veteran_gunner": runVeteranAI(g, station, now); break
+      case "engineer_bot":   runEngineerAI(g, station, now); break
+      case "salvager_bot":   runSalvagerAI(g, station, now); break
+      case "scout_drone":    runScoutAI(g, station, now); break
+    }
+  }
+}
+
+// ── Capy (Bridge Operator) ─────────────────────────────────────────────────
+let _capyAILast = 0
+function runCapyAI(g: GState, station: StationId, now: number) {
+  if (now - _capyAILast < 1800) return  // Capy evaluates every 1.8s
+  _capyAILast = now
+  // Priority 1: fire toward a word if at Turret station
+  if (station === "turret") {
+    const targets = g.words.filter(w => !w.fragment && w.type !== "powerup")
+    if (targets.length > 0) {
+      const target = targets.sort((a, b) => (b.elite ? 2 : 0) + (b.type === "bug" ? 1 : 0) - (a.elite ? 2 : 0) - (a.type === "bug" ? 1 : 0))[0]
+      const missAngle = Math.random() < 0.25 ? (Math.random() - 0.5) * 0.6 : 0
+      const ang = Math.atan2(target.y - g.py, target.x - g.px) + missAngle
+      const hit = missAngle === 0
+      g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(ang)*10, vy: Math.sin(ang)*10, kind:"turret", col:"#86efac" })
+      if (hit) crewStat(g, "capy_shots")
+      return
+    }
+  }
+  // Priority 2: mark highest-value target if at Bridge
+  if (station === "bridge" && _stationState.markedTargetId === null) {
+    const candidates = g.words.filter(w => !w.fragment && w.type !== "powerup")
+    if (candidates.length > 0) {
+      // Score: elite = 30, bug = 15, boss-proximity bonus
+      const scored = candidates.map(w => ({
+        w, score: (w.elite ? 30 : 0) + (w.type === "bug" ? 15 : 0) + Math.max(0, (g.py - w.y) / 30)
+      }))
+      const best = scored.sort((a, b) => b.score - a.score)[0]
+      if (best.score >= 15) {
+        _stationState.markedTargetId = best.w.id
+        _stationState.markedAt = now
+        const label = best.w.elite ? `Elite-${best.w.id % 100}` : best.w.text.slice(0, 10)
+        crewLog("CAPY", `Marked ${label}`, "mark")
+        setRoomAction(station, "LOCKING")
+        crewStat(g, "capy_marks")
+        if (best.w.elite) crewStat(g, "capy_eliteMarks")
+      }
+    }
+  }
+}
+
+// ── Veteran Gunner ─────────────────────────────────────────────────────────
+let _vetAILast = 0
+function runVeteranAI(g: GState, station: StationId, now: number) {
+  if (now - _vetAILast < 850) return
+  _vetAILast = now
+  const targets = g.words.filter(w => !w.fragment && w.type !== "powerup")
+  if (targets.length === 0) return
+  // Priority scoring: marked > elite > bug > closest
+  const marked = _stationState.markedTargetId
+  let action = "Engaging target"; let logType = "engage"
+  const best = targets.sort((a, b) => {
+    const sa = (a.id === marked ? 100 : 0) + (a.elite ? 40 : 0) + (a.type === "bug" ? 20 : 0)
+    const sb = (b.id === marked ? 100 : 0) + (b.elite ? 40 : 0) + (b.type === "bug" ? 20 : 0)
+    return sb - sa
+  })[0]
+  if (best.id === marked)    { action = "Engaging marked target"; logType = "mark" }
+  else if (best.elite)        { action = "Engaging elite threat";  logType = "elite" }
+  else if (best.type === "bug") { action = "Suppressing bug";      logType = "engage" }
+  const dx = best.x - g.px, dy = best.y - g.py
+  const ang = Math.atan2(dy, dx)
+  g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(ang)*10.5, vy: Math.sin(ang)*10.5, kind:"turret", col:"#fbbf24" })
+  crewLog("VETERAN", action, logType)
+  setRoomAction(station, "ENGAGING")
+  crewStat(g, "veteran_shots")
+}
+
+// Track veteran kills via a sentinel — checked in kill path externally
+// (kill detection calls crewStat directly when bullet.col === "#fbbf24")
+
+// ── Engineer Bot ───────────────────────────────────────────────────────────
+let _engAILast = 0
+function runEngineerAI(g: GState, station: StationId, now: number) {
+  if (now - _engAILast < 8000) return  // repairs every ~8s
+  const damaged = (["bridge","turret","salvage","engineering"] as StationId[])
+    .filter(r => (g.roomDamage[r] ?? 0) > 0)
+    .sort((a, b) => (g.roomDamage[b] ?? 0) - (g.roomDamage[a] ?? 0))  // worst first
+  if (damaged.length === 0) return
+  _engAILast = now
+  const target = damaged[0]
+  g.roomDamage[target] = Math.max(0, (g.roomDamage[target] ?? 0) - 1)
+  crewLog("ENGINEER", `Repaired ${target.charAt(0).toUpperCase() + target.slice(1)}`, "repair")
+  setRoomAction(station, "REPAIRING", 2500)
+  setRoomAction(target, "REPAIRED", 1500)
+  crewStat(g, "engineer_repairs")
+  g.particles.push({ x: g.W/2, y: GH*0.45, vx: 0, vy: -0.5, life: 1.4,
+    glyph: `⚙ ${target.toUpperCase()} REPAIRED`, col: "#4ade80", sz: 9, gravity: 0 })
+}
+
+// ── Salvager Bot ───────────────────────────────────────────────────────────
+let _salvAILast = 0
+function runSalvagerAI(g: GState, station: StationId, now: number) {
+  if (now - _salvAILast < 3200) return
+  if (g.salvage.length === 0) return
+  _salvAILast = now
+  // Priority: artifact > fragment > scrap (value-based, not nearest)
+  const byPriority = [...g.salvage].sort((a, b) => {
+    const priority = { artifact: 3, fragment: 2, scrap: 1 }
+    return priority[b.type] - priority[a.type]
+  })
+  const target = byPriority[0]
+  g.salvage = g.salvage.filter(s => s.id !== target.id)
+  const bonus = target.type === "artifact" ? 500 : target.type === "fragment" ? 150 : 50
+  const msgType = target.type
+  const msg = target.type === "artifact" ? "Artifact prioritized" : target.type === "fragment" ? "Fragment recovered" : "Scrap recovered"
+  g.score += bonus; g.salvageCollected++
+  if (target.type !== "scrap") g.fragmentsEarned++
+  crewLog("SALVAGER", msg, "recover")
+  setRoomAction(station, "RECOVERING", 1800)
+  crewStat(g, "salvager_" + target.type)
+  g.particles.push({ x: target.x, y: target.y, vx: 0, vy: -0.9, life: 1.4,
+    glyph: `⬡ +${bonus}`, col: "#4ade80", sz: 10, gravity: 0 })
+}
+
+// ── Scout Drone ────────────────────────────────────────────────────────────
+let _scoutAILast = 0
+function runScoutAI(g: GState, station: StationId, now: number) {
+  if (now - _scoutAILast < 4500) return
+  _scoutAILast = now
+  setRoomAction(station, "SCANNING", 1200)
+  // Detect elites
+  const elites = g.words.filter(w => w.elite && !w.fragment)
+  if (elites.length > 0) {
+    const e = elites[0]
+    crewLog("SCOUT", `Elite signature — ${e.text.slice(0, 12)}`, "scan")
+    crewStat(g, "scout_threats")
+    // Suggest mark if none active
+    if (_stationState.markedTargetId === null) {
+      _stationState.markedTargetId = e.id; _stationState.markedAt = now
+      crewLog("SCOUT", `Marking elite target`, "mark")
+    }
+    return
+  }
+  // Detect artifacts in salvage field
+  const artifacts = g.salvage.filter(s => s.type === "artifact")
+  if (artifacts.length > 0) {
+    crewLog("SCOUT", `Artifact detected in field`, "scan")
+    crewStat(g, "scout_artifacts")
+    return
+  }
+  // General threat scan
+  const threats = g.words.filter(w => w.type === "bug" && !w.fragment)
+  if (threats.length > 0) {
+    crewLog("SCOUT", `${threats.length} bug signature${threats.length > 1 ? "s" : ""} on scan`, "scan")
+    crewStat(g, "scout_threats")
+  }
+}
+
 function applyPowerEffects(g: GState) {
   const engDmg = g.roomDamage.engineering ?? 0
   // Artifact: collective_mind — each assigned crew adds 5% boost (approximated as +0 power offset)
@@ -7127,6 +7390,57 @@ function StatusRow({ label, value, valueCol }: { label: string; value: string; v
         {value}
       </span>
     </div>
+  )
+}
+
+// ── Operations Feed ────────────────────────────────────────────────────────
+const OPS_CREW_COLORS: Record<string, string> = {
+  CAPY:     "#86efac",
+  VETERAN:  "#fbbf24",
+  ENGINEER: "#4ade80",
+  SALVAGER: "#c4b5fd",
+  SCOUT:    "#7dd3fc",
+}
+const OPS_TYPE_ICONS: Record<string, string> = {
+  mark: "◎", kill: "✦", repair: "⚙", recover: "⬡", scan: "◇", engage: "⊕", elite: "★", action: "·",
+}
+
+function OperationsFeed({ entries }: {
+  entries: Array<{ id: number; crew: string; message: string; type: string; ts: number }>
+}) {
+  return (
+    <StationShell style={{ flex: "0 0 190px", minWidth: 0 }}>
+      <StationHeader label="OPERATIONS FEED" />
+      <div style={{ padding: "0.35rem 0.6rem", overflowY: "auto", flex: 1,
+        display: "flex", flexDirection: "column", gap: "0" }}>
+        {entries.length === 0 ? (
+          <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.52rem", fontStyle:"italic",
+            fontFamily:"monospace", margin:"0.3rem 0" }}>
+            Assign crew to stations to activate feed
+          </p>
+        ) : (
+          entries.map((e, i) => {
+            const age    = Date.now() - e.ts
+            const alpha  = Math.max(0.25, 1 - (i / 25) * 0.7)
+            const crewCol = OPS_CREW_COLORS[e.crew] ?? "rgba(255,255,255,0.5)"
+            const icon    = OPS_TYPE_ICONS[e.type] ?? "·"
+            return (
+              <div key={e.id} style={{ display:"flex", gap:"0.35rem", alignItems:"flex-start",
+                padding:"0.1rem 0", borderBottom:"1px solid rgba(255,255,255,0.03)",
+                opacity: alpha, transition:"opacity 1s" }}>
+                <span style={{ color:crewCol, fontSize:"0.48rem", flexShrink:0, lineHeight:"1.4rem" }}>{icon}</span>
+                <div>
+                  <span style={{ color:crewCol, fontSize:"0.5rem", fontFamily:"monospace",
+                    fontWeight:700, marginRight:"0.25rem" }}>[{e.crew}]</span>
+                  <span style={{ color:"rgba(255,255,255,0.55)", fontSize:"0.52rem",
+                    fontFamily:"monospace" }}>{e.message}</span>
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
+    </StationShell>
   )
 }
 
