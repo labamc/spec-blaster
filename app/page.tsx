@@ -818,6 +818,7 @@ export default function HomePage() {
       g.running = true; g.bossSpawned = false; g.wordsKilled = 0
       g.livesAtWave = g.lives; g.sectorClearAt = 0; g.lastMsWave = -1
       g.agentSectorRevived = false
+      g.salvage = []  // clear leftover debris on new sector
       // Stamp bg glyphs with new sector identity
       { const th = sectorTheme(g.level); g.bg.forEach(b => { b.ch = th.bgChars[Math.floor(Math.random() * th.bgChars.length)] }) }
       // Sector entry transmission — fires ~3s in, then regular timer
@@ -985,6 +986,20 @@ export default function HomePage() {
         draw(ctx, g, canvas.width, now, false)
         if (now >= g.sectorClearAt) {
           g.sectorClearAt = 0; g.running = false
+          // Auto-repair: sector clear reduces all room damage by 1 (partial recovery between sectors)
+          for (const room of Object.keys(g.roomDamage) as StationId[]) {
+            if ((g.roomDamage[room] ?? 0) > 0) {
+              g.roomDamage[room] = (g.roomDamage[room] as number) - 1
+              g.particles.push({ x: g.W/2, y: GH * 0.4, vx: 0, vy: -0.5, life: 1.8,
+                glyph: `${room.toUpperCase()} REPAIRED`, col: "#4ade80", sz: 9, gravity: 0 })
+            }
+          }
+          // Collect any remaining salvage automatically at sector end
+          if (g.salvage.length > 0) {
+            const bonus = g.salvage.reduce((sum, s) =>
+              sum + (s.type === "artifact" ? 500 : s.type === "fragment" ? 150 : 50), 0)
+            g.score += bonus; g.salvageCollected += g.salvage.length; g.salvage = []
+          }
           phaseRef.current = "upgrade"; setPhase("upgrade")
         }
         return
@@ -6188,11 +6203,18 @@ function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, 
 
 // ── Threat Radar ───────────────────────────────────────────────────────────
 // Mini top-down dot map of the battlefield — pure display
-function ThreatRadar({ dots, bossX, bossY }: {
+function ThreatRadar({ dots, bossX, bossY, bridgeDamage }: {
   dots: Array<{ x: number; y: number; bug: boolean; id: number; elite: boolean }>
   bossX: number | null; bossY: number | null
+  bridgeDamage?: number
 }) {
   const W = 110, H = 52
+  // Sensors power unlocks features: 0-2=basic, 3-5=type labels, 6+=elite highlight + scan range
+  const sensorsLvl    = _stationState.power.sensors
+  const showTypeLabel = sensorsLvl >= 3
+  const extendedRange = sensorsLvl >= 5
+  // Bridge damage causes radar static (dots jitter)
+  const radarStatic   = (bridgeDamage ?? 0) >= 2
   const [markedId, setMarkedId] = useState<number | null>(null)
 
   function handleDotClick(id: number) {
@@ -6236,18 +6258,27 @@ function ThreatRadar({ dots, bossX, bossY }: {
         {/* Player */}
         <polygon points={`${W/2},${H-3} ${W/2-3},${H+1} ${W/2+3},${H+1}`} fill="#a78bfa" opacity="0.9" />
         <circle cx={W/2} cy={H-4} r="2.5" fill="#a78bfa" />
-        {/* Word dots — clickable to mark */}
+        {/* Extended range ring at sensors 5+ */}
+        {extendedRange && <circle cx={W/2} cy={H*0.85} r={W*0.45} fill="none" stroke="rgba(125,211,252,0.15)" strokeWidth="0.5" strokeDasharray="3 4" />}
+        {/* Word dots — clickable to mark, sensors affects labels */}
         {dots.map((d, i) => {
-          const dx = d.x * W; const dy = d.y * H
-          if (dy < 0 || dy > H || dx < 0 || dx > W) return null
+          // Bridge damage: dots jitter when radar has static
+          const jx = radarStatic ? (Math.sin(Date.now() / 80 + i * 2.3) * 2) : 0
+          const jy = radarStatic ? (Math.cos(Date.now() / 95 + i * 1.7) * 2) : 0
+          const dx = d.x * W + jx; const dy = d.y * H + jy
+          if (dy < 0 || dy > H * (extendedRange ? 1.1 : 1) || dx < 0 || dx > W) return null
           const isLocked = d.id === markedId
           const r = d.elite ? 3.5 : d.bug ? 2.5 : 1.8
+          const typeLabel = showTypeLabel ? (d.elite ? "E" : d.bug ? "B" : "S") : null
           return (
             <g key={i} onClick={() => handleDotClick(d.id)} style={{ cursor:"pointer" }}>
               {isLocked && <circle cx={dx} cy={dy} r={r + 4} fill="none" stroke="#f87171" strokeWidth="1" strokeDasharray="2 2" opacity="0.8" />}
               <circle cx={dx} cy={dy} r={r}
                 fill={isLocked ? "#f87171" : d.bug ? "#f97316" : d.elite ? "#facc15" : "rgba(196,181,253,0.7)"}
-                opacity={isLocked ? 1 : 0.85} />
+                opacity={radarStatic ? 0.5 : isLocked ? 1 : 0.85} />
+              {typeLabel && !radarStatic && (
+                <text x={dx + r + 1.5} y={dy + 2.5} fontSize="4" fill="rgba(255,255,255,0.5)" fontFamily="monospace">{typeLabel}</text>
+              )}
             </g>
           )
         })}
@@ -6258,9 +6289,14 @@ function ThreatRadar({ dots, bossX, bossY }: {
             <circle cx={bossX * W} cy={bossY * H} r="2.5" fill="#f87171" opacity="0.9" />
           </>
         )}
+        {/* Bridge damage static overlay */}
+        {radarStatic && (
+          <rect x={0} y={0} width={W} height={H} fill="rgba(255,255,255,0.03)"
+            style={{ filter:"url(#noise)" }} />
+        )}
       </svg>
       <p style={{ color:"rgba(255,255,255,0.14)", fontSize:"0.48rem", margin:"0.18rem 0 0", fontFamily:"monospace" }}>
-        click contact to lock · +50% score on kill
+        {bridgeDamage && bridgeDamage >= 2 ? "⚠ radar interference" : showTypeLabel ? "click lock · B=bug S=story E=elite" : "click contact to lock · +50% score on kill"}
       </p>
     </div>
   )
@@ -6331,7 +6367,7 @@ function BridgeStationView({ phase, level, score, liveG }: {
           )}
 
           {/* Threat radar — dot map of current word positions */}
-          <ThreatRadar dots={liveG.wordDots} bossX={liveG.bossX} bossY={liveG.bossY} />
+          <ThreatRadar dots={liveG.wordDots} bossX={liveG.bossX} bossY={liveG.bossY} bridgeDamage={liveG.roomDamage.bridge} />
 
           {/* Comms log — rolling capy transmission history */}
           {liveG.commsLog.length > 0 && (
