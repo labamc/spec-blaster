@@ -2233,6 +2233,8 @@ export default function HomePage() {
               g.particles.push({ x: w.x, y: w.y - 16, vx: 0, vy: -1.1, life: 1.6,
                 glyph: "TARGET ELIMINATED", col: "#f87171", sz: 10, gravity: 0 })
               g.accentFlash = 10; g.accentFlashCol = "#f87171"
+              crewLog("CAPY", "Target eliminated", "kill")
+              crewStat(g, "capy_assists")
             }
             const markedMul = isMarked ? 1.5 : 1
             const base = w.type === "bug" ? 75 : w.type === "powerup" ? 0 : 10
@@ -2247,8 +2249,11 @@ export default function HomePage() {
             const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul * pmMul * dataMul * markedMul)
             g.score += pts
             g.kills++; if (!w.fragment) g.wordsKilled++
-            // Track veteran gunner kills
-            if (b.col === "#fbbf24") { crewStat(g, "veteran_kills"); if (w.elite) crewStat(g, "veteran_eliteKills") }
+            // Track crew kills by bullet color signature
+            if (b.col === "#fbbf24") {
+              crewStat(g, "veteran_kills"); if (w.elite) crewStat(g, "veteran_eliteKills")
+              crewLog("VETERAN", w.elite ? `Elite ${w.text.slice(0,8)} eliminated` : "Target down", "kill")
+            }
             if (b.col === "#86efac") { crewStat(g, "capy_assists") }
             applyArtifactOnKill(g, w, now)
             // Salvage drops — resources for the Salvage station
@@ -7043,9 +7048,11 @@ function runCapyAI(g: GState, station: StationId, now: number) {
       const target = targets.sort((a, b) => (b.elite ? 2 : 0) + (b.type === "bug" ? 1 : 0) - (a.elite ? 2 : 0) - (a.type === "bug" ? 1 : 0))[0]
       const missAngle = Math.random() < 0.25 ? (Math.random() - 0.5) * 0.6 : 0
       const ang = Math.atan2(target.y - g.py, target.x - g.px) + missAngle
-      const hit = missAngle === 0
       g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(ang)*10, vy: Math.sin(ang)*10, kind:"turret", col:"#86efac" })
-      if (hit) crewStat(g, "capy_shots")
+      g.particles.push({ x: g.px, y: g.py - 24, vx: 0, vy: -0.7, life: 0.7, glyph: "🦫", col:"#86efac", sz:9, gravity:0 })
+      crewStat(g, "capy_shots")
+      crewLog("CAPY", target.elite ? "Engaging elite" : "Engaging target", "engage")
+      setRoomAction(station, "ENGAGING")
       return
     }
   }
@@ -7092,6 +7099,8 @@ function runVeteranAI(g: GState, station: StationId, now: number) {
   const dx = best.x - g.px, dy = best.y - g.py
   const ang = Math.atan2(dy, dx)
   g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(ang)*10.5, vy: Math.sin(ang)*10.5, kind:"turret", col:"#fbbf24" })
+  g.particles.push({ x: g.px + Math.cos(ang)*8, y: g.py - 20 + Math.sin(ang)*8,
+    vx: Math.cos(ang)*2, vy: Math.sin(ang)*2, life: 0.25, glyph:"·", col:"#fbbf24", gravity:0 })
   crewLog("VETERAN", action, logType)
   setRoomAction(station, "ENGAGING")
   crewStat(g, "veteran_shots")
