@@ -600,7 +600,7 @@ interface GState {
   _capyLastFire?: number; _capyLastSalvage?: number
   // Phase 2: salvage system
   salvage: SalvageItem[]; nextSalvageId: number
-  salvageCollected: number
+  salvageCollected: number; fragmentsEarned: number
   // Phase 2: room damage (0 = intact, 1 = damaged, 2 = critical, 3 = offline)
   roomDamage: Partial<Record<StationId, number>>
   // Phase 3: artifact system
@@ -646,7 +646,7 @@ function initState(W: number): GState {
     deathFadeAt: 0,
     lastMsWave: -1,
     bossNextTaunt: 0,
-    salvage: [], nextSalvageId: 1, salvageCollected: 0,
+    salvage: [], nextSalvageId: 1, salvageCollected: 0, fragmentsEarned: 0,
     roomDamage: {},
     artifacts: [], _hardenedUsed: false, _powerSurgeKills: 0, _battleHardenedStacks: 0,
     engineeringPoolBonus: 0,
@@ -677,6 +677,7 @@ export default function HomePage() {
   const [topEntry, setTopEntry]             = useState<{handle: string; score: number} | null>(null)
   const [personalBest, setPersonalBest]           = useState(0)
   const [personalDepthBest, setPersonalDepthBest] = useState(0)
+  const [fragmentBank, setFragmentBank]           = useState(0)  // persistent signal fragments
   const [personalSectorBest, setPersonalSectorBest] = useState(0)
   const [isTouchDevice, setIsTouchDevice]         = useState(false)
   const [unlockedAgents, setUnlockedAgents] = useState<string[]>([])
@@ -828,6 +829,7 @@ export default function HomePage() {
     collected.forEach(s => {
       const bonus = s.type === "artifact" ? 500 : s.type === "fragment" ? 150 : 50
       total += bonus; g.salvageCollected++
+      if (s.type === "fragment" || s.type === "artifact") g.fragmentsEarned++
       g.particles.push({ x: s.x, y: s.y, vx: (g.px - s.x) * 0.08, vy: (g.py - s.y) * 0.08,
         life: 0.7, glyph: s.type === "artifact" ? "★" : s.type === "fragment" ? "◈" : "◆",
         col: s.type === "artifact" ? "#facc15" : s.type === "fragment" ? "#c4b5fd" : "#94a3b8",
@@ -868,6 +870,7 @@ export default function HomePage() {
     try { setPersonalBest(parseInt(localStorage.getItem("sb_pb") || "0")) } catch {}
     try { setPersonalDepthBest(parseInt(localStorage.getItem("sb_depth_pb") || "0")) } catch {}
     try { setPersonalSectorBest(parseInt(localStorage.getItem("sb_sector_pb") || "0")) } catch {}
+    try { setFragmentBank(parseInt(localStorage.getItem("sb_fragments") || "0")) } catch {}
     try {
       const saved = localStorage.getItem("sb_agents")
       if (saved) {
@@ -2171,6 +2174,7 @@ export default function HomePage() {
             const collected = g.salvage.splice(g.salvage.indexOf(nearest), 1)[0]
             const bonus = collected.type === "artifact" ? 500 : collected.type === "fragment" ? 150 : 50
             g.score += bonus; g.salvageCollected++
+            if (collected.type === "fragment" || collected.type === "artifact") g.fragmentsEarned++
             g.particles.push({ x: collected.x, y: collected.y, vx: 0, vy: -0.9, life: 1.4,
               glyph: `🦫 +${bonus}`, col: "#86efac", sz: 10, gravity: 0 })
           }
@@ -2910,6 +2914,15 @@ export default function HomePage() {
           glyph: "SIGNAL LOST", col: "#f87171", sz: 16, gravity: 0 })
         g.running = false; g.deathFadeAt = now + 1400; stopDrone()
         setScore(g.score); setLevel(g.level)
+        // Save earned fragments to persistent bank
+        if (g.fragmentsEarned > 0) {
+          try {
+            const cur = parseInt(localStorage.getItem("sb_fragments") || "0")
+            const next = cur + g.fragmentsEarned
+            localStorage.setItem("sb_fragments", String(next))
+            setFragmentBank(next)
+          } catch {}
+        }
         try {
           const pb = parseInt(localStorage.getItem("sb_pb") || "0")
           if (g.score > pb) { localStorage.setItem("sb_pb", String(g.score)); setPersonalBest(g.score) }
@@ -3057,6 +3070,14 @@ export default function HomePage() {
                         </span>
                       )}
                     </div>
+                  </div>
+                )}
+                {/* Fragment bank — persistent meta-currency */}
+                {fragmentBank > 0 && (
+                  <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"0.55rem", textAlign:"center" }}>
+                    <span style={{ color:"rgba(196,181,253,0.5)", fontSize:"0.52rem", fontFamily:"monospace", letterSpacing:"0.1em" }}>
+                      ◈ {fragmentBank} SIGNAL FRAGMENTS banked
+                    </span>
                   </div>
                 )}
 
