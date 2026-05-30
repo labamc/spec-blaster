@@ -61,6 +61,92 @@ function crewLabel(crew: string | null | undefined, names?: Record<string, strin
   return crew.replace("claude_", "").toUpperCase()
 }
 
+// ── Artifact System ────────────────────────────────────────────────────────
+type ArtifactRarity = "common" | "rare" | "legendary"
+interface ArtifactDef {
+  id: string; name: string; desc: string; rarity: ArtifactRarity
+}
+
+const ARTIFACT_DEFS: ArtifactDef[] = [
+  // Common
+  { id: "salvage_magnet",      name: "Salvage Magnet",       desc: "Debris drifts toward your hull. Nothing is lost.",             rarity: "common"    },
+  { id: "scrap_forge",         name: "Scrap Forge",          desc: "Each scrap drop worth ×2. Debris pays off.",                   rarity: "common"    },
+  { id: "overclock_core",      name: "Overclock Core",       desc: "Turret fires 25% faster. Heat not a concern.",                 rarity: "common"    },
+  { id: "hardened_bulkheads",  name: "Hardened Bulkheads",   desc: "First room hit per sector absorbed. No damage.",               rarity: "common"    },
+  { id: "capy_boost",          name: "Capy Uplink",          desc: "Capy crew abilities activate 50% faster.",                     rarity: "common"    },
+  { id: "reactive_armor",      name: "Reactive Armor",       desc: "Taking damage triggers 1.5s invuln. Always.",                  rarity: "common"    },
+  { id: "power_surge",         name: "Power Surge",          desc: "Every 5 kills: brief +2 to all power systems.",                rarity: "common"    },
+  // Rare
+  { id: "recursive_lens",      name: "Recursive Lens",       desc: "Bridge can lock 2 targets simultaneously.",                    rarity: "rare"      },
+  { id: "fragment_lens",       name: "Fragment Lens",        desc: "Signal fragments worth ×3. Artifacts ×2.",                    rarity: "rare"      },
+  { id: "autonomous_targeter", name: "Autonomous Targeter",  desc: "Capy turret accuracy +20%. Eyes everywhere.",                  rarity: "rare"      },
+  { id: "resonance_cascade",   name: "Resonance Cascade",    desc: "Killing a locked target auto-locks nearest enemy.",            rarity: "rare"      },
+  { id: "turret_sync",         name: "Turret Sync",          desc: "When ship fires, turret echoes the shot.",                     rarity: "rare"      },
+  { id: "signal_echo",         name: "Signal Echo",          desc: "15% chance each kill echoes — nearest same-type word dies.",   rarity: "rare"      },
+  { id: "emergency_protocols", name: "Emergency Protocols",  desc: "At 1 hull: turret fire rate +50%. Last stand.",                rarity: "rare"      },
+  { id: "battle_hardened",     name: "Battle Hardened",      desc: "Survive a sector → +1 engineering power. Stacks.",            rarity: "rare"      },
+  // Legendary
+  { id: "void_mirror",         name: "Void Mirror",          desc: "Boss phase transitions deal 150 bonus score. Every shift.",   rarity: "legendary" },
+  { id: "collective_mind",     name: "Collective Mind",      desc: "Each assigned crew member gives all stations +5% efficiency.", rarity: "legendary" },
+  { id: "quantum_targeting",   name: "Quantum Targeting",    desc: "Locked targets also reveal type + drop guaranteed fragment.", rarity: "legendary" },
+  { id: "ghost_protocol",      name: "Ghost Protocol",       desc: "Invulnerability windows last 2× as long.",                    rarity: "legendary" },
+  { id: "engine_of_war",       name: "Engine of War",        desc: "Each sector cleared permanently unlocks +5 engineering pool.", rarity: "legendary" },
+]
+
+const ARTIFACT_RARITY_COLORS: Record<ArtifactRarity, string> = {
+  common: "#94a3b8", rare: "#a78bfa", legendary: "#facc15",
+}
+
+// ── Expanded Crew Types ─────────────────────────────────────────────────────
+interface CrewTypeDef { id: string; name: string; role: string; desc: string }
+const CREW_TYPE_DEFS: CrewTypeDef[] = [
+  { id: "capy",           name: "Capy",           role: "Commander",      desc: "Auto-fires at 70–90% accuracy. Auto-collects salvage." },
+  { id: "player",         name: "Player",         role: "Gunner",         desc: "Full accuracy. Manual targeting. Full control." },
+  { id: "engineer_bot",   name: "Engineer Bot",   role: "Repair",         desc: "Repairs 1 room damage per sector automatically." },
+  { id: "salvager_bot",   name: "Salvager Bot",   role: "Recovery",       desc: "Grapple range +50%. Auto-collects on 3s cycle." },
+  { id: "scout_drone",    name: "Scout Drone",    role: "Recon",          desc: "Sensors power +3. Radar always shows type labels." },
+  { id: "veteran_gunner", name: "Veteran Gunner", role: "Weapons",        desc: "Turret fire rate +15%. Marked targets take 2× score." },
+]
+
+// ── Reward System ──────────────────────────────────────────────────────────
+interface RewardOption {
+  id: string
+  type: "artifact" | "stat" | "crew"
+  label: string
+  desc: string
+  rarity: ArtifactRarity
+}
+
+function buildRewardOptions(g: GState): RewardOption[] {
+  const pool: RewardOption[] = []
+  // Always include 1–2 artifact picks from defs not already held
+  const available = ARTIFACT_DEFS.filter(a => !g.artifacts.includes(a.id))
+  const shuffled  = [...available].sort(() => Math.random() - 0.5)
+  shuffled.slice(0, 2).forEach(a => pool.push({
+    id: a.id, type: "artifact", label: a.name, desc: a.desc, rarity: a.rarity,
+  }))
+  // Stat rewards
+  pool.push({ id: "stat_hull",    type: "stat", label: "+1 Hull",              desc: "Restore one hull section. Adds to max.",         rarity: "common" })
+  pool.push({ id: "stat_power",   type: "stat", label: "+2 Power Pool",        desc: "Engineering gets 2 more points to allocate.",    rarity: "common" })
+  pool.push({ id: "stat_salvage", type: "stat", label: "Salvage Bonus",        desc: "All salvage values doubled for next sector.",    rarity: "common" })
+  // Shuffle and return 3
+  return pool.sort(() => Math.random() - 0.5).slice(0, 3)
+}
+
+function applyReward(g: GState, id: string) {
+  if (id.startsWith("stat_")) {
+    if (id === "stat_hull")    { g.lives = Math.min(g.lives + 1, MAX_LIVES + 2) }
+    if (id === "stat_power")   { g.engineeringPoolBonus += 2 }
+    if (id === "stat_salvage") { /* handled in salvage value calc */ g.artifacts.push("_salvage_bonus") }
+    return
+  }
+  // Artifact pick
+  if (!g.artifacts.includes(id)) g.artifacts.push(id)
+  // Immediate effects for some artifacts
+  if (id === "reactive_armor")    g.invuln = false  // just register — effect applied on damage
+  if (id === "engine_of_war")     g.engineeringPoolBonus += 5
+}
+
 const BUG_WORDS = [
   "seamlessly","real-time","automatically","zero latency","scalable","robust",
   "synergy","leverage","intuitive","paradigm shift","world-class","cutting-edge",
@@ -514,9 +600,15 @@ interface GState {
   _capyLastFire?: number; _capyLastSalvage?: number
   // Phase 2: salvage system
   salvage: SalvageItem[]; nextSalvageId: number
-  salvageCollected: number  // total items collected this run
+  salvageCollected: number
   // Phase 2: room damage (0 = intact, 1 = damaged, 2 = critical, 3 = offline)
   roomDamage: Partial<Record<StationId, number>>
+  // Phase 3: artifact system
+  artifacts: string[]          // active artifact IDs this run
+  _hardenedUsed: boolean       // hardened_bulkheads per-sector reset
+  _powerSurgeKills: number     // kill counter for power_surge artifact
+  _battleHardenedStacks: number
+  engineeringPoolBonus: number // extra pool from engine_of_war / battle_hardened
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -556,6 +648,8 @@ function initState(W: number): GState {
     bossNextTaunt: 0,
     salvage: [], nextSalvageId: 1, salvageCollected: 0,
     roomDamage: {},
+    artifacts: [], _hardenedUsed: false, _powerSurgeKills: 0, _battleHardenedStacks: 0,
+    engineeringPoolBonus: 0,
   }
 }
 
@@ -566,7 +660,7 @@ export default function HomePage() {
   const rafRef    = useRef(0)
   const G         = useRef<GState>(initState(GW))
 
-  const [phase, setPhase]           = useState<"attract"|"playing"|"capy"|"upgrade"|"over">("attract")
+  const [phase, setPhase]           = useState<"attract"|"playing"|"capy"|"reward"|"upgrade"|"over">("attract")
   const [score, setScore]           = useState(0)
   const [level, setLevel]           = useState(1)
   const [lives, setLives]           = useState(MAX_LIVES)
@@ -575,6 +669,7 @@ export default function HomePage() {
   const capyIdxRef                  = useRef(0)
   const capyLinesRef                = useRef<string[]>([])
   const phaseRef                    = useRef("attract")
+  const [rewardOptions, setRewardOptions] = useState<RewardOption[]>([])
   const pendingCapyRef              = useRef<string[]>([])
   const [upgradeOptions, setUpgradeOptions] = useState<UpgradeDef[]>([])
   const upgradeOptionsRef                   = useRef<UpgradeDef[]>([])
@@ -612,6 +707,8 @@ export default function HomePage() {
     salvageCollected: 0,
     salvageItems: [] as Array<{ id: number; type: SalvageItem["type"] }>,
     roomDamage: {} as Partial<Record<StationId, number>>,
+    artifacts: [] as string[],
+    engineeringPoolBonus: 0,
   })
   useEffect(() => {
     const id = setInterval(() => {
@@ -636,6 +733,8 @@ export default function HomePage() {
         salvageCollected: g.salvageCollected,
         salvageItems: g.salvage.slice(0, 12).map(s => ({ id: s.id, type: s.type })),
         roomDamage: { ...g.roomDamage },
+        artifacts: [...g.artifacts],
+        engineeringPoolBonus: g.engineeringPoolBonus ?? 0,
       })
     }, 150)
     return () => clearInterval(id)
@@ -649,11 +748,14 @@ export default function HomePage() {
     if (!g.running || g.paused) return
     const now = Date.now()
     const fireRateLvl = g.upgrades.fire_rate ?? 0
-    // Engineering turret power: each point reduces rate limit by 5%
     const powerBonus = Math.pow(0.95, _stationState.power.turret)
-    // Turret room damage: each damage level adds 20% fire rate penalty
     const turretDmgPenalty = Math.pow(1.2, g.roomDamage.turret ?? 0)
-    const rateLimit = Math.round(300 * Math.pow(0.85, fireRateLvl) * powerBonus * turretDmgPenalty)
+    // Artifact: overclock_core +25%, emergency_protocols at 1 life +50%
+    const overclockMul = g.artifacts.includes("overclock_core") ? 0.75 : 1
+    const emergencyMul = (g.artifacts.includes("emergency_protocols") && g.lives <= 1) ? 0.5 : 1
+    // Veteran gunner crew at turret: +15% fire rate
+    const vetGunnerMul = (() => { try { const ca = localStorage.getItem("sb_crew_assign"); return ca && JSON.parse(ca).turret === "veteran_gunner" ? 0.85 : 1 } catch { return 1 } })()
+    const rateLimit = Math.round(300 * Math.pow(0.85, fireRateLvl) * powerBonus * turretDmgPenalty * overclockMul * emergencyMul * vetGunnerMul)
     if (now - turretLastFire.current < rateLimit) return
     turretLastFire.current = now
     const SPEED = 10
@@ -824,6 +926,16 @@ export default function HomePage() {
     })
   }
 
+  function onRewardPick(rewardId: string) {
+    const g = G.current
+    applyReward(g, rewardId)
+    setLives(g.lives)
+    // Go to upgrade screen
+    const opts = pickUpgrades(g.upgrades)
+    upgradeOptionsRef.current = opts; setUpgradeOptions(opts)
+    phaseRef.current = "upgrade"; setPhase("upgrade")
+  }
+
   function onUpgradePick(id: string) {
     let pickedName: string | null = null
     if (id !== "__skip__") {
@@ -856,7 +968,23 @@ export default function HomePage() {
       g.running = true; g.bossSpawned = false; g.wordsKilled = 0
       g.livesAtWave = g.lives; g.sectorClearAt = 0; g.lastMsWave = -1
       g.agentSectorRevived = false
-      g.salvage = []  // clear leftover debris on new sector
+      g.salvage = []
+      g._hardenedUsed = false  // reset hardened_bulkheads per sector
+      // Engineer Bot crew: repairs 1 room damage at sector start
+      const engineerAtStation = (() => {
+        try { const ca = localStorage.getItem("sb_crew_assign"); if (!ca) return null; const p = JSON.parse(ca); return Object.entries(p).find(([, v]) => v === "engineer_bot")?.[0] ?? null } catch { return null }
+      })()
+      if (engineerAtStation) {
+        const rooms = Object.keys(g.roomDamage) as StationId[]
+        if (rooms.length > 0) {
+          const target = rooms[0]
+          if ((g.roomDamage[target] ?? 0) > 0) {
+            g.roomDamage[target] = (g.roomDamage[target] as number) - 1
+            g.particles.push({ x: g.W/2, y: GH * 0.5, vx: 0, vy: -0.5, life: 1.5,
+              glyph: `ENGINEER BOT: ${target.toUpperCase()} REPAIRED`, col: "#4ade80", sz: 9, gravity: 0 })
+          }
+        }
+      }
       // Stamp bg glyphs with new sector identity
       { const th = sectorTheme(g.level); g.bg.forEach(b => { b.ch = th.bgChars[Math.floor(Math.random() * th.bgChars.length)] }) }
       // Sector entry transmission — fires ~3s in, then regular timer
@@ -1024,6 +1152,13 @@ export default function HomePage() {
         draw(ctx, g, canvas.width, now, false)
         if (now >= g.sectorClearAt) {
           g.sectorClearAt = 0; g.running = false
+          // Artifact: battle_hardened — surviving a sector gives +1 engineering power
+          if (g.artifacts.includes("battle_hardened")) {
+            g._battleHardenedStacks = (g._battleHardenedStacks ?? 0) + 1
+            g.engineeringPoolBonus = (g.engineeringPoolBonus ?? 0) + 1
+            g.particles.push({ x: g.W/2, y: GH * 0.45, vx: 0, vy: -0.5, life: 1.6,
+              glyph: "BATTLE HARDENED +1 POWER", col: "#fdba74", sz: 9, gravity: 0 })
+          }
           // Auto-repair: sector clear reduces all room damage by 1 (partial recovery between sectors)
           for (const room of Object.keys(g.roomDamage) as StationId[]) {
             if ((g.roomDamage[room] ?? 0) > 0) {
@@ -1038,7 +1173,10 @@ export default function HomePage() {
               sum + (s.type === "artifact" ? 500 : s.type === "fragment" ? 150 : 50), 0)
             g.score += bonus; g.salvageCollected += g.salvage.length; g.salvage = []
           }
-          phaseRef.current = "upgrade"; setPhase("upgrade")
+          // Build reward options before transitioning to reward screen
+          const rewards = buildRewardOptions(G.current)
+          setRewardOptions(rewards)
+          phaseRef.current = "reward"; setPhase("reward")
         }
         return
       }
@@ -1076,8 +1214,9 @@ export default function HomePage() {
         return
       }
 
-      // Apply engineering power allocation effects each frame
+      // Apply engineering power allocation + artifact passive effects each frame
       applyPowerEffects(g)
+      applyArtifactPassive(g, now)
 
       const spd = g.fast && now < g.fastEnd ? 8 : 5
 
@@ -2119,6 +2258,7 @@ export default function HomePage() {
             const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul * pmMul * dataMul * markedMul)
             g.score += pts
             g.kills++; if (!w.fragment) g.wordsKilled++
+            applyArtifactOnKill(g, w, now)
             // Salvage drops — resources for the Salvage station
             if (w.type !== "powerup" && !w.fragment) {
               if (w.type === "bug")    spawnSalvage(g, w.x, w.y, "scrap",    now)
@@ -2684,6 +2824,8 @@ export default function HomePage() {
     }
 
     function loseLife(g: GState, now: number) {
+      // Artifact absorption check (hardened_bulkheads, reactive_armor)
+      if (applyArtifactOnDamage(g, now)) return  // damage absorbed
       // claude_exec: revive once per sector before losing a life
       if (g.activeAgents.includes("claude_exec") && !g.agentSectorRevived && g.lives <= 1) {
         g.agentSectorRevived = true
@@ -2920,6 +3062,15 @@ export default function HomePage() {
 
               </div>
             </Overlay>
+          )}
+
+          {phase === "reward" && (
+            <RewardScreen
+              options={rewardOptions}
+              level={level}
+              onPick={onRewardPick}
+              artifacts={G.current.artifacts}
+            />
           )}
 
           {phase === "capy" && (
@@ -4732,6 +4883,48 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.restore()
   }
 
+  // ── Ship damage visual feedback — smoke/sparks when rooms are damaged ───────
+  if (!attractMode && !g.endless) {
+    const totalDamage = Object.values(g.roomDamage).reduce((a, b) => a + (b ?? 0), 0)
+    if (totalDamage > 0) {
+      // Smoke drifting from hull (bottom area near player)
+      if (Math.random() < 0.06 * totalDamage) {
+        g.particles.push({
+          x: g.px + (Math.random() - 0.5) * 22,
+          y: g.py + 5,
+          vx: (Math.random() - 0.5) * 0.4,
+          vy: -(0.3 + Math.random() * 0.5),
+          life: 1.2 + Math.random() * 0.8,
+          glyph: Math.random() < 0.5 ? "·" : "○",
+          col: totalDamage >= 4 ? "#f97316" : "#6b7280",
+          sz: 8 + Math.random() * 4,
+          gravity: -0.005, friction: 0.98,
+        })
+      }
+      // Sparks if critical (3+ total damage)
+      if (totalDamage >= 3 && Math.random() < 0.04 * totalDamage) {
+        const sa = Math.random() * Math.PI * 2
+        g.particles.push({
+          x: g.px + Math.cos(sa) * 8, y: g.py + Math.sin(sa) * 5,
+          vx: Math.cos(sa) * (1 + Math.random() * 2),
+          vy: Math.sin(sa) * (1 + Math.random() * 2) - 1,
+          life: 0.4 + Math.random() * 0.3,
+          glyph: "✦", col: totalDamage >= 5 ? "#f87171" : "#fdba74",
+          gravity: 0.06, friction: 0.94,
+        })
+      }
+      // Critical orange glow around player when heavily damaged
+      if (totalDamage >= 4) {
+        ctx.save()
+        ctx.globalAlpha = 0.08 + 0.05 * Math.abs(Math.sin(now / 200))
+        const dmgGrad = ctx.createRadialGradient(g.px, g.py, 0, g.px, g.py, 35)
+        dmgGrad.addColorStop(0, "#f97316"); dmgGrad.addColorStop(1, "rgba(249,115,22,0)")
+        ctx.fillStyle = dmgGrad; ctx.fillRect(g.px - 35, g.py - 35, 70, 70)
+        ctx.restore()
+      }
+    }
+  }
+
   // ── Bridge target marking — locked target gets visual on battlefield ────────
   if (!attractMode && _stationState.markedTargetId !== null) {
     const target = g.words.find(w => w.id === _stationState.markedTargetId)
@@ -6212,6 +6405,8 @@ type LiveGSnapshot = {
   salvageCollected: number
   salvageItems: Array<{ id: number; type: SalvageItem["type"] }>
   roomDamage: Partial<Record<StationId, number>>
+  artifacts: string[]
+  engineeringPoolBonus: number
 }
 
 function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, onTurretFire, onGrapple }: {
@@ -6351,6 +6546,7 @@ function BridgeStationView({ phase, level, score, liveG }: {
   const statusLine = phase === "playing" ? "ONLINE"
     : phase === "attract"              ? "AWAITING LAUNCH"
     : phase === "over"                 ? "SIGNAL LOST"
+    : phase === "reward"               ? "REWARD SELECTION"
     : phase === "upgrade"              ? "UPGRADE IN PROGRESS"
     : "TRANSMISSION"
   const statusCol  = phase === "over" ? "#f87171" : phase === "playing" ? "#4ade80" : "rgba(255,255,255,0.45)"
@@ -6699,19 +6895,101 @@ type PowerKey = "turret" | "shields" | "engines" | "sensors"
 // Read power levels from _stationState and apply effects to GState
 // Called from the game loop every frame
 function applyPowerEffects(g: GState) {
-  // Engineering room damage reduces effective power levels by 1 per damage level
   const engDmg = g.roomDamage.engineering ?? 0
-  g._powerTurret  = Math.max(0, _stationState.power.turret  - engDmg)
-  g._powerShields = Math.max(0, _stationState.power.shields - engDmg)
-  g._powerEngines = Math.max(0, _stationState.power.engines - engDmg)
-  g._powerSensors = Math.max(0, _stationState.power.sensors - engDmg)
+  // Artifact: collective_mind — each assigned crew adds 5% boost (approximated as +0 power offset)
+  const crewBonus = g.artifacts.includes("collective_mind")
+    ? Math.floor(Object.values(_stationState.power).reduce((a, b) => a + b, 0) * 0.05)
+    : 0
+  g._powerTurret  = Math.max(0, _stationState.power.turret  - engDmg + crewBonus)
+  g._powerShields = Math.max(0, _stationState.power.shields - engDmg + crewBonus)
+  g._powerEngines = Math.max(0, _stationState.power.engines - engDmg + crewBonus)
+  // Scout Drone crew anywhere = +3 sensors
+  const scoutBonus = (() => { try { const ca = localStorage.getItem("sb_crew_assign"); return ca && Object.values(JSON.parse(ca)).includes("scout_drone") ? 3 : 0 } catch { return 0 } })()
+  g._powerSensors = Math.max(0, _stationState.power.sensors - engDmg + crewBonus + scoutBonus)
+}
+
+// ── Artifact effect hooks — called from game events ────────────────────────
+
+// Called each frame in the game loop for passive artifact effects
+function applyArtifactPassive(g: GState, now: number) {
+  if (!g.artifacts.length) return
+  // Salvage Magnet — debris drifts toward player
+  if (g.artifacts.includes("salvage_magnet")) {
+    g.salvage.forEach(s => {
+      const dx = g.px - s.x, dy = (g.py - 20) - s.y
+      const dist = Math.sqrt(dx*dx + dy*dy) || 1
+      s.vx += (dx / dist) * 0.06; s.vy += (dy / dist) * 0.04
+    })
+  }
+  // Power Surge — every 5 kills, +2 power for 3s (tracked via particle)
+  // Ghost Protocol — handled by multiplying invuln duration on application
+}
+
+// Called when a word is killed
+function applyArtifactOnKill(g: GState, word: Word, now: number) {
+  if (!g.artifacts.length) return
+  // Signal Echo — 15% chance nearest same-type word also dies
+  if (g.artifacts.includes("signal_echo") && Math.random() < 0.15) {
+    const same = g.words.filter(w => w.type === word.type && w.id !== word.id)
+    if (same.length > 0) {
+      const near = same.reduce((a, b) =>
+        Math.hypot(b.x - word.x, b.y - word.y) < Math.hypot(a.x - word.x, a.y - word.y) ? b : a)
+      // Schedule removal (can't splice mid-loop, so flag it)
+      near.hp = 0; near.hitFlash = 99  // sentinel: will be collected next frame
+    }
+  }
+  // Power Surge — every 5 kills, +2 to all power briefly
+  if (g.artifacts.includes("power_surge")) {
+    g._powerSurgeKills = (g._powerSurgeKills ?? 0) + 1
+    if (g._powerSurgeKills % 5 === 0) {
+      g.particles.push({ x: g.px, y: g.py - 28, vx: 0, vy: -0.7, life: 1.4,
+        glyph: "POWER SURGE", col: "#fdba74", sz: 10, gravity: 0 })
+      g._powerTurret  = (g._powerTurret  ?? 0) + 2
+      g._powerShields = (g._powerShields ?? 0) + 2
+      g._powerEngines = (g._powerEngines ?? 0) + 2
+    }
+  }
+  // Resonance Cascade — auto-lock nearest enemy after killing locked target
+  if (g.artifacts.includes("resonance_cascade") && _stationState.markedTargetId === null) {
+    // Was just cleared (kill cleared it) → auto-lock next closest
+    const next = g.words.filter(w => !w.fragment && w.type !== "powerup")
+    if (next.length > 0) {
+      const nearest = next.reduce((a, b) =>
+        Math.hypot(b.x - g.px, b.y - g.py) < Math.hypot(a.x - g.px, a.y - g.py) ? b : a)
+      _stationState.markedTargetId = nearest.id
+      _stationState.markedAt = now
+    }
+  }
+  // Quantum Targeting — guaranteed fragment drop from locked targets
+  if (g.artifacts.includes("quantum_targeting") && word.id === _stationState.markedTargetId) {
+    spawnSalvage(g, word.x, word.y, "fragment", now)
+  }
+}
+
+// Called when player takes hull damage
+function applyArtifactOnDamage(g: GState, now: number): boolean {
+  // Hardened Bulkheads — absorb first room hit per sector
+  if (g.artifacts.includes("hardened_bulkheads") && !g._hardenedUsed) {
+    g._hardenedUsed = true
+    g.particles.push({ x: g.px, y: g.py - 22, vx: 0, vy: -0.9, life: 1.4,
+      glyph: "BULKHEADS HELD", col: "#4ade80", sz: 10, gravity: 0 })
+    return true  // damage absorbed
+  }
+  // Reactive Armor — brief invuln on every hit
+  if (g.artifacts.includes("reactive_armor")) {
+    g.invuln = true; g.invulnEnd = now + 1500
+  }
+  return false
 }
 
 function EngineeringStationView({ liveG, phase }: { liveG: LiveGSnapshot; phase: string }) {
   const installedUpgrades = UPGRADES.filter(u => (liveG.upgrades[u.id] ?? 0) > 0)
   const systemCount = installedUpgrades.length
   const [power, setPower] = useState({ ...(_stationState.power) })
-  const remaining = POWER_POOL - Object.values(power).reduce((a, b) => a + b, 0)
+  const effectivePool = POWER_POOL + (liveG.engineeringPoolBonus ?? 0)
+  const remaining = effectivePool - Object.values(power).reduce((a, b) => a + b, 0)
+  // Active artifacts relevant to engineering
+  const engArtifacts = liveG.artifacts.filter(id => ["overclock_core","battle_hardened","engine_of_war","power_surge","collective_mind"].includes(id))
 
   function adjustPower(key: PowerKey, delta: number) {
     setPower(prev => {
@@ -6720,7 +6998,7 @@ function EngineeringStationView({ liveG, phase }: { liveG: LiveGSnapshot; phase:
       const diff = next - cur
       // Check pool
       const used = Object.values(prev).reduce((a, b) => a + b, 0)
-      if (diff > 0 && used + diff > POWER_POOL) return prev
+      if (diff > 0 && used + diff > effectivePool) return prev
       const updated = { ...prev, [key]: next }
       _stationState.power = updated
       return updated
@@ -6736,7 +7014,7 @@ function EngineeringStationView({ liveG, phase }: { liveG: LiveGSnapshot; phase:
         <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.3rem" }}>
           <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", letterSpacing:"0.12em" }}>POWER ALLOCATION</span>
           <span style={{ color: remaining === 0 ? "rgba(255,113,113,0.6)" : "rgba(150,107,236,0.6)", fontSize:"0.5rem" }}>
-            {remaining} free
+            {remaining}/{effectivePool} free{liveG.engineeringPoolBonus > 0 ? ` (+${liveG.engineeringPoolBonus})` : ""}
           </span>
         </div>
         <div style={{ display:"flex", flexDirection:"column", gap:"0.28rem" }}>
@@ -6789,6 +7067,30 @@ function EngineeringStationView({ liveG, phase }: { liveG: LiveGSnapshot; phase:
           </div>
         </div>
       )}
+
+      {/* Active artifacts */}
+      {liveG.artifacts.filter(id => !id.startsWith("_")).length > 0 && (
+        <div style={{ borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:"0.3rem" }}>
+          <span style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.5rem", letterSpacing:"0.1em" }}>
+            ARTIFACTS · {liveG.artifacts.filter(id => !id.startsWith("_")).length} active
+          </span>
+          <div style={{ display:"flex", flexDirection:"column", gap:"0.12rem", marginTop:"0.2rem" }}>
+            {liveG.artifacts.filter(id => !id.startsWith("_")).map(id => {
+              const def = ARTIFACT_DEFS.find(a => a.id === id)
+              if (!def) return null
+              return (
+                <div key={id} style={{ display:"flex", alignItems:"center", gap:"0.35rem" }}>
+                  <span style={{ color:ARTIFACT_RARITY_COLORS[def.rarity], fontSize:"0.52rem",
+                    fontFamily:"monospace" }}>{def.name}</span>
+                  <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.48rem", fontStyle:"italic" }}>
+                    {def.rarity}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -6803,6 +7105,117 @@ function StatusRow({ label, value, valueCol }: { label: string; value: string; v
       <span style={{ color: valueCol ?? "rgba(255,255,255,0.55)", fontSize: "0.62rem", fontWeight: 500, textAlign: "right" }}>
         {value}
       </span>
+    </div>
+  )
+}
+
+// ── Reward Screen ──────────────────────────────────────────────────────────
+function RewardScreen({ options, level, onPick, artifacts }: {
+  options: RewardOption[]
+  level: number
+  onPick: (id: string) => void
+  artifacts: string[]
+}) {
+  const sectorNames: Record<number, string> = {
+    1: "THE RECURSION", 2: "THE DRIFT", 3: "THE FRAGMENT", 4: "THE COLLAPSE",
+  }
+  const bossCleared = BOSSES[Math.min(level - 2, BOSSES.length - 1)]
+  const borderCol   = bossCleared ? `${bossCleared.color}44` : "rgba(150,107,236,0.3)"
+  const accentCol   = bossCleared ? bossCleared.color : "#966bec"
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const n = parseInt(e.key)
+      if (n >= 1 && n <= options.length) { e.preventDefault(); onPick(options[n-1].id) }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [options, onPick])
+
+  return (
+    <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center",
+      background:"rgba(5,5,12,0.97)", zIndex:10 }}>
+      <div style={{ maxWidth:"420px", width:"100%", padding:"1.5rem" }}>
+
+        {/* Header */}
+        <div style={{ textAlign:"center", marginBottom:"1.2rem" }}>
+          <p style={{ color:`${accentCol}80`, fontSize:"0.52rem", fontFamily:"monospace",
+            letterSpacing:"0.3em", margin:"0 0 0.4rem" }}>·· SECTOR REWARD ··</p>
+          <p style={{ color:accentCol, fontSize:"0.72rem", fontFamily:"monospace",
+            letterSpacing:"0.15em", margin:"0 0 0.25rem", fontWeight:700 }}>
+            {sectorNames[level - 1] ?? "SECTOR"} · CLEARED
+          </p>
+          <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.6rem", fontFamily:"monospace", margin:0 }}>
+            Choose one enhancement for the next sector
+          </p>
+        </div>
+
+        {/* Reward cards */}
+        <div style={{ display:"flex", flexDirection:"column", gap:"0.5rem", marginBottom:"1rem" }}>
+          {options.map((opt, i) => {
+            const rarityCol = ARTIFACT_RARITY_COLORS[opt.rarity]
+            const isArtifact = opt.type === "artifact"
+            return (
+              <button key={opt.id} onClick={() => onPick(opt.id)}
+                style={{ display:"flex", gap:"0.8rem", alignItems:"flex-start",
+                  background:`rgba(${opt.rarity === "legendary" ? "250,204,21" : opt.rarity === "rare" ? "167,139,250" : "255,255,255"},0.04)`,
+                  border:`1px solid ${rarityCol}44`,
+                  borderRadius:"6px", padding:"0.7rem 0.9rem",
+                  cursor:"pointer", textAlign:"left", width:"100%",
+                  transition:"border-color 0.15s" }}
+                onMouseEnter={e => (e.currentTarget.style.borderColor = `${rarityCol}88`)}
+                onMouseLeave={e => (e.currentTarget.style.borderColor = `${rarityCol}44`)}>
+                <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.62rem", fontFamily:"monospace",
+                  flexShrink:0, lineHeight:"1.4rem" }}>[{i+1}]</span>
+                <div style={{ flex:1 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:"0.5rem", marginBottom:"0.2rem" }}>
+                    <span style={{ color:rarityCol, fontSize:"0.72rem", fontFamily:"monospace", fontWeight:700 }}>
+                      {opt.label}
+                    </span>
+                    <span style={{ color:`${rarityCol}80`, fontSize:"0.48rem", fontFamily:"monospace",
+                      border:`1px solid ${rarityCol}44`, borderRadius:"2px", padding:"0.05rem 0.3rem",
+                      textTransform:"uppercase", letterSpacing:"0.1em" }}>
+                      {opt.rarity}
+                    </span>
+                    {isArtifact && <span style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.48rem", fontFamily:"monospace" }}>ARTIFACT</span>}
+                  </div>
+                  <p style={{ color:"rgba(212,211,215,0.6)", fontSize:"0.62rem", margin:0, fontFamily:"monospace", lineHeight:1.5 }}>
+                    {opt.desc}
+                  </p>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Active artifacts mini-list */}
+        {artifacts.length > 0 && (
+          <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"0.6rem" }}>
+            <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.52rem", fontFamily:"monospace",
+              letterSpacing:"0.14em", margin:"0 0 0.35rem" }}>ACTIVE ARTIFACTS</p>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:"0.25rem" }}>
+              {artifacts.filter(id => !id.startsWith("_")).map(id => {
+                const def = ARTIFACT_DEFS.find(a => a.id === id)
+                if (!def) return null
+                return (
+                  <span key={id} style={{ color:ARTIFACT_RARITY_COLORS[def.rarity],
+                    fontSize:"0.52rem", fontFamily:"monospace",
+                    background:`rgba(${def.rarity === "legendary" ? "250,204,21" : def.rarity === "rare" ? "167,139,250" : "148,163,184"},0.08)`,
+                    border:`1px solid ${ARTIFACT_RARITY_COLORS[def.rarity]}33`,
+                    borderRadius:"3px", padding:"0.1rem 0.35rem" }}>
+                    {def.name}
+                  </span>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.55rem", textAlign:"center",
+          fontFamily:"monospace", margin:"0.8rem 0 0" }}>
+          1 · 2 · 3 select
+        </p>
+      </div>
     </div>
   )
 }
