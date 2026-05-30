@@ -5627,8 +5627,12 @@ function StationHeader({ label, sublabel }: { label: string; sublabel?: string }
   )
 }
 
+// Crew roster available for assignment (extensible as agents unlock)
+const CREW_ROSTER = ["capy", "player", null] as const
+type CrewOption = typeof CREW_ROSTER[number]
+
 // ── Ship Status Panel ──────────────────────────────────────────────────────
-function ShipStatusPanel({ hull, stations, activeStation, onSelectStation, liveG }: {
+function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSelectStation, liveG }: {
   hull: HullStatus
   stations: Station[]
   activeStation: StationId
@@ -5639,6 +5643,22 @@ function ShipStatusPanel({ hull, stations, activeStation, onSelectStation, liveG
   const hullCol     = hullPct > 60 ? "#4ade80" : hullPct > 30 ? "#facc15" : "#f87171"
   const hullBarW    = `${hullPct}%`
   const stationKeys: Record<StationId, string> = { bridge: "1", turret: "2", salvage: "3" }
+
+  // Local crew assignment state — cycles through roster on click
+  const [crewAssign, setCrewAssign] = useState<Record<StationId, CrewOption>>(() => {
+    const m: Record<string, CrewOption> = {}
+    initialStations.forEach(s => { m[s.id] = (s.assignedCrew ?? null) as CrewOption })
+    return m as Record<StationId, CrewOption>
+  })
+  function cycleCrew(stationId: StationId, e: React.MouseEvent) {
+    e.stopPropagation()  // don't also switch active station
+    setCrewAssign(prev => {
+      const cur = prev[stationId]
+      const idx = CREW_ROSTER.indexOf(cur)
+      const next = CREW_ROSTER[(idx + 1) % CREW_ROSTER.length]
+      return { ...prev, [stationId]: next }
+    })
+  }
 
   // Hull damage pulse — flashes red when lives drop
   const [hullDamaged, setHullDamaged] = useState(false)
@@ -5679,7 +5699,7 @@ function ShipStatusPanel({ hull, stations, activeStation, onSelectStation, liveG
         {/* Station list + crew */}
         <div style={{ display: "flex", flexDirection: "column", gap: "0.18rem" }}>
           <span style={{ color: "rgba(255,255,255,0.2)", fontSize: "0.52rem", letterSpacing: "0.14em", marginBottom: "0.06rem" }}>STATIONS</span>
-          {stations.map(s => {
+          {initialStations.map(s => {
             const active = s.id === activeStation
             return (
               <button key={s.id} onClick={() => onSelectStation(s.id)}
@@ -5695,9 +5715,22 @@ function ShipStatusPanel({ hull, stations, activeStation, onSelectStation, liveG
                   fontSize: "0.65rem", flex: 1, fontWeight: active ? 600 : 400 }}>
                   {s.name}
                 </span>
-                <span style={{ color: s.assignedCrew ? "rgba(74,222,128,0.75)" : "rgba(255,255,255,0.2)",
-                  fontSize: "0.55rem", fontStyle: s.assignedCrew ? "normal" : "italic" }}>
-                  [{crewLabel(s.assignedCrew)}]
+                <span
+                  onClick={e => cycleCrew(s.id, e)}
+                  title="click to reassign crew"
+                  style={{
+                    color: crewAssign[s.id] ? "rgba(74,222,128,0.75)" : "rgba(255,255,255,0.18)",
+                    fontSize: "0.53rem",
+                    fontStyle: crewAssign[s.id] ? "normal" : "italic",
+                    cursor: "pointer",
+                    padding: "0.05rem 0.25rem",
+                    borderRadius: "2px",
+                    border: "1px solid transparent",
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = "rgba(150,107,236,0.3)")}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = "transparent")}
+                >
+                  [{crewLabel(crewAssign[s.id])}]
                 </span>
               </button>
             )
@@ -5863,30 +5896,49 @@ function TurretStationView({ onFire, phase }: {
   onFire: (angle: number) => void
   phase: string
 }) {
-  const viewRef   = useRef<HTMLDivElement>(null)
-  const [angle, setAngle]    = useState(-Math.PI / 2)  // default: point up
-  const [firing, setFiring]  = useState(false)          // recoil flash state
+  const viewRef       = useRef<HTMLDivElement>(null)
+  const angleRef      = useRef(-Math.PI / 2)
+  const [angle, setAngle]     = useState(-Math.PI / 2)  // default: point up
+  const [firing, setFiring]   = useState(false)
+  const [held, setHeld]       = useState(false)
+  const holdIntervalRef       = useRef<ReturnType<typeof setInterval> | null>(null)
   const canFire = phase === "playing"
 
   function getAngleFromMouse(e: React.MouseEvent<HTMLDivElement>): number {
-    const el = viewRef.current; if (!el) return angle
+    const el = viewRef.current; if (!el) return angleRef.current
     const rect = el.getBoundingClientRect()
     return Math.atan2(e.clientY - (rect.top + rect.height / 2), e.clientX - (rect.left + rect.width / 2))
   }
 
-  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
-    setAngle(getAngleFromMouse(e))
-  }
-
-  function handleClick(e: React.MouseEvent<HTMLDivElement>) {
-    const a = getAngleFromMouse(e)
-    setAngle(a)
+  function triggerFire(a: number) {
     if (!canFire) return
     onFire(a)
-    // brief recoil flash
     setFiring(true)
     setTimeout(() => setFiring(false), 90)
   }
+
+  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    const a = getAngleFromMouse(e)
+    angleRef.current = a; setAngle(a)
+  }
+
+  function handleMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    if (e.button !== 0) return
+    const a = getAngleFromMouse(e); angleRef.current = a; setAngle(a)
+    setHeld(true); triggerFire(a)
+    // continuous fire while held — fires every 320ms (matches main turret rate-limit)
+    holdIntervalRef.current = setInterval(() => triggerFire(angleRef.current), 320)
+  }
+
+  function handleMouseUp() {
+    setHeld(false)
+    if (holdIntervalRef.current) { clearInterval(holdIntervalRef.current); holdIntervalRef.current = null }
+  }
+
+  // cleanup on unmount
+  useEffect(() => () => {
+    if (holdIntervalRef.current) clearInterval(holdIntervalRef.current)
+  }, [])
 
   // Barrel geometry
   const BARREL_LEN   = 32
@@ -5903,15 +5955,17 @@ function TurretStationView({ onFire, phase }: {
     <div>
       <div ref={viewRef}
         onMouseMove={handleMouseMove}
-        onClick={handleClick}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
         style={{
           position: "relative", height: "110px",
           display: "flex", alignItems: "center", justifyContent: "center",
           cursor: canFire ? "crosshair" : "not-allowed",
-          background: firing ? "rgba(167,139,250,0.06)" : "rgba(0,0,0,0.25)",
+          background: held ? "rgba(167,139,250,0.09)" : firing ? "rgba(167,139,250,0.06)" : "rgba(0,0,0,0.25)",
           borderRadius: "4px",
-          border: `1px solid ${firing ? "rgba(167,139,250,0.4)" : "rgba(150,107,236,0.12)"}`,
-          transition: "background 0.08s, border-color 0.08s",
+          border: `1px solid ${held || firing ? "rgba(167,139,250,0.45)" : "rgba(150,107,236,0.12)"}`,
+          transition: "background 0.06s, border-color 0.06s",
           userSelect: "none",
         }}>
 
@@ -5963,7 +6017,7 @@ function TurretStationView({ onFire, phase }: {
       {/* Fire hint */}
       <p style={{ color: canFire ? "rgba(150,107,236,0.45)" : "rgba(255,255,255,0.15)",
         fontSize: "0.52rem", margin: "0.35rem 0 0", fontFamily:"monospace", textAlign:"center" }}>
-        {canFire ? "click to fire · aim with mouse" : "launch mission to arm turret"}
+        {canFire ? "hold to fire · aim with mouse" : "launch mission to arm turret"}
       </p>
     </div>
   )
