@@ -45,10 +45,11 @@ const STATION_DEFS: Station[] = [
 ]
 
 // Crew display labels — extensible for AI agents and future players
-function crewLabel(crew: string | null | undefined): string {
-  if (!crew)          return "Empty"
+function crewLabel(crew: string | null | undefined, names?: Record<string, string>): string {
+  if (!crew)             return "Empty"
   if (crew === "capy")   return "Capy"
   if (crew === "player") return "Player"
+  if (names?.[crew])     return names[crew].replace("CLAUDE ", "")
   return crew.replace("claude_", "").toUpperCase()
 }
 
@@ -2770,6 +2771,8 @@ export default function HomePage() {
             activeStation={activeStation}
             onSelectStation={(sid) => { _stationState.active = sid; setActiveStation(sid) }}
             liveG={liveG}
+            unlockedAgents={unlockedAgents}
+            agentNames={agentNames}
           />
           <ActiveStationPanel
             activeStation={activeStation}
@@ -5691,35 +5694,39 @@ function StationHeader({ label, sublabel }: { label: string; sublabel?: string }
   )
 }
 
-// Crew roster available for assignment (extensible as agents unlock)
-const CREW_ROSTER = ["capy", "player", null] as const
-type CrewOption = typeof CREW_ROSTER[number]
+// Base crew roster — agents are added dynamically from unlockedAgents
+type CrewOption = string | null  // "capy" | "player" | agent_id | null
 
 // ── Ship Status Panel ──────────────────────────────────────────────────────
-function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSelectStation, liveG }: {
+function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSelectStation, liveG, unlockedAgents, agentNames }: {
   hull: HullStatus
   stations: Station[]
   activeStation: StationId
   onSelectStation: (id: StationId) => void
   liveG: LiveGSnapshot
+  unlockedAgents: string[]
+  agentNames: Record<string, string>
 }) {
   const hullPct     = Math.round((hull.currentHull / hull.maxHull) * 100)
   const hullCol     = hullPct > 60 ? "#4ade80" : hullPct > 30 ? "#facc15" : "#f87171"
   const hullBarW    = `${hullPct}%`
   const stationKeys: Record<StationId, string> = { bridge: "1", turret: "2", salvage: "3", engineering: "4" }
 
+  // Dynamic crew roster: capy + player + unlocked agents + empty
+  const crewRoster: CrewOption[] = ["capy", "player", ...unlockedAgents, null]
+
   // Local crew assignment state — cycles through roster on click
   const [crewAssign, setCrewAssign] = useState<Record<StationId, CrewOption>>(() => {
     const m: Record<string, CrewOption> = {}
-    initialStations.forEach(s => { m[s.id] = (s.assignedCrew ?? null) as CrewOption })
+    initialStations.forEach(s => { m[s.id] = s.assignedCrew ?? null })
     return m as Record<StationId, CrewOption>
   })
   function cycleCrew(stationId: StationId, e: React.MouseEvent) {
     e.stopPropagation()  // don't also switch active station
     setCrewAssign(prev => {
       const cur = prev[stationId]
-      const idx = CREW_ROSTER.indexOf(cur)
-      const next = CREW_ROSTER[(idx + 1) % CREW_ROSTER.length]
+      const idx = crewRoster.indexOf(cur)
+      const next = crewRoster[(idx + 1) % crewRoster.length]
       return { ...prev, [stationId]: next }
     })
   }
@@ -5794,7 +5801,7 @@ function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSel
                   onMouseEnter={e => (e.currentTarget.style.borderColor = "rgba(150,107,236,0.3)")}
                   onMouseLeave={e => (e.currentTarget.style.borderColor = "transparent")}
                 >
-                  [{crewLabel(crewAssign[s.id])}]
+                  [{crewLabel(crewAssign[s.id], agentNames)}]
                 </span>
               </button>
             )
@@ -5812,9 +5819,10 @@ function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSel
 // ── Ship Blueprint ─────────────────────────────────────────────────────────
 function ShipBlueprint({ activeStation }: { activeStation: StationId }) {
   const rooms: Array<{ id: StationId; label: string; icon: string }> = [
-    { id: "bridge",  label: "BRIDGE",  icon: "◈" },
-    { id: "turret",  label: "TURRET",  icon: "⊕" },
-    { id: "salvage", label: "SALVAGE", icon: "◇" },
+    { id: "bridge",      label: "BRIDGE",      icon: "◈" },
+    { id: "turret",      label: "TURRET",      icon: "⊕" },
+    { id: "salvage",     label: "SALVAGE",     icon: "◇" },
+    { id: "engineering", label: "ENGINEERING", icon: "⚙" },
   ]
   return (
     <div>
