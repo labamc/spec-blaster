@@ -17,6 +17,13 @@ const MAX_COMBO = 30          // combo display and multiplier cap
 
 type StationId = "bridge" | "turret" | "salvage"
 
+// Module-level station state — readable by the draw() function without prop drilling
+// Written by station component event handlers, read by the canvas renderer
+const _stationState = {
+  active:       "bridge" as StationId,
+  turretAngle:  -Math.PI / 2,  // pointing up by default
+}
+
 interface Station {
   id: StationId
   name: string
@@ -612,7 +619,12 @@ export default function HomePage() {
     const stationKeys: Record<string, StationId> = { "1": "bridge", "2": "turret", "3": "salvage" }
     const handler = (e: KeyboardEvent) => {
       if (phaseRef.current === "upgrade") return  // defer to CLIScreen
-      if (stationKeys[e.key]) { e.preventDefault(); setActiveStation(stationKeys[e.key]) }
+      if (stationKeys[e.key]) {
+        e.preventDefault()
+        const sid = stationKeys[e.key]
+        _stationState.active = sid
+        setActiveStation(sid)
+      }
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
@@ -2736,7 +2748,7 @@ export default function HomePage() {
             hull={{ maxHull: MAX_LIVES, currentHull: lives }}
             stations={STATION_DEFS}
             activeStation={activeStation}
-            onSelectStation={setActiveStation}
+            onSelectStation={(sid) => { _stationState.active = sid; setActiveStation(sid) }}
             liveG={liveG}
           />
           <ActiveStationPanel
@@ -4431,6 +4443,36 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.restore()
   }
 
+  // ── Turret station reticle — draws when turret station is active ──────────
+  if (!attractMode && _stationState.active === "turret") {
+    const ta  = _stationState.turretAngle
+    const REL = 55            // aiming line length from player
+    const tx  = g.px + Math.cos(ta) * REL
+    const ty  = (g.py - 5) + Math.sin(ta) * REL
+    ctx.save()
+    // aiming line from player toward target
+    ctx.setLineDash([4, 5])
+    ctx.strokeStyle = "rgba(167,139,250,0.35)"; ctx.lineWidth = 1
+    ctx.beginPath(); ctx.moveTo(g.px, g.py - 5); ctx.lineTo(tx, ty); ctx.stroke()
+    ctx.setLineDash([])
+    // reticle circle at tip
+    ctx.globalAlpha = 0.55 + 0.2 * Math.abs(Math.sin(now / 280))
+    ctx.strokeStyle = "#a78bfa"; ctx.lineWidth = 1.2
+    ctx.shadowColor = "#a78bfa"; ctx.shadowBlur = 6
+    ctx.beginPath(); ctx.arc(tx, ty, 7, 0, Math.PI * 2); ctx.stroke()
+    // crosshair ticks inside reticle
+    ctx.globalAlpha = 0.4
+    ctx.beginPath()
+    ctx.moveTo(tx - 4, ty); ctx.lineTo(tx + 4, ty)
+    ctx.moveTo(tx, ty - 4); ctx.lineTo(tx, ty + 4)
+    ctx.stroke()
+    // "TURRET" label next to reticle
+    ctx.globalAlpha = 0.45; ctx.shadowBlur = 0
+    ctx.fillStyle = "#c4b5fd"; ctx.font = "7px monospace"; ctx.textAlign = "left"
+    ctx.fillText("TUR", tx + 9, ty + 2)
+    ctx.restore()
+  }
+
   // HUD — depth/sector is the primary anchor, score is secondary
   ctx.textAlign = "left"
 
@@ -5921,7 +5963,7 @@ function TurretStationView({ onFire, phase }: {
 
   function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
     const a = getAngleFromMouse(e)
-    angleRef.current = a; setAngle(a)
+    angleRef.current = a; setAngle(a); _stationState.turretAngle = a
   }
 
   function handleMouseDown(e: React.MouseEvent<HTMLDivElement>) {
