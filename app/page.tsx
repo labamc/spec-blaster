@@ -23,6 +23,7 @@ const _stationState = {
   active:        "bridge" as StationId,
   turretAngle:   -Math.PI / 2,  // pointing up by default
   turretWeapon:  "standard" as "standard" | "triple" | "spray",
+  turretFiring:  false,          // true during muzzle flash window
   commsLog:      [] as string[],  // last 4 first-line capy message snippets
   sectorStart:   0,              // timestamp of current sector start (ms)
 }
@@ -4483,31 +4484,55 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
 
   // ── Turret station reticle — draws when turret station is active ──────────
   if (!attractMode && _stationState.active === "turret") {
-    const ta  = _stationState.turretAngle
-    const REL = 55            // aiming line length from player
+    const ta       = _stationState.turretAngle
+    const isFiring = _stationState.turretFiring
+    const REL      = 55            // aiming line length from player
     const tx  = g.px + Math.cos(ta) * REL
     const ty  = (g.py - 5) + Math.sin(ta) * REL
     ctx.save()
     // aiming line from player toward target
     ctx.setLineDash([4, 5])
-    ctx.strokeStyle = "rgba(167,139,250,0.35)"; ctx.lineWidth = 1
+    ctx.strokeStyle = isFiring ? "rgba(196,181,253,0.55)" : "rgba(167,139,250,0.3)"; ctx.lineWidth = 1
     ctx.beginPath(); ctx.moveTo(g.px, g.py - 5); ctx.lineTo(tx, ty); ctx.stroke()
     ctx.setLineDash([])
+    // muzzle flash ring when firing
+    if (isFiring) {
+      ctx.globalAlpha = 0.5; ctx.strokeStyle = "#e9d5ff"; ctx.lineWidth = 2
+      ctx.shadowColor = "#c4b5fd"; ctx.shadowBlur = 12
+      ctx.beginPath(); ctx.arc(tx, ty, 11, 0, Math.PI * 2); ctx.stroke()
+    }
     // reticle circle at tip
-    ctx.globalAlpha = 0.55 + 0.2 * Math.abs(Math.sin(now / 280))
-    ctx.strokeStyle = "#a78bfa"; ctx.lineWidth = 1.2
-    ctx.shadowColor = "#a78bfa"; ctx.shadowBlur = 6
+    ctx.globalAlpha = isFiring ? 0.9 : 0.5 + 0.18 * Math.abs(Math.sin(now / 280))
+    ctx.strokeStyle = isFiring ? "#e9d5ff" : "#a78bfa"; ctx.lineWidth = isFiring ? 1.8 : 1.2
+    ctx.shadowColor = isFiring ? "#e9d5ff" : "#a78bfa"; ctx.shadowBlur = isFiring ? 10 : 6
     ctx.beginPath(); ctx.arc(tx, ty, 7, 0, Math.PI * 2); ctx.stroke()
     // crosshair ticks inside reticle
-    ctx.globalAlpha = 0.4
+    ctx.globalAlpha = isFiring ? 0.7 : 0.38
     ctx.beginPath()
     ctx.moveTo(tx - 4, ty); ctx.lineTo(tx + 4, ty)
     ctx.moveTo(tx, ty - 4); ctx.lineTo(tx, ty + 4)
     ctx.stroke()
-    // "TURRET" label next to reticle
-    ctx.globalAlpha = 0.45; ctx.shadowBlur = 0
+    // "TUR" label next to reticle
+    ctx.globalAlpha = 0.4; ctx.shadowBlur = 0
     ctx.fillStyle = "#c4b5fd"; ctx.font = "7px monospace"; ctx.textAlign = "left"
     ctx.fillText("TUR", tx + 9, ty + 2)
+    ctx.restore()
+  }
+
+  // ── Active station corner badge ─────────────────────────────────────────
+  // Shows current station in canvas top-right when not on Bridge
+  if (!attractMode && _stationState.active !== "bridge") {
+    const stationLabels: Record<StationId, string> = {
+      bridge: "BRIDGE", turret: "TURRET", salvage: "SALVAGE", engineering: "ENGINEERING",
+    }
+    const badge = stationLabels[_stationState.active]
+    ctx.save()
+    ctx.globalAlpha = 0.5; ctx.fillStyle = "#0c0c16"
+    ctx.font = "7px monospace"; ctx.textAlign = "right"
+    const bw = ctx.measureText(badge).width + 10
+    ctx.fillRect(cw - bw - 2, 4, bw, 13)
+    ctx.globalAlpha = 0.55; ctx.fillStyle = "#a78bfa"
+    ctx.fillText(badge, cw - 7, 13)
     ctx.restore()
   }
 
@@ -6090,8 +6115,8 @@ function TurretStationView({ onFire, phase, liveG }: {
   function triggerFire(a: number) {
     if (!canFire) return
     onFire(a)
-    setFiring(true)
-    setTimeout(() => setFiring(false), 90)
+    setFiring(true); _stationState.turretFiring = true
+    setTimeout(() => { setFiring(false); _stationState.turretFiring = false }, 90)
   }
 
   function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
