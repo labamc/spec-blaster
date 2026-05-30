@@ -12,6 +12,37 @@ const MAX_WORDS_NORMAL = 8    // hard cap on words on-screen outside boss fight
 const MAX_WORDS_ENDLESS = 10  // endless allows a bit more pressure, still manageable
 const MAX_COMBO = 30          // combo display and multiplier cap
 
+// ── Ship Station System ────────────────────────────────────────────────────
+// Infrastructure only — no gameplay impact. All mechanics are future work.
+
+type StationId = "bridge" | "turret" | "salvage"
+
+interface Station {
+  id: StationId
+  name: string
+  assignedCrew?: string | null  // "capy" | "player" | agent id | null for empty
+}
+
+interface HullStatus {
+  maxHull: number
+  currentHull: number
+}
+
+// Canonical station list — add future stations here
+const STATION_DEFS: Station[] = [
+  { id: "bridge",  name: "Bridge",  assignedCrew: "capy"   },
+  { id: "turret",  name: "Turret",  assignedCrew: "player" },
+  { id: "salvage", name: "Salvage", assignedCrew: null      },
+]
+
+// Crew display labels — extensible for AI agents and future players
+function crewLabel(crew: string | null | undefined): string {
+  if (!crew)          return "Empty"
+  if (crew === "capy")   return "Capy"
+  if (crew === "player") return "Player"
+  return crew.replace("claude_", "").toUpperCase()
+}
+
 const BUG_WORDS = [
   "seamlessly","real-time","automatically","zero latency","scalable","robust",
   "synergy","leverage","intuitive","paradigm shift","world-class","cutting-edge",
@@ -529,6 +560,21 @@ export default function HomePage() {
   const [agentNames, setAgentNames] = useState<Record<string,string>>({})
   const [showAgentModule, setShowAgentModule] = useState(false)
   const unlockAgentRef = useRef<(id: string) => void>(() => {})
+
+  // ── Station system state ────────────────────────────────────────────────
+  const [activeStation, setActiveStation] = useState<StationId>("bridge")
+
+  // ── Station keyboard shortcuts (1/2/3) ─────────────────────────────────
+  // Disabled during "upgrade" phase where 1/2/3 already select upgrade cards
+  useEffect(() => {
+    const stationKeys: Record<string, StationId> = { "1": "bridge", "2": "turret", "3": "salvage" }
+    const handler = (e: KeyboardEvent) => {
+      if (phaseRef.current === "upgrade") return  // defer to CLIScreen
+      if (stationKeys[e.key]) { e.preventDefault(); setActiveStation(stationKeys[e.key]) }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [])
 
   // load leaderboard top + personal best on mount
   useEffect(() => {
@@ -2642,6 +2688,23 @@ export default function HomePage() {
 
           <canvas ref={canvasRef} height={GH} style={{ display:"block", width:"100%", height:GH, cursor:"crosshair" }} />
         </div>
+        {/* ── Ship Station Row ─────────────────────────────────────────────── */}
+        <div style={{ display:"flex", gap:"0.5rem", marginTop:"0.5rem" }}>
+          <ShipStatusPanel
+            hull={{ maxHull: MAX_LIVES, currentHull: lives }}
+            stations={STATION_DEFS}
+            activeStation={activeStation}
+            onSelectStation={setActiveStation}
+          />
+          <ActiveStationPanel
+            activeStation={activeStation}
+            lives={lives}
+            score={score}
+            level={level}
+            phase={phase}
+          />
+        </div>
+
         {isTouchDevice && phase === "playing" && (
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"0.4rem 0.2rem", marginTop:"0.3rem", gap:"0.4rem" }}>
             <div style={{ display:"flex", gap:"0.4rem" }}>
@@ -2656,7 +2719,7 @@ export default function HomePage() {
           </div>
         )}
         <div style={{ marginTop:"0.4rem", display:"flex", justifyContent:"space-between", fontSize:"0.65rem", padding:"0 2px" }}>
-          <span style={{ color:"rgba(255,255,255,0.2)", fontFamily:"monospace" }}>WASD / arrows move · SPACE or click shoot · mouse aim</span>
+          <span style={{ color:"rgba(255,255,255,0.2)", fontFamily:"monospace" }}>WASD / arrows move · SPACE or click shoot · mouse aim  ·  1/2/3 station</span>
           <a href="/leaderboard" style={{ color:"#966bec", textDecoration:"none", opacity:0.6, fontSize:"0.65rem" }}>leaderboard →</a>
         </div>
       </div>
@@ -5459,6 +5522,282 @@ function AgentModule({ unlocked, selected, onToggle, onClose }: {
         </div>
 
       </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ── Ship Station System Components ────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Shared panel shell ─────────────────────────────────────────────────────
+function StationShell({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return (
+    <div style={{
+      background: "#0c0c16",
+      border: "1px solid rgba(150,107,236,0.18)",
+      borderRadius: "6px",
+      fontFamily: "monospace",
+      overflow: "hidden",
+      ...style,
+    }}>
+      {children}
+    </div>
+  )
+}
+
+function StationHeader({ label, sublabel }: { label: string; sublabel?: string }) {
+  return (
+    <div style={{ padding: "0.4rem 0.75rem", borderBottom: "1px solid rgba(150,107,236,0.12)",
+      display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <span style={{ color: "rgba(150,107,236,0.8)", fontSize: "0.54rem", letterSpacing: "0.2em" }}>{label}</span>
+      {sublabel && <span style={{ color: "rgba(255,255,255,0.18)", fontSize: "0.52rem" }}>{sublabel}</span>}
+    </div>
+  )
+}
+
+// ── Ship Status Panel ──────────────────────────────────────────────────────
+function ShipStatusPanel({ hull, stations, activeStation, onSelectStation }: {
+  hull: HullStatus
+  stations: Station[]
+  activeStation: StationId
+  onSelectStation: (id: StationId) => void
+}) {
+  const hullPct     = Math.round((hull.currentHull / hull.maxHull) * 100)
+  const hullCol     = hullPct > 60 ? "#4ade80" : hullPct > 30 ? "#facc15" : "#f87171"
+  const hullBarW    = `${hullPct}%`
+  const stationKeys: Record<StationId, string> = { bridge: "1", turret: "2", salvage: "3" }
+
+  return (
+    <StationShell style={{ flex: "0 0 220px", minWidth: 0 }}>
+      <StationHeader label="SHIP STATUS" sublabel="THE SIGNAL" />
+      <div style={{ padding: "0.6rem 0.75rem", display: "flex", flexDirection: "column", gap: "0.55rem" }}>
+
+        {/* Hull integrity */}
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.22rem" }}>
+            <span style={{ color: "rgba(255,255,255,0.35)", fontSize: "0.56rem", letterSpacing: "0.1em" }}>HULL</span>
+            <span style={{ color: hullCol, fontSize: "0.58rem", fontWeight: 700 }}>{hullPct}%</span>
+          </div>
+          <div style={{ height: "4px", background: "rgba(255,255,255,0.07)", borderRadius: "2px" }}>
+            <div style={{ height: "100%", width: hullBarW, background: hullCol,
+              borderRadius: "2px", transition: "width 0.4s, background 0.4s",
+              boxShadow: `0 0 6px ${hullCol}66` }} />
+          </div>
+        </div>
+
+        {/* Station list + crew */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.18rem" }}>
+          <span style={{ color: "rgba(255,255,255,0.2)", fontSize: "0.52rem", letterSpacing: "0.14em", marginBottom: "0.06rem" }}>STATIONS</span>
+          {stations.map(s => {
+            const active = s.id === activeStation
+            return (
+              <button key={s.id} onClick={() => onSelectStation(s.id)}
+                style={{ display: "flex", alignItems: "center", gap: "0.5rem",
+                  background: active ? "rgba(150,107,236,0.1)" : "transparent",
+                  border: active ? "1px solid rgba(150,107,236,0.35)" : "1px solid transparent",
+                  borderRadius: "3px", padding: "0.22rem 0.4rem", cursor: "pointer",
+                  width: "100%", textAlign: "left" }}>
+                <span style={{ color: "rgba(255,255,255,0.14)", fontSize: "0.5rem", width: "0.65rem" }}>
+                  {stationKeys[s.id]}
+                </span>
+                <span style={{ color: active ? "#c4b5fd" : "rgba(255,255,255,0.45)",
+                  fontSize: "0.65rem", flex: 1, fontWeight: active ? 600 : 400 }}>
+                  {s.name}
+                </span>
+                <span style={{ color: s.assignedCrew ? "rgba(74,222,128,0.75)" : "rgba(255,255,255,0.2)",
+                  fontSize: "0.55rem", fontStyle: s.assignedCrew ? "normal" : "italic" }}>
+                  [{crewLabel(s.assignedCrew)}]
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Ship blueprint */}
+        <ShipBlueprint activeStation={activeStation} />
+
+      </div>
+    </StationShell>
+  )
+}
+
+// ── Ship Blueprint ─────────────────────────────────────────────────────────
+function ShipBlueprint({ activeStation }: { activeStation: StationId }) {
+  const rooms: Array<{ id: StationId; label: string; icon: string }> = [
+    { id: "bridge",  label: "BRIDGE",  icon: "◈" },
+    { id: "turret",  label: "TURRET",  icon: "⊕" },
+    { id: "salvage", label: "SALVAGE", icon: "◇" },
+  ]
+  return (
+    <div>
+      <span style={{ color: "rgba(255,255,255,0.2)", fontSize: "0.52rem", letterSpacing: "0.14em" }}>BLUEPRINT</span>
+      <div style={{ marginTop: "0.3rem", display: "flex", flexDirection: "column", gap: "0.18rem" }}>
+        {rooms.map(r => {
+          const active = r.id === activeStation
+          return (
+            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: "0.4rem",
+              padding: "0.18rem 0.35rem",
+              border: `1px solid ${active ? "rgba(150,107,236,0.45)" : "rgba(255,255,255,0.08)"}`,
+              borderRadius: "3px",
+              background: active ? "rgba(150,107,236,0.06)" : "transparent" }}>
+              <span style={{ color: active ? "#a78bfa" : "rgba(255,255,255,0.22)", fontSize: "0.6rem" }}>{r.icon}</span>
+              <span style={{ color: active ? "rgba(196,181,253,0.75)" : "rgba(255,255,255,0.2)", fontSize: "0.54rem", letterSpacing: "0.08em" }}>
+                {r.label}
+              </span>
+              {active && <span style={{ marginLeft: "auto", color: "rgba(150,107,236,0.6)", fontSize: "0.48rem" }}>ACTIVE</span>}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Active Station Panel ───────────────────────────────────────────────────
+function ActiveStationPanel({ activeStation, lives, score, level, phase }: {
+  activeStation: StationId
+  lives: number
+  score: number
+  level: number
+  phase: string
+}) {
+  return (
+    <StationShell style={{ flex: 1, minWidth: 0 }}>
+      <StationHeader
+        label={activeStation.toUpperCase()}
+        sublabel={activeStation === "bridge" ? "1" : activeStation === "turret" ? "2" : "3"}
+      />
+      <div style={{ padding: "0.5rem 0.75rem", height: "calc(100% - 2rem)" }}>
+        {activeStation === "bridge"  && <BridgeStationView phase={phase} level={level} score={score} />}
+        {activeStation === "turret"  && <TurretStationView />}
+        {activeStation === "salvage" && <SalvageStationView />}
+      </div>
+    </StationShell>
+  )
+}
+
+// ── Bridge Station ─────────────────────────────────────────────────────────
+function BridgeStationView({ phase, level, score }: { phase: string; level: number; score: number }) {
+  const sectorNames: Record<number, string> = {
+    1: "THE RECURSION", 2: "THE DRIFT", 3: "THE FRAGMENT", 4: "THE COLLAPSE",
+  }
+  const statusLine = phase === "playing" ? "NAVIGATION ONLINE"
+    : phase === "attract"              ? "AWAITING LAUNCH"
+    : phase === "over"                 ? "SIGNAL LOST"
+    : phase === "upgrade"              ? "SYSTEMS UPGRADE"
+    : "TRANSMISSION"
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem" }}>
+      <StatusRow label="BRIDGE" value="ACTIVE" valueCol="#4ade80" />
+      <StatusRow label="NAVIGATION" value={statusLine} valueCol={phase === "over" ? "#f87171" : "rgba(255,255,255,0.55)"} />
+      {phase === "playing" && (
+        <>
+          <StatusRow label="SECTOR" value={`${level} · ${sectorNames[level] ?? "THE VOID"}`} valueCol="rgba(196,181,253,0.75)" />
+          <StatusRow label="SCORE" value={score.toLocaleString()} valueCol="rgba(255,255,255,0.5)" />
+        </>
+      )}
+      <div style={{ marginTop: "0.35rem", borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "0.4rem" }}>
+        <span style={{ color: "rgba(255,255,255,0.12)", fontSize: "0.52rem", fontStyle: "italic" }}>
+          Future: crew management · navigation · tactical overview
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// ── Turret Station ─────────────────────────────────────────────────────────
+// MVP: rotating barrel that tracks the mouse within this viewport.
+// No firing, no damage integration — proof of concept only.
+function TurretStationView() {
+  const viewRef  = useRef<HTMLDivElement>(null)
+  const [angle, setAngle] = useState(-Math.PI / 2)  // default: pointing up
+
+  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    const el = viewRef.current; if (!el) return
+    const rect = el.getBoundingClientRect()
+    const cx = rect.left + rect.width  / 2
+    const cy = rect.top  + rect.height / 2
+    setAngle(Math.atan2(e.clientY - cy, e.clientX - cx))
+  }
+
+  // Barrel tip & length
+  const BARREL_LEN = 32
+  const tipX = Math.cos(angle) * BARREL_LEN
+  const tipY = Math.sin(angle) * BARREL_LEN
+
+  return (
+    <div ref={viewRef} onMouseMove={handleMouseMove}
+      style={{ position: "relative", height: "100px", display: "flex", alignItems: "center",
+        justifyContent: "center", cursor: "crosshair",
+        background: "rgba(0,0,0,0.25)", borderRadius: "4px",
+        border: "1px solid rgba(150,107,236,0.1)" }}>
+
+      {/* Range ring */}
+      <div style={{ position: "absolute",
+        width: "80px", height: "80px", borderRadius: "50%",
+        border: "1px solid rgba(150,107,236,0.18)" }} />
+      <div style={{ position: "absolute",
+        width: "48px", height: "48px", borderRadius: "50%",
+        border: "1px solid rgba(150,107,236,0.1)" }} />
+
+      {/* SVG turret */}
+      <svg width="120" height="100" style={{ position: "absolute", top: 0, left: "50%", transform: "translateX(-50%)", overflow: "visible" }}>
+        <g transform="translate(60,50)">
+          {/* Barrel */}
+          <line x1={0} y1={0} x2={tipX} y2={tipY}
+            stroke="#a78bfa" strokeWidth="2.5" strokeLinecap="round" />
+          {/* Barrel tip accent */}
+          <circle cx={tipX} cy={tipY} r="2.5" fill="#c4b5fd" />
+          {/* Base crosshair */}
+          <line x1={-18} y1={0} x2={18} y2={0} stroke="rgba(150,107,236,0.4)" strokeWidth="1" />
+          <line x1={0} y1={-18} x2={0} y2={18} stroke="rgba(150,107,236,0.4)" strokeWidth="1" />
+          {/* Pivot */}
+          <circle cx={0} cy={0} r="5" fill="#13131c" stroke="#966bec" strokeWidth="1.5" />
+          <circle cx={0} cy={0} r="2" fill="#a78bfa" />
+        </g>
+      </svg>
+
+      {/* Angle readout */}
+      <span style={{ position: "absolute", bottom: "0.25rem", right: "0.5rem",
+        color: "rgba(150,107,236,0.45)", fontSize: "0.5rem" }}>
+        {Math.round(((angle * 180 / Math.PI) + 360) % 360)}°
+      </span>
+      <span style={{ position: "absolute", bottom: "0.25rem", left: "0.5rem",
+        color: "rgba(255,255,255,0.14)", fontSize: "0.5rem", fontStyle: "italic" }}>
+        no fire · MVP
+      </span>
+    </div>
+  )
+}
+
+// ── Salvage Station ────────────────────────────────────────────────────────
+function SalvageStationView() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem" }}>
+      <StatusRow label="SALVAGE BAY" value="ACTIVE" valueCol="#4ade80" />
+      <StatusRow label="GRAPPLE SYSTEM" value="OFFLINE" valueCol="rgba(255,113,113,0.65)" />
+      <StatusRow label="CARGO HOLD" value="EMPTY" valueCol="rgba(255,255,255,0.3)" />
+      <div style={{ marginTop: "0.35rem", borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "0.4rem" }}>
+        <span style={{ color: "rgba(255,255,255,0.12)", fontSize: "0.52rem", fontStyle: "italic" }}>
+          Future: grapple hook · cargo recovery · rescue operations
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// ── Shared status row ──────────────────────────────────────────────────────
+function StatusRow({ label, value, valueCol }: { label: string; value: string; valueCol?: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.5rem" }}>
+      <span style={{ color: "rgba(255,255,255,0.25)", fontSize: "0.55rem", letterSpacing: "0.1em", flexShrink: 0 }}>
+        {label}
+      </span>
+      <span style={{ color: valueCol ?? "rgba(255,255,255,0.55)", fontSize: "0.62rem", fontWeight: 500, textAlign: "right" }}>
+        {value}
+      </span>
     </div>
   )
 }
