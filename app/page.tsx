@@ -15,13 +15,14 @@ const MAX_COMBO = 30          // combo display and multiplier cap
 // ── Ship Station System ────────────────────────────────────────────────────
 // Infrastructure only — no gameplay impact. All mechanics are future work.
 
-type StationId = "bridge" | "turret" | "salvage"
+type StationId = "bridge" | "turret" | "salvage" | "engineering"
 
 // Module-level station state — readable by the draw() function without prop drilling
 // Written by station component event handlers, read by the canvas renderer
 const _stationState = {
-  active:       "bridge" as StationId,
-  turretAngle:  -Math.PI / 2,  // pointing up by default
+  active:        "bridge" as StationId,
+  turretAngle:   -Math.PI / 2,  // pointing up by default
+  turretWeapon:  "standard" as "standard" | "triple" | "spray",
 }
 
 interface Station {
@@ -37,9 +38,10 @@ interface HullStatus {
 
 // Canonical station list — add future stations here
 const STATION_DEFS: Station[] = [
-  { id: "bridge",  name: "Bridge",  assignedCrew: "capy"   },
-  { id: "turret",  name: "Turret",  assignedCrew: "player" },
-  { id: "salvage", name: "Salvage", assignedCrew: null      },
+  { id: "bridge",      name: "Bridge",      assignedCrew: "capy"   },
+  { id: "turret",      name: "Turret",      assignedCrew: "player" },
+  { id: "salvage",     name: "Salvage",     assignedCrew: null      },
+  { id: "engineering", name: "Engineering", assignedCrew: null      },
 ]
 
 // Crew display labels — extensible for AI agents and future players
@@ -578,9 +580,10 @@ export default function HomePage() {
     bossHpPct: null as number | null, bossName: null as string | null,
     capyMsg: "",
     wordCount: 0,
-    // Simplified word positions: [{xPct, yPct, isBug}] for threat radar
     wordDots: [] as Array<{ x: number; y: number; bug: boolean }>,
     bossX: null as number | null, bossY: null as number | null,
+    upgrades: {} as Record<string, number>,
+    shield: false,
   })
   useEffect(() => {
     const id = setInterval(() => {
@@ -596,13 +599,15 @@ export default function HomePage() {
         wordDots:    g.words.slice(0, 20).map(w => ({ x: w.x / (g.W || GW), y: w.y / GH, bug: w.type === "bug" })),
         bossX:       g.boss ? g.boss.x / (g.W || GW) : null,
         bossY:       g.boss ? g.boss.y / GH : null,
+        upgrades:    { ...g.upgrades },
+        shield:      g.shield,
       })
     }, 150)
     return () => clearInterval(id)
   }, [])
 
   // Turret fire — fires from player position at turret barrel angle
-  // Rate-limited to ~300ms; does nothing if game isn't running
+  // Rate-limited to ~300ms; weapon mode reads from _stationState.turretWeapon
   const turretLastFire = useRef(0)
   function onTurretFire(angle: number) {
     const g = G.current
@@ -611,20 +616,27 @@ export default function HomePage() {
     if (now - turretLastFire.current < 300) return
     turretLastFire.current = now
     const SPEED = 10
-    g.bullets.push({
-      x:   g.px,
-      y:   g.py - 20,
-      vx:  Math.cos(angle) * SPEED,
-      vy:  Math.sin(angle) * SPEED,
-      kind: "turret",
-      col: "#a78bfa",
-    })
+    const weapon = _stationState.turretWeapon
+    const base = { kind: "turret" as const, col: "#a78bfa" }
+    if (weapon === "triple" && (g.upgrades.triple ?? 0) >= 1) {
+      // 3-bolt spread around the aimed angle
+      for (const spread of [-0.22, 0, 0.22]) {
+        g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(angle + spread) * SPEED, vy: Math.sin(angle + spread) * SPEED, ...base })
+      }
+    } else if (weapon === "spray" && (g.upgrades.spray ?? 0) >= 1) {
+      // 5-bolt wide arc
+      for (let i = -2; i <= 2; i++) {
+        g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(angle + i * 0.28) * SPEED, vy: Math.sin(angle + i * 0.28) * SPEED, ...base })
+      }
+    } else {
+      g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(angle) * SPEED, vy: Math.sin(angle) * SPEED, ...base })
+    }
   }
 
   // ── Station keyboard shortcuts (1/2/3) ─────────────────────────────────
   // Disabled during "upgrade" phase where 1/2/3 already select upgrade cards
   useEffect(() => {
-    const stationKeys: Record<string, StationId> = { "1": "bridge", "2": "turret", "3": "salvage" }
+    const stationKeys: Record<string, StationId> = { "1": "bridge", "2": "turret", "3": "salvage", "4": "engineering" }
     const handler = (e: KeyboardEvent) => {
       if (phaseRef.current === "upgrade") return  // defer to CLIScreen
       if (stationKeys[e.key]) {
@@ -2784,7 +2796,7 @@ export default function HomePage() {
           </div>
         )}
         <div style={{ marginTop:"0.4rem", display:"flex", justifyContent:"space-between", fontSize:"0.65rem", padding:"0 2px" }}>
-          <span style={{ color:"rgba(255,255,255,0.2)", fontFamily:"monospace" }}>WASD / arrows move · SPACE or click shoot · mouse aim  ·  1/2/3 station</span>
+          <span style={{ color:"rgba(255,255,255,0.2)", fontFamily:"monospace" }}>WASD / arrows move · SPACE or click shoot · mouse aim  ·  1-4 station</span>
           <a href="/leaderboard" style={{ color:"#966bec", textDecoration:"none", opacity:0.6, fontSize:"0.65rem" }}>leaderboard →</a>
         </div>
       </div>
@@ -5694,7 +5706,7 @@ function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSel
   const hullPct     = Math.round((hull.currentHull / hull.maxHull) * 100)
   const hullCol     = hullPct > 60 ? "#4ade80" : hullPct > 30 ? "#facc15" : "#f87171"
   const hullBarW    = `${hullPct}%`
-  const stationKeys: Record<StationId, string> = { bridge: "1", turret: "2", salvage: "3" }
+  const stationKeys: Record<StationId, string> = { bridge: "1", turret: "2", salvage: "3", engineering: "4" }
 
   // Local crew assignment state — cycles through roster on click
   const [crewAssign, setCrewAssign] = useState<Record<StationId, CrewOption>>(() => {
@@ -5836,6 +5848,8 @@ type LiveGSnapshot = {
   wordCount: number
   wordDots: Array<{ x: number; y: number; bug: boolean }>
   bossX: number | null; bossY: number | null
+  upgrades: Record<string, number>
+  shield: boolean
 }
 
 function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, onTurretFire }: {
@@ -5851,12 +5865,13 @@ function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, 
     <StationShell style={{ flex: 1, minWidth: 0 }}>
       <StationHeader
         label={activeStation.toUpperCase()}
-        sublabel={activeStation === "bridge" ? "1" : activeStation === "turret" ? "2" : "3"}
+        sublabel={activeStation === "bridge" ? "1" : activeStation === "turret" ? "2" : activeStation === "salvage" ? "3" : "4"}
       />
       <div style={{ padding: "0.5rem 0.75rem" }}>
-        {activeStation === "bridge"  && <BridgeStationView phase={phase} level={level} score={score} liveG={liveG} />}
-        {activeStation === "turret"  && <TurretStationView onFire={onTurretFire} phase={phase} />}
-        {activeStation === "salvage" && <SalvageStationView liveG={liveG} score={score} phase={phase} />}
+        {activeStation === "bridge"      && <BridgeStationView phase={phase} level={level} score={score} liveG={liveG} />}
+        {activeStation === "turret"      && <TurretStationView onFire={onTurretFire} phase={phase} liveG={liveG} />}
+        {activeStation === "salvage"     && <SalvageStationView liveG={liveG} score={score} phase={phase} />}
+        {activeStation === "engineering" && <EngineeringStationView liveG={liveG} phase={phase} />}
       </div>
     </StationShell>
   )
@@ -5990,9 +6005,10 @@ function BridgeStationView({ phase, level, score, liveG }: {
 
 // ── Turret Station ─────────────────────────────────────────────────────────
 // Rotating barrel tracks mouse. Click to fire into the main battlefield.
-function TurretStationView({ onFire, phase }: {
+function TurretStationView({ onFire, phase, liveG }: {
   onFire: (angle: number) => void
   phase: string
+  liveG: LiveGSnapshot
 }) {
   const viewRef       = useRef<HTMLDivElement>(null)
   const angleRef      = useRef(-Math.PI / 2)
@@ -6001,6 +6017,18 @@ function TurretStationView({ onFire, phase }: {
   const [held, setHeld]       = useState(false)
   const holdIntervalRef       = useRef<ReturnType<typeof setInterval> | null>(null)
   const canFire = phase === "playing"
+
+  // Weapon mode — locked to what the player has unlocked
+  const [weaponMode, setWeaponMode] = useState<"standard" | "triple" | "spray">("standard")
+  const availableWeapons = [
+    { id: "standard" as const, label: "STD",    available: true },
+    { id: "triple"   as const, label: "TRI ×3", available: (liveG.upgrades.triple ?? 0) >= 1 },
+    { id: "spray"    as const, label: "SRY ×5", available: (liveG.upgrades.spray  ?? 0) >= 1 },
+  ].filter(w => w.available)
+
+  function selectWeapon(id: "standard" | "triple" | "spray") {
+    setWeaponMode(id); _stationState.turretWeapon = id
+  }
 
   function getAngleFromMouse(e: React.MouseEvent<HTMLDivElement>): number {
     const el = viewRef.current; if (!el) return angleRef.current
@@ -6113,8 +6141,27 @@ function TurretStationView({ onFire, phase }: {
       </div>
 
       {/* Fire hint */}
+      {/* Weapon mode selector */}
+      {availableWeapons.length > 1 && (
+        <div style={{ display:"flex", gap:"0.3rem", marginTop:"0.35rem" }}>
+          <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", lineHeight:"1.6rem", whiteSpace:"nowrap" }}>WEAPON</span>
+          <div style={{ display:"flex", gap:"0.2rem", flex:1 }}>
+            {availableWeapons.map(w => (
+              <button key={w.id} onClick={() => selectWeapon(w.id)}
+                style={{ flex:1, background: weaponMode === w.id ? "rgba(150,107,236,0.2)" : "transparent",
+                  border:`1px solid ${weaponMode === w.id ? "rgba(150,107,236,0.55)" : "rgba(255,255,255,0.1)"}`,
+                  borderRadius:"3px", padding:"0.15rem 0", cursor:"pointer",
+                  color: weaponMode === w.id ? "#c4b5fd" : "rgba(255,255,255,0.35)",
+                  fontSize:"0.52rem", fontFamily:"monospace" }}>
+                {w.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <p style={{ color: canFire ? "rgba(150,107,236,0.45)" : "rgba(255,255,255,0.15)",
-        fontSize: "0.52rem", margin: "0.35rem 0 0", fontFamily:"monospace", textAlign:"center" }}>
+        fontSize: "0.52rem", margin: "0.3rem 0 0", fontFamily:"monospace", textAlign:"center" }}>
         {canFire ? "hold to fire · aim with mouse" : "launch mission to arm turret"}
       </p>
     </div>
@@ -6145,6 +6192,67 @@ function SalvageStationView({ liveG, score, phase }: {
       <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "0.35rem", marginTop: "0.1rem" }}>
         <span style={{ color: "rgba(255,255,255,0.12)", fontSize: "0.52rem", fontStyle: "italic" }}>
           Future: grapple hook · cargo recovery · rescue
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// ── Engineering Station ────────────────────────────────────────────────────
+function EngineeringStationView({ liveG, phase }: { liveG: LiveGSnapshot; phase: string }) {
+  const installedUpgrades = UPGRADES.filter(u => (liveG.upgrades[u.id] ?? 0) > 0)
+  const systemCount = installedUpgrades.length
+  const shieldOnline = (liveG.upgrades.shield_regen ?? 0) >= 1
+
+  // System status color
+  function sysCol(id: string): string {
+    if (id === "shield_regen") return liveG.shield ? "#4ade80" : "rgba(255,255,255,0.45)"
+    return "#4ade80"
+  }
+  function sysStatus(id: string): string {
+    if (id === "shield_regen") return liveG.shield ? "ACTIVE" : "STANDBY"
+    return "ONLINE"
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:"0.45rem" }}>
+      <StatusRow label="ENGINEERING" value="ACTIVE" valueCol="#4ade80" />
+      <StatusRow label="SYSTEMS ONLINE" value={`${systemCount}`} valueCol={systemCount > 0 ? "#c4b5fd" : "rgba(255,255,255,0.3)"} />
+      {shieldOnline && (
+        <StatusRow label="ADAPTIVE FIREWALL" value={liveG.shield ? "ACTIVE ◈" : "STANDBY"} valueCol={liveG.shield ? "#4ade80" : "rgba(255,255,255,0.4)"} />
+      )}
+
+      {/* Installed systems list */}
+      {phase === "playing" && installedUpgrades.length > 0 && (
+        <div style={{ borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:"0.35rem", marginTop:"0.05rem" }}>
+          <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", letterSpacing:"0.12em" }}>INSTALLED SYSTEMS</span>
+          <div style={{ display:"flex", flexDirection:"column", gap:"0.12rem", marginTop:"0.3rem" }}>
+            {installedUpgrades.map(u => {
+              const lv = liveG.upgrades[u.id] ?? 0
+              return (
+                <div key={u.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ color:"rgba(196,181,253,0.65)", fontSize:"0.58rem" }}>
+                    {u.name}{lv > 1 ? ` ×${lv}` : ""}
+                  </span>
+                  <span style={{ color: sysCol(u.id), fontSize:"0.52rem", letterSpacing:"0.06em" }}>
+                    {sysStatus(u.id)}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {phase === "playing" && installedUpgrades.length === 0 && (
+        <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.56rem", margin:"0.2rem 0", fontStyle:"italic" }}>
+          No systems installed — survive a sector to upgrade.
+        </p>
+      )}
+
+      <div style={{ borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:"0.35rem", marginTop:"0.05rem" }}>
+        <span style={{ color:"rgba(255,255,255,0.12)", fontSize:"0.52rem", fontStyle:"italic" }}>
+          Future: repair · power allocation · module swap
         </span>
       </div>
     </div>
