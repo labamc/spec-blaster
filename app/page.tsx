@@ -22,7 +22,7 @@ type StationId = "bridge" | "turret" | "salvage" | "engineering"
 const _stationState = {
   active:           "bridge" as StationId,
   turretAngle:      -Math.PI / 2,
-  turretWeapon:     "standard" as "standard" | "triple" | "spray",
+  turretWeapon:     "pulse" as "pulse" | "triple" | "spray" | "flak" | "grapple",
   turretFiring:     false,
   commsLog:         [] as string[],
   sectorStart:      0,
@@ -658,19 +658,57 @@ export default function HomePage() {
     turretLastFire.current = now
     const SPEED = 10
     const weapon = _stationState.turretWeapon
-    const base = { kind: "turret" as const, col: "#a78bfa" }
-    if (weapon === "triple" && (g.upgrades.triple ?? 0) >= 1) {
-      // 3-bolt spread around the aimed angle
+    const base = { kind: "turret" as const }
+
+    if (weapon === "flak") {
+      // Flak Cannon — 7 bolts in a 90° arc, always available, slower rate
+      if (now - turretLastFire.current < 500) return  // flak is slower
+      for (let i = -3; i <= 3; i++) {
+        const spread = i * 0.22
+        g.bullets.push({ x: g.px, y: g.py - 20,
+          vx: Math.cos(angle + spread) * (SPEED - 1.5), vy: Math.sin(angle + spread) * (SPEED - 1.5),
+          col: "#fdba74", ...base })
+      }
+    } else if (weapon === "grapple") {
+      // Grapple Launcher — fires a hook that collects nearest salvage in that direction
+      if (now - turretLastFire.current < 600) return
+      const nearSalvage = g.salvage.filter(s => {
+        const itemAngle = Math.atan2(s.y - g.py, s.x - g.px)
+        const angleDiff = Math.abs(((itemAngle - angle) + Math.PI * 3) % (Math.PI * 2) - Math.PI)
+        return angleDiff < 0.4  // within ~23° of aim
+      })
+      if (nearSalvage.length > 0) {
+        // Collect the closest one in that direction
+        const target = nearSalvage.reduce((a, b) =>
+          Math.hypot(b.x - g.px, b.y - g.py) < Math.hypot(a.x - g.px, a.y - g.py) ? b : a)
+        g.salvage = g.salvage.filter(s => s.id !== target.id)
+        const bonus = target.type === "artifact" ? 500 : target.type === "fragment" ? 150 : 50
+        g.score += bonus; g.salvageCollected++
+        g.particles.push({ x: target.x, y: target.y, vx: 0, vy: -0.9, life: 1.4,
+          glyph: `⬡ +${bonus}`, col: "#4ade80", sz: 10, gravity: 0 })
+        setScore(g.score)
+      }
+      // Also fire a visible hook bolt for feedback
+      g.bullets.push({ x: g.px, y: g.py - 20,
+        vx: Math.cos(angle) * 12, vy: Math.sin(angle) * 12,
+        col: "#4ade80", ...base })
+    } else if (weapon === "triple" && (g.upgrades.triple ?? 0) >= 1) {
       for (const spread of [-0.22, 0, 0.22]) {
-        g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(angle + spread) * SPEED, vy: Math.sin(angle + spread) * SPEED, ...base })
+        g.bullets.push({ x: g.px, y: g.py - 20,
+          vx: Math.cos(angle + spread) * SPEED, vy: Math.sin(angle + spread) * SPEED,
+          col: "#a78bfa", ...base })
       }
     } else if (weapon === "spray" && (g.upgrades.spray ?? 0) >= 1) {
-      // 5-bolt wide arc
       for (let i = -2; i <= 2; i++) {
-        g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(angle + i * 0.28) * SPEED, vy: Math.sin(angle + i * 0.28) * SPEED, ...base })
+        g.bullets.push({ x: g.px, y: g.py - 20,
+          vx: Math.cos(angle + i * 0.28) * SPEED, vy: Math.sin(angle + i * 0.28) * SPEED,
+          col: "#a78bfa", ...base })
       }
     } else {
-      g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(angle) * SPEED, vy: Math.sin(angle) * SPEED, ...base })
+      // Pulse Cannon (default)
+      g.bullets.push({ x: g.px, y: g.py - 20,
+        vx: Math.cos(angle) * SPEED, vy: Math.sin(angle) * SPEED,
+        col: "#a78bfa", ...base })
     }
   }
 
@@ -4148,14 +4186,15 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
         ctx.beginPath(); ctx.arc(b.x, b.y, 3, 0, Math.PI*2); ctx.fill()
         ctx.restore()
       } else if (b.kind === "turret") {
-        // turret bolt — oriented along travel direction, violet plasma streak
+        // turret bolt — color-coded by weapon type
+        const boltCol  = b.col ?? "#a78bfa"
         const bAng = Math.atan2(b.vy ?? -9, b.vx ?? 0)
-        const bLen = 14
+        const bLen = boltCol === "#4ade80" ? 18 : 14  // grapple hook is longer
         const tx = Math.cos(bAng) * bLen, ty = Math.sin(bAng) * bLen
         ctx.save()
-        ctx.shadowColor = "#a78bfa"; ctx.shadowBlur = 10
-        // glow trail (opposite direction)
-        ctx.globalAlpha = 0.2; ctx.strokeStyle = "#7c3aed"; ctx.lineWidth = 3
+        ctx.shadowColor = boltCol; ctx.shadowBlur = boltCol === "#fdba74" ? 7 : 10
+        // glow trail
+        ctx.globalAlpha = 0.2; ctx.strokeStyle = boltCol; ctx.lineWidth = boltCol === "#fdba74" ? 4 : 3
         ctx.lineCap = "round"
         ctx.beginPath(); ctx.moveTo(b.x - tx * 0.6, b.y - ty * 0.6); ctx.lineTo(b.x - tx, b.y - ty); ctx.stroke()
         // main bolt
@@ -4163,11 +4202,11 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
         try {
           const bg = ctx.createLinearGradient(b.x - tx, b.y - ty, b.x + tx * 0.3, b.y + ty * 0.3)
           bg.addColorStop(0, "rgba(0,0,0,0)")
-          bg.addColorStop(0.5, "#a78bfa")
+          bg.addColorStop(0.5, boltCol)
           bg.addColorStop(1, "#ffffff")
           ctx.strokeStyle = bg
-        } catch { ctx.strokeStyle = "#a78bfa" }
-        ctx.lineWidth = 2.5
+        } catch { ctx.strokeStyle = boltCol }
+        ctx.lineWidth = boltCol === "#fdba74" ? 3 : 2.5
         ctx.beginPath(); ctx.moveTo(b.x - tx, b.y - ty); ctx.lineTo(b.x + tx * 0.3, b.y + ty * 0.3); ctx.stroke()
         // hot tip
         ctx.globalAlpha = 0.9; ctx.fillStyle = "#e9d5ff"
@@ -6414,15 +6453,18 @@ function TurretStationView({ onFire, phase, liveG }: {
   const holdIntervalRef       = useRef<ReturnType<typeof setInterval> | null>(null)
   const canFire = phase === "playing"
 
-  // Weapon mode — locked to what the player has unlocked
-  const [weaponMode, setWeaponMode] = useState<"standard" | "triple" | "spray">("standard")
+  // Weapon mode — always have pulse + flak; others require upgrades
+  const [weaponMode, setWeaponMode] = useState<typeof _stationState.turretWeapon>("pulse")
+  const hasSalvage = liveG.salvageCount > 0
   const availableWeapons = [
-    { id: "standard" as const, label: "STD",    available: true },
-    { id: "triple"   as const, label: "TRI ×3", available: (liveG.upgrades.triple ?? 0) >= 1 },
-    { id: "spray"    as const, label: "SRY ×5", available: (liveG.upgrades.spray  ?? 0) >= 1 },
-  ].filter(w => w.available)
+    { id: "pulse"   as const, label: "PULSE",      desc: "single bolt",      available: true },
+    { id: "flak"    as const, label: "FLAK ×7",    desc: "wide burst",       available: true },
+    { id: "triple"  as const, label: "TRI ×3",     desc: "tight spread",     available: (liveG.upgrades.triple ?? 0) >= 1 },
+    { id: "spray"   as const, label: "SPRAY ×5",   desc: "wide spread",      available: (liveG.upgrades.spray  ?? 0) >= 1 },
+    { id: "grapple" as const, label: "GRAPPLE",    desc: `${liveG.salvageCount} debris`, available: true },
+  ]
 
-  function selectWeapon(id: "standard" | "triple" | "spray") {
+  function selectWeapon(id: typeof _stationState.turretWeapon) {
     setWeaponMode(id); _stationState.turretWeapon = id
   }
 
@@ -6538,23 +6580,29 @@ function TurretStationView({ onFire, phase, liveG }: {
 
       {/* Fire hint */}
       {/* Weapon mode selector */}
-      {availableWeapons.length > 1 && (
-        <div style={{ display:"flex", gap:"0.3rem", marginTop:"0.35rem" }}>
-          <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", lineHeight:"1.6rem", whiteSpace:"nowrap" }}>WEAPON</span>
-          <div style={{ display:"flex", gap:"0.2rem", flex:1 }}>
-            {availableWeapons.map(w => (
+      {/* Weapon selector */}
+      <div style={{ marginTop:"0.35rem" }}>
+        <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", letterSpacing:"0.1em" }}>WEAPON SYSTEM</span>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:"0.22rem", marginTop:"0.2rem" }}>
+          {availableWeapons.map(w => {
+            const isActive  = weaponMode === w.id
+            const isGrapple = w.id === "grapple"
+            const hasDebris = isGrapple && liveG.salvageCount > 0
+            return (
               <button key={w.id} onClick={() => selectWeapon(w.id)}
-                style={{ flex:1, background: weaponMode === w.id ? "rgba(150,107,236,0.2)" : "transparent",
-                  border:`1px solid ${weaponMode === w.id ? "rgba(150,107,236,0.55)" : "rgba(255,255,255,0.1)"}`,
-                  borderRadius:"3px", padding:"0.15rem 0", cursor:"pointer",
-                  color: weaponMode === w.id ? "#c4b5fd" : "rgba(255,255,255,0.35)",
-                  fontSize:"0.52rem", fontFamily:"monospace" }}>
-                {w.label}
+                style={{ background: isActive ? (isGrapple ? "rgba(74,222,128,0.15)" : "rgba(150,107,236,0.2)") : "transparent",
+                  border:`1px solid ${isActive ? (isGrapple ? "rgba(74,222,128,0.5)" : "rgba(150,107,236,0.5)") : hasDebris ? "rgba(74,222,128,0.25)" : "rgba(255,255,255,0.1)"}`,
+                  borderRadius:"3px", padding:"0.12rem 0.3rem", cursor:"pointer",
+                  color: isActive ? (isGrapple ? "#4ade80" : "#c4b5fd") : hasDebris ? "rgba(74,222,128,0.7)" : "rgba(255,255,255,0.35)",
+                  fontSize:"0.5rem", fontFamily:"monospace",
+                  display:"flex", flexDirection:"column", alignItems:"center", gap:"0.02rem" }}>
+                <span style={{ fontSize:"0.52rem", fontWeight: isActive ? 700 : 400 }}>{w.label}</span>
+                <span style={{ fontSize:"0.44rem", opacity:0.6 }}>{w.desc}</span>
               </button>
-            ))}
-          </div>
+            )
+          })}
         </div>
-      )}
+      </div>
 
       <p style={{ color: canFire ? "rgba(150,107,236,0.45)" : "rgba(255,255,255,0.15)",
         fontSize: "0.52rem", margin: "0.3rem 0 0", fontFamily:"monospace", textAlign:"center" }}>
