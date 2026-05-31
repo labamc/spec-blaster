@@ -853,8 +853,11 @@ interface GState {
   archiveBoss:           { name: string; color: string; hp: number; phase: number } | null
   archiveDepth:          number
   archiveCorruption:     CorruptionId | null
-  archiveInstability:    number   // recursive_collapse: increases per kill
-  archiveLastRadarDmg:   number   // radar_degradation: timestamp of last auto-damage
+  archiveInstability:        number
+  archiveLastRadarDmg:       number
+  archiveRateLimitCount:     number   // packet_loss: shots fired in current window
+  archiveRateLimitWindowEnd: number   // packet_loss: window expiry timestamp
+  archiveCachedWords:        Array<{ text: string; type: Word["type"]; respawnAt: number }>
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -898,6 +901,7 @@ function initState(W: number): GState {
     engineeringPoolBonus: 0, crewStats: {}, defeatedBosses: [],
     archiveMode: false, archiveNodeId: null, archiveNodeWords: [], archiveBoss: null,
     archiveDepth: 0, archiveCorruption: null, archiveInstability: 0, archiveLastRadarDmg: 0,
+    archiveRateLimitCount: 0, archiveRateLimitWindowEnd: 0, archiveCachedWords: [],
   }
 }
 
@@ -1763,7 +1767,23 @@ export default function HomePage() {
 
       // Normal shoot (suppressed if laser has been held > 300ms)
       const laserCharging = g.upgrades.laser && g.laserChargeStart > 0 && (now - g.laserChargeStart) > 300
-      if (!laserCharging && g.keys.has(" ") && now - g.lastShot > fireInterval) {
+      // API GATEWAY corruption: rate limiting — bursts of >3 shots in 600ms window are throttled
+      let rateLimited = false
+      if (g.archiveCorruption === "packet_loss") {
+        if (now > g.archiveRateLimitWindowEnd) {
+          g.archiveRateLimitCount = 0; g.archiveRateLimitWindowEnd = now + 600
+        }
+        if (g.archiveRateLimitCount >= 3) {
+          rateLimited = true
+          if (g.keys.has(" ") && now - g.lastShot > fireInterval) {
+            g.lastShot = now  // consume the fire interval so the player tries again
+            g.particles.push({ x: g.px, y: g.py - 28, vx: 0, vy: -0.9, life: 0.7,
+              glyph: "RATE LIMITED", col: "#fb923c", sz: 9, gravity: 0 })
+          }
+        }
+      }
+      if (!rateLimited && !laserCharging && g.keys.has(" ") && now - g.lastShot > fireInterval) {
+        if (g.archiveCorruption === "packet_loss") g.archiveRateLimitCount++
         if (g.upgrades.spray) {
           for (let a = -2; a <= 2; a++)
             g.bullets.push({ x: g.px + a * 10, y: g.py - 20, vx: a * 0.8, kind: "spray" })
@@ -2516,6 +2536,24 @@ export default function HomePage() {
         return p.life > 0
       })
 
+      // CACHE: cached word respawns — data_staleness serves stale kills back from cache
+      if (g.archiveCachedWords.length > 0) {
+        const toRespawn = g.archiveCachedWords.filter(c => now >= c.respawnAt)
+        if (toRespawn.length > 0) {
+          g.archiveCachedWords = g.archiveCachedWords.filter(c => now < c.respawnAt)
+          toRespawn.forEach(c => {
+            if (g.words.length < MAX_WORDS_NORMAL + 2) {  // cap so it's not overwhelming
+              const ox = 30 + Math.random() * (g.W - 60)
+              g.words.push({ x: ox, y: -18, text: c.text, type: c.type,
+                spd: (0.62 + g.level * 0.16) * 0.85, beh: "fall",
+                ph: 0, ox, hp: 1, hitFlash: 0, elite: false, age: 0, id: g.nextWordId++ })
+              g.particles.push({ x: ox, y: 10, vx: 0, vy: 0.4, life: 1.4,
+                glyph: "SERVED FROM CACHE", col: "#94a3b8", sz: 9, gravity: 0 })
+            }
+          })
+        }
+      }
+
       // salvage item physics — drift upward slowly, despawn after life expires
       g.salvage = g.salvage.filter(s => {
         s.x += s.vx; s.y += s.vy
@@ -2619,6 +2657,11 @@ export default function HomePage() {
                 if (frag1) g.words.push({ ...w, text: frag1, x: w.x - 18, hp: 1, hitFlash: 0, beh: "fall", spd: fragSpd, id: g.nextWordId++, age: 3, fragment: true })
                 if (frag2) g.words.push({ ...w, text: frag2, x: w.x + 18, hp: 1, hitFlash: 0, beh: "fall", spd: fragSpd, id: g.nextWordId++, age: 3, fragment: true })
                 g.particles.push({ x: w.x, y: w.y - 8, vx: 0, vy: -0.9, life: 1.0, glyph: "DUPLICATED", col: "#f472b6", sz: 9, gravity: 0 })
+              }
+              // DATA_STALENESS (CACHE): 30% of kills get cached and respawn in 3-4s
+              if (g.archiveCorruption === "data_staleness" && !w.elite && Math.random() < 0.30) {
+                g.archiveCachedWords.push({ text: w.text, type: w.type, respawnAt: now + 3000 + Math.random() * 1200 })
+                g.particles.push({ x: w.x, y: w.y - 8, vx: 0, vy: -0.9, life: 1.1, glyph: "CACHED", col: "#94a3b8", sz: 9, gravity: 0 })
               }
               // RECURSIVE_COLLAPSE: each kill increases instability
               if (g.archiveCorruption === "recursive_collapse") {
@@ -4410,14 +4453,25 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     })
   }
 
+  // OBSERVABILITY: progressive blindness — word type colors converge toward gray over time
+  const observeBlind = (!attractMode && g.archiveCorruption === "radar_degradation" && _stationState.sectorStart > 0)
+    ? Math.min(1, (now - _stationState.sectorStart) / 45000)  // 0→1 over 45 seconds
+    : 0
+
   g.words.forEach(w => {
     // RETRO tint: bug→pale blue, story→deeper blue (signals temporal freeze)
     const isRelic = w.type === "powerup" && RELIC_SET.has(w.text)
-    const col = w.regenBoss ? "#34d399"
+    let col = w.regenBoss ? "#34d399"
       : w.type === "bug" ? (retroActive ? "#fbbf24" : "#f97316")
       : isRelic ? "#fde68a"
       : w.type === "powerup" ? "#4ade80"
       : (retroActive ? "#bae6fd" : curSectorTheme.storyCol)
+    // OBSERVABILITY: lerp all non-powerup word colors toward neutral gray as blindness grows
+    if (observeBlind > 0 && w.type !== "powerup" && !w.regenBoss) {
+      // At full blind: everything is rgba(180,180,190,0.7) — all words look the same
+      const bf = observeBlind
+      if (bf > 0.05) col = `rgba(${Math.round(180 + (1-bf)*40)},${Math.round(175 + (1-bf)*35)},${Math.round(185 + (1-bf)*30)},${0.65 + (1-bf)*0.25})`
+    }
     const flashRed = w.hitFlash > 0
 
     // Fragments: held-together letter cluster needing a second shot
@@ -7776,29 +7830,21 @@ function applyCorruptionPassive(g: GState, now: number) {
     }
   }
 
-  // RADAR DEGRADATION: Bridge auto-damages every 90s during expedition
+  // RADAR DEGRADATION: Bridge auto-damages every 22s; visual blindness begins immediately (draw layer)
   if (g.archiveCorruption === "radar_degradation") {
     if (g.archiveLastRadarDmg === 0) g.archiveLastRadarDmg = now
-    if (now - g.archiveLastRadarDmg > 90000 && (g.roomDamage.bridge ?? 0) < 3) {
+    if (now - g.archiveLastRadarDmg > 22000 && (g.roomDamage.bridge ?? 0) < 3) {
       g.roomDamage.bridge = (g.roomDamage.bridge ?? 0) + 1
       g.archiveLastRadarDmg = now
-      g.particles.push({ x: g.W/2, y: GH*0.4, vx: 0, vy: -0.5, life: 2.0,
-        glyph: "OBSERVABILITY DEGRADED", col: "#7dd3fc", sz: 10, gravity: 0 })
-      g.shake = 6; g.accentFlash = 8; g.accentFlashCol = "#7dd3fc"
+      const degradeLabels = ["", "MONITORING DEGRADED", "SIGNAL LOSS DETECTED", "OBSERVABILITY OFFLINE"]
+      const lvl = g.roomDamage.bridge ?? 0
+      g.particles.push({ x: g.W/2, y: GH*0.38, vx: 0, vy: -0.5, life: 2.2,
+        glyph: degradeLabels[lvl] ?? "OBSERVABILITY DEGRADED", col: "#7dd3fc", sz: 9, gravity: 0 })
+      g.shake = 5; g.accentFlash = 8; g.accentFlashCol = "#7dd3fc"
     }
   }
 
-  // PACKET LOSS: ~10% of freshly-fired player bullets vanish near player
-  if (g.archiveCorruption === "packet_loss") {
-    g.bullets = g.bullets.filter(b => {
-      if (!b.enemy && Math.abs(b.y - (g.py - 20)) < 30 && Math.random() < 0.10) {
-        g.particles.push({ x: b.x, y: b.y + 4, vx: (Math.random()-0.5)*1.5, vy: -0.8,
-          life: 0.55, glyph: "×", col: "#fb923c", sz: 8, gravity: 0 })
-        return false
-      }
-      return true
-    })
-  }
+  // PACKET LOSS / RATE LIMITING: handled at shoot time (in main game loop), not here
 
   // RECURSIVE COLLAPSE: instability grows with kill count — modify word speed inline
   // (actual speed boost applied at spawn via archiveInstability field)
