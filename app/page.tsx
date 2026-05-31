@@ -32,9 +32,13 @@ const _stationState = {
   // Phase 4: crew AI
   opsFeedBuffer:    [] as Array<{ crew: string; message: string; type: string; ts: number }>,
   roomActions:      {} as Partial<Record<StationId, { text: string; until: number }>>,
+  // Operator status — current intent per crew, shown in Operator Status panel
+  operatorStatus:   {} as Partial<Record<string, { action: string; detail?: string; ts: number }>>,
   lastCrewAI:       0,
   crewAssignCache:  {} as Partial<Record<StationId, string>>,
   crewCacheTime:    0,
+  // Feed rate limiting — enforce max 1 meaningful event per 5s per crew
+  lastFeedTs:       {} as Partial<Record<string, number>>,
 }
 
 interface Station {
@@ -150,6 +154,43 @@ function applyReward(g: GState, id: string) {
   if (id === "reactive_armor")    g.invuln = false  // just register — effect applied on damage
   if (id === "engine_of_war")     g.engineeringPoolBonus += 5
 }
+
+// ── Signal Archive — Epoch 1: Structured Systems ───────────────────────────
+interface SignalNode {
+  id: string; name: string; theme: string; bossName: string; effect: string
+  words: string[]; connections: string[]
+  x: number; y: number  // layout position (0-1)
+}
+
+const SIGNAL_ARCHIVE_E1: SignalNode[] = [
+  { id: "auth",    name: "AUTH SERVICE",       theme: "Identity Collapse",      bossName: "AUTHORITY",      effect: "Identity Drift",
+    words: ["login","token","credential","oauth","session"],
+    connections: ["api"], x: 0.5, y: 0.05 },
+  { id: "api",     name: "API GATEWAY",        theme: "Routing Failure",        bossName: "GATEKEEPER",     effect: "Packet Loss",
+    words: ["endpoint","proxy","request","response","route"],
+    connections: ["cache","eventbus"], x: 0.5, y: 0.22 },
+  { id: "cache",   name: "CACHE LAYER",        theme: "Data Staleness",         bossName: "THE STALE",      effect: "Word Repeat Loops",
+    words: ["cache","ttl","evict","stale","hit"],
+    connections: ["db"], x: 0.25, y: 0.4 },
+  { id: "eventbus",name: "EVENT BUS",          theme: "Signal Duplication",     bossName: "AMPLIFIER",      effect: "Duplicate Enemies",
+    words: ["publish","subscribe","event","broker","stream"],
+    connections: ["queue"], x: 0.75, y: 0.4 },
+  { id: "db",      name: "DATABASE CLUSTER",   theme: "Data Corruption",        bossName: "THE ARCHIVIST",  effect: "Corrupted Salvage",
+    words: ["table","record","index","query","schema"],
+    connections: ["observe"], x: 0.25, y: 0.6 },
+  { id: "queue",   name: "MESSAGE QUEUE",      theme: "Backpressure",           bossName: "BACKPRESSURE",   effect: "Spawn Delay Mechanics",
+    words: ["worker","retry","queue","backlog","job"],
+    connections: ["observe"], x: 0.75, y: 0.6 },
+  { id: "observe", name: "OBSERVABILITY",      theme: "Monitoring Failure",     bossName: "THE BLIND WATCHER", effect: "Radar Degradation",
+    words: ["trace","metric","alert","log","dashboard"],
+    connections: ["flags"], x: 0.5, y: 0.75 },
+  { id: "flags",   name: "FEATURE FLAG SYSTEM",theme: "Reality Fragmentation",  bossName: "THE SPLITTER",   effect: "Multiple Enemy States",
+    words: ["flag","toggle","variant","rollout","release"],
+    connections: ["recursion"], x: 0.5, y: 0.88 },
+  { id: "recursion",name:"RECURSION CORE",     theme: "Recursive Collapse",     bossName: "THE RECURSOR",   effect: "Sector-Wide Instability",
+    words: ["loop","call","return","stack","recursive"],
+    connections: [], x: 0.5, y: 1.0 },
+]
 
 const BUG_WORDS = [
   "seamlessly","real-time","automatically","zero latency","scalable","robust",
@@ -694,6 +735,26 @@ export default function HomePage() {
   // ── Station system state ────────────────────────────────────────────────
   const [activeStation, setActiveStation] = useState<StationId>("bridge")
 
+  // Command Mode — TAB to freeze game, full mission control overlay
+  const [commandMode, setCommandMode] = useState(false)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Tab") {
+        e.preventDefault()
+        setCommandMode(prev => {
+          const next = !prev
+          G.current.paused = next  // freeze game completely
+          return next
+        })
+      }
+      if (e.key === "Escape" && commandMode) {
+        setCommandMode(false); G.current.paused = false
+      }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [commandMode])
+
   // Phase 4: operations feed + crew stats (driven by 250ms crew AI interval)
   type OpsFeedEntry = { id: number; crew: string; message: string; type: string; ts: number }
   const [opsFeed, setOpsFeed] = useState<OpsFeedEntry[]>([])
@@ -744,6 +805,8 @@ export default function HomePage() {
     roomDamage: {} as Partial<Record<StationId, number>>,
     artifacts: [] as string[],
     engineeringPoolBonus: 0,
+    operatorStatus: {} as Partial<Record<string, { action: string; detail?: string }>>,
+    crewStats: {} as Partial<Record<string, number>>,
   })
   useEffect(() => {
     const id = setInterval(() => {
@@ -770,6 +833,8 @@ export default function HomePage() {
         roomDamage: { ...g.roomDamage },
         artifacts: [...g.artifacts],
         engineeringPoolBonus: g.engineeringPoolBonus ?? 0,
+        operatorStatus: { ..._stationState.operatorStatus },
+        crewStats: { ...g.crewStats },
       })
     }, 150)
     return () => clearInterval(id)
@@ -2252,7 +2317,7 @@ export default function HomePage() {
             // Track crew kills by bullet color signature
             if (b.col === "#fbbf24") {
               crewStat(g, "veteran_kills"); if (w.elite) crewStat(g, "veteran_eliteKills")
-              crewLog("VETERAN", w.elite ? `Elite ${w.text.slice(0,8)} eliminated` : "Target down", "kill")
+              if (w.elite) crewLogForce("VETERAN", `Elite Eliminated: ${w.text.slice(0,8)}`, "kill")
             }
             if (b.col === "#86efac") { crewStat(g, "capy_assists") }
             applyArtifactOnKill(g, w, now)
@@ -2391,6 +2456,7 @@ export default function HomePage() {
             // boss rage at 50% HP — sector-specific enrage ceremony
             if (!bx.halfTriggered && bx.hp <= bx.maxHp / 2) {
               bx.halfTriggered = true; bx.raged = true
+              crewLogForce("CAPY", `${bx.name} Phase Shift — Threat Escalated`, "boss")
               g.shake = 18; g.redFlash = 12; g.whiteFlash = 6
               g.accentFlash = 20; g.accentFlashCol = "#f87171"
               for (let ri = 0; ri < 36; ri++) {
@@ -2700,9 +2766,11 @@ export default function HomePage() {
                 const room = rooms[Math.floor(Math.random() * rooms.length)]
                 const cur = g.roomDamage[room] ?? 0
                 if (cur < 3) {
-                  g.roomDamage[room] = cur + 1
+                  const newDmg = cur + 1
+                  g.roomDamage[room] = newDmg
                   g.particles.push({ x: g.px, y: g.py - 28, vx: 0, vy: -0.9, life: 1.8,
                     glyph: `${room.toUpperCase()} DAMAGED`, col: "#f87171", sz: 9, gravity: 0 })
+                  if (newDmg === 3) crewLogForce("ENGINEER", `${room.toUpperCase()} OFFLINE`, "offline")
                 }
               }
             }
@@ -3154,6 +3222,19 @@ export default function HomePage() {
           )}
 
           <canvas ref={canvasRef} height={GH} style={{ display:"block", width:"100%", height:GH, cursor:"crosshair" }} />
+
+          {/* Command Mode Overlay */}
+          {commandMode && (
+            <CommandModeOverlay
+              g={G.current}
+              level={level}
+              score={score}
+              lives={lives}
+              liveG={liveG}
+              crewStats={crewStatsSnap}
+              onResume={() => { setCommandMode(false); G.current.paused = false }}
+            />
+          )}
         </div>
         {/* ── Ship Station Row ─────────────────────────────────────────────── */}
         <div style={{ display:"flex", gap:"0.5rem", marginTop:"0.5rem", alignItems:"stretch" }}>
@@ -3179,7 +3260,11 @@ export default function HomePage() {
             onTurretFire={onTurretFire}
             onGrapple={onGrapple}
           />
-          <OperationsFeed entries={opsFeed} />
+          <OperationsFeed
+            entries={opsFeed}
+            operatorStatus={liveG.operatorStatus}
+            crewAssign={(() => { try { const s = localStorage.getItem("sb_crew_assign"); return s ? JSON.parse(s) : {} } catch { return {} } })()}
+          />
         </div>
 
         {isTouchDevice && phase === "playing" && (
@@ -3196,7 +3281,7 @@ export default function HomePage() {
           </div>
         )}
         <div style={{ marginTop:"0.4rem", display:"flex", justifyContent:"space-between", fontSize:"0.65rem", padding:"0 2px" }}>
-          <span style={{ color:"rgba(255,255,255,0.2)", fontFamily:"monospace" }}>WASD / arrows move · SPACE or click shoot · mouse aim  ·  1-4 station</span>
+          <span style={{ color:"rgba(255,255,255,0.2)", fontFamily:"monospace" }}>WASD move · SPACE shoot · 1-4 station · TAB command mode</span>
           <a href="/leaderboard" style={{ color:"#966bec", textDecoration:"none", opacity:0.6, fontSize:"0.65rem" }}>leaderboard →</a>
         </div>
       </div>
@@ -6506,6 +6591,8 @@ type LiveGSnapshot = {
   roomDamage: Partial<Record<StationId, number>>
   artifacts: string[]
   engineeringPoolBonus: number
+  operatorStatus: Partial<Record<string, { action: string; detail?: string }>>
+  crewStats: Partial<Record<string, number>>
 }
 
 function ActiveStationPanel({ activeStation, lives, score, level, phase, liveG, onTurretFire, onGrapple }: {
@@ -7000,9 +7087,27 @@ function crewStat(g: GState, key: string, delta = 1) {
   g.crewStats[key] = (g.crewStats[key] ?? 0) + delta
 }
 
+// Minimum seconds between feed events per crew (enforce signal-to-noise)
+const FEED_COOLDOWN_SEC = 8
+
 function crewLog(crew: string, message: string, type = "action") {
+  const now = Date.now()
+  const last = _stationState.lastFeedTs[crew] ?? 0
+  if (now - last < FEED_COOLDOWN_SEC * 1000) return  // rate limit
+  _stationState.lastFeedTs[crew] = now
+  _stationState.opsFeedBuffer.push({ crew, message, type, ts: now })
+  if (_stationState.opsFeedBuffer.length > 25) _stationState.opsFeedBuffer.shift()
+}
+
+// Force-log regardless of cooldown (for truly critical events)
+function crewLogForce(crew: string, message: string, type = "action") {
+  _stationState.lastFeedTs[crew] = Date.now()
   _stationState.opsFeedBuffer.push({ crew, message, type, ts: Date.now() })
-  if (_stationState.opsFeedBuffer.length > 40) _stationState.opsFeedBuffer.shift()
+  if (_stationState.opsFeedBuffer.length > 25) _stationState.opsFeedBuffer.shift()
+}
+
+function setOperatorStatus(crew: string, action: string, detail?: string) {
+  _stationState.operatorStatus[crew] = { action, detail, ts: Date.now() }
 }
 
 function setRoomAction(station: StationId, text: string, durationMs = 2000) {
@@ -7051,7 +7156,7 @@ function runCapyAI(g: GState, station: StationId, now: number) {
       g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(ang)*10, vy: Math.sin(ang)*10, kind:"turret", col:"#86efac" })
       g.particles.push({ x: g.px, y: g.py - 24, vx: 0, vy: -0.7, life: 0.7, glyph: "🦫", col:"#86efac", sz:9, gravity:0 })
       crewStat(g, "capy_shots")
-      crewLog("CAPY", target.elite ? "Engaging elite" : "Engaging target", "engage")
+      setOperatorStatus("CAPY", target.elite ? "Engaging Elite" : "Suppressing Threat", target.text.slice(0, 12))
       setRoomAction(station, "ENGAGING")
       return
     }
@@ -7069,7 +7174,8 @@ function runCapyAI(g: GState, station: StationId, now: number) {
         _stationState.markedTargetId = best.w.id
         _stationState.markedAt = now
         const label = best.w.elite ? `Elite-${best.w.id % 100}` : best.w.text.slice(0, 10)
-        crewLog("CAPY", `Marked ${label}`, "mark")
+        crewLogForce("CAPY", `Target Lock Acquired: ${label}`, "mark")
+        setOperatorStatus("CAPY", "Target Locked", label)
         setRoomAction(station, "LOCKING")
         crewStat(g, "capy_marks")
         if (best.w.elite) crewStat(g, "capy_eliteMarks")
@@ -7093,15 +7199,13 @@ function runVeteranAI(g: GState, station: StationId, now: number) {
     const sb = (b.id === marked ? 100 : 0) + (b.elite ? 40 : 0) + (b.type === "bug" ? 20 : 0)
     return sb - sa
   })[0]
-  if (best.id === marked)    { action = "Engaging marked target"; logType = "mark" }
-  else if (best.elite)        { action = "Engaging elite threat";  logType = "elite" }
-  else if (best.type === "bug") { action = "Suppressing bug";      logType = "engage" }
+  const priority = best.id === marked ? "Marked Target" : best.elite ? "Elite Threat" : "Priority Threat"
   const dx = best.x - g.px, dy = best.y - g.py
   const ang = Math.atan2(dy, dx)
   g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(ang)*10.5, vy: Math.sin(ang)*10.5, kind:"turret", col:"#fbbf24" })
   g.particles.push({ x: g.px + Math.cos(ang)*8, y: g.py - 20 + Math.sin(ang)*8,
     vx: Math.cos(ang)*2, vy: Math.sin(ang)*2, life: 0.25, glyph:"·", col:"#fbbf24", gravity:0 })
-  crewLog("VETERAN", action, logType)
+  setOperatorStatus("VETERAN", "Engaging", priority)
   setRoomAction(station, "ENGAGING")
   crewStat(g, "veteran_shots")
 }
@@ -7120,7 +7224,8 @@ function runEngineerAI(g: GState, station: StationId, now: number) {
   _engAILast = now
   const target = damaged[0]
   g.roomDamage[target] = Math.max(0, (g.roomDamage[target] ?? 0) - 1)
-  crewLog("ENGINEER", `Repaired ${target.charAt(0).toUpperCase() + target.slice(1)}`, "repair")
+  crewLogForce("ENGINEER", `${target.charAt(0).toUpperCase() + target.slice(1)} Restored`, "repair")
+  setOperatorStatus("ENGINEER", "Repairing", target.toUpperCase())
   setRoomAction(station, "REPAIRING", 2500)
   setRoomAction(target, "REPAIRED", 1500)
   crewStat(g, "engineer_repairs")
@@ -7142,11 +7247,11 @@ function runSalvagerAI(g: GState, station: StationId, now: number) {
   const target = byPriority[0]
   g.salvage = g.salvage.filter(s => s.id !== target.id)
   const bonus = target.type === "artifact" ? 500 : target.type === "fragment" ? 150 : 50
-  const msgType = target.type
-  const msg = target.type === "artifact" ? "Artifact prioritized" : target.type === "fragment" ? "Fragment recovered" : "Scrap recovered"
   g.score += bonus; g.salvageCollected++
   if (target.type !== "scrap") g.fragmentsEarned++
-  crewLog("SALVAGER", msg, "recover")
+  if (target.type === "artifact") crewLogForce("SALVAGER", "Artifact Recovered", "recover")
+  else if (target.type === "fragment") crewLog("SALVAGER", "Signal Fragment Recovered", "recover")
+  setOperatorStatus("SALVAGER", "Recovering", target.type.charAt(0).toUpperCase() + target.type.slice(1))
   setRoomAction(station, "RECOVERING", 1800)
   crewStat(g, "salvager_" + target.type)
   g.particles.push({ x: target.x, y: target.y, vx: 0, vy: -0.9, life: 1.4,
@@ -7163,28 +7268,23 @@ function runScoutAI(g: GState, station: StationId, now: number) {
   const elites = g.words.filter(w => w.elite && !w.fragment)
   if (elites.length > 0) {
     const e = elites[0]
-    crewLog("SCOUT", `Elite signature — ${e.text.slice(0, 12)}`, "scan")
+    crewLog("SCOUT", `Elite Signature Detected`, "scan")
+    setOperatorStatus("SCOUT", "Elite Detected", e.text.slice(0, 12))
     crewStat(g, "scout_threats")
-    // Suggest mark if none active
     if (_stationState.markedTargetId === null) {
       _stationState.markedTargetId = e.id; _stationState.markedAt = now
-      crewLog("SCOUT", `Marking elite target`, "mark")
     }
     return
   }
-  // Detect artifacts in salvage field
   const artifacts = g.salvage.filter(s => s.type === "artifact")
   if (artifacts.length > 0) {
-    crewLog("SCOUT", `Artifact detected in field`, "scan")
+    crewLog("SCOUT", `Artifact Signature Detected`, "scan")
+    setOperatorStatus("SCOUT", "Artifact Located", "field debris")
     crewStat(g, "scout_artifacts")
     return
   }
-  // General threat scan
   const threats = g.words.filter(w => w.type === "bug" && !w.fragment)
-  if (threats.length > 0) {
-    crewLog("SCOUT", `${threats.length} bug signature${threats.length > 1 ? "s" : ""} on scan`, "scan")
-    crewStat(g, "scout_threats")
-  }
+  setOperatorStatus("SCOUT", threats.length > 0 ? "Monitoring Threats" : "Scanning", threats.length > 0 ? `${threats.length} noise patterns` : undefined)
 }
 
 function applyPowerEffects(g: GState) {
@@ -7414,42 +7514,361 @@ const OPS_TYPE_ICONS: Record<string, string> = {
   mark: "◎", kill: "✦", repair: "⚙", recover: "⬡", scan: "◇", engage: "⊕", elite: "★", action: "·",
 }
 
-function OperationsFeed({ entries }: {
+// Operator label → crew type mapping for status display
+const CREW_ROLE_MAP: Record<string, string> = {
+  capy: "CAPY", veteran_gunner: "VETERAN", engineer_bot: "ENGINEER",
+  salvager_bot: "SALVAGER", scout_drone: "SCOUT", player: "PLAYER",
+}
+
+function OperationsFeed({ entries, operatorStatus, crewAssign }: {
   entries: Array<{ id: number; crew: string; message: string; type: string; ts: number }>
+  operatorStatus: Partial<Record<string, { action: string; detail?: string }>>
+  crewAssign: Partial<Record<StationId, string | null>>
 }) {
+  // Active crew members for status panel
+  const activeCrew = Object.values(crewAssign)
+    .filter((c): c is string => !!c && c !== "player")
+    .map(c => ({ key: c, label: CREW_ROLE_MAP[c] ?? c.toUpperCase() }))
+    .filter((v, i, a) => a.findIndex(x => x.key === v.key) === i)  // dedupe
+
   return (
     <StationShell style={{ flex: "0 0 190px", minWidth: 0 }}>
-      <StationHeader label="OPERATIONS FEED" />
-      <div style={{ padding: "0.35rem 0.6rem", overflowY: "auto", flex: 1,
-        display: "flex", flexDirection: "column", gap: "0" }}>
-        {entries.length === 0 ? (
-          <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.52rem", fontStyle:"italic",
-            fontFamily:"monospace", margin:"0.3rem 0" }}>
-            Assign crew to stations to activate feed
-          </p>
-        ) : (
-          entries.map((e, i) => {
-            const age    = Date.now() - e.ts
-            const alpha  = Math.max(0.25, 1 - (i / 25) * 0.7)
-            const crewCol = OPS_CREW_COLORS[e.crew] ?? "rgba(255,255,255,0.5)"
-            const icon    = OPS_TYPE_ICONS[e.type] ?? "·"
-            return (
-              <div key={e.id} style={{ display:"flex", gap:"0.35rem", alignItems:"flex-start",
-                padding:"0.1rem 0", borderBottom:"1px solid rgba(255,255,255,0.03)",
-                opacity: alpha, transition:"opacity 1s" }}>
-                <span style={{ color:crewCol, fontSize:"0.48rem", flexShrink:0, lineHeight:"1.4rem" }}>{icon}</span>
-                <div>
-                  <span style={{ color:crewCol, fontSize:"0.5rem", fontFamily:"monospace",
-                    fontWeight:700, marginRight:"0.25rem" }}>[{e.crew}]</span>
-                  <span style={{ color:"rgba(255,255,255,0.55)", fontSize:"0.52rem",
-                    fontFamily:"monospace" }}>{e.message}</span>
+      <StationHeader label="OPERATIONS" />
+      <div style={{ padding: "0.35rem 0.55rem", display:"flex", flexDirection:"column", gap:"0" }}>
+
+        {/* Operator Status — live intent per crew */}
+        {activeCrew.length > 0 && (
+          <div style={{ marginBottom:"0.35rem" }}>
+            {activeCrew.map(({ key, label }) => {
+              const status = operatorStatus[label]
+              const col = OPS_CREW_COLORS[label] ?? "rgba(255,255,255,0.4)"
+              return (
+                <div key={key} style={{ padding:"0.18rem 0", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between" }}>
+                    <span style={{ color:col, fontSize:"0.52rem", fontWeight:700, fontFamily:"monospace" }}>{label}</span>
+                    {status && <span style={{ color:"rgba(255,255,255,0.4)", fontSize:"0.48rem", fontFamily:"monospace" }}>
+                      {status.action}
+                    </span>}
+                  </div>
+                  {status?.detail && (
+                    <span style={{ color:"rgba(255,255,255,0.3)", fontSize:"0.48rem", fontFamily:"monospace",
+                      paddingLeft:"0.3rem", display:"block" }}>
+                      {status.detail}
+                    </span>
+                  )}
+                  {!status && (
+                    <span style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.48rem", fontFamily:"monospace",
+                      paddingLeft:"0.3rem" }}>Standby</span>
+                  )}
                 </div>
-              </div>
-            )
-          })
+              )
+            })}
+          </div>
+        )}
+
+        {/* Critical Events feed — quiet, only meaningful events */}
+        {entries.length > 0 && (
+          <div>
+            <span style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.48rem", letterSpacing:"0.12em" }}>INCIDENT LOG</span>
+            <div style={{ display:"flex", flexDirection:"column", gap:"0", marginTop:"0.15rem" }}>
+              {entries.slice(0, 8).map((e, i) => {
+                const alpha = Math.max(0.3, 1 - (i / 8) * 0.65)
+                const col   = OPS_CREW_COLORS[e.crew] ?? "rgba(255,255,255,0.4)"
+                const icon  = OPS_TYPE_ICONS[e.type] ?? "·"
+                return (
+                  <div key={e.id} style={{ display:"flex", gap:"0.25rem", padding:"0.08rem 0",
+                    opacity:alpha, borderBottom:"1px solid rgba(255,255,255,0.03)" }}>
+                    <span style={{ color:col, fontSize:"0.44rem", flexShrink:0, lineHeight:"1.3rem" }}>{icon}</span>
+                    <div style={{ minWidth:0 }}>
+                      <span style={{ color:col, fontSize:"0.46rem", fontFamily:"monospace", fontWeight:700 }}>[{e.crew}] </span>
+                      <span style={{ color:"rgba(255,255,255,0.5)", fontSize:"0.48rem", fontFamily:"monospace" }}>{e.message}</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {activeCrew.length === 0 && entries.length === 0 && (
+          <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.5rem", fontStyle:"italic",
+            fontFamily:"monospace", margin:"0.3rem 0" }}>
+            Assign crew to activate operations
+          </p>
         )}
       </div>
     </StationShell>
+  )
+}
+
+// ── Command Mode Overlay ───────────────────────────────────────────────────
+// TAB to open. Game freezes. Full mission control.
+type CMTab = "blueprint" | "crew" | "artifacts" | "archive" | "stats"
+
+function CommandModeOverlay({ g, level, score, lives, liveG, crewStats, onResume }: {
+  g: GState; level: number; score: number; lives: number
+  liveG: LiveGSnapshot; crewStats: Partial<Record<string, number>>
+  onResume: () => void
+}) {
+  const [tab, setTab] = useState<CMTab>("blueprint")
+  const tabs: Array<{ id: CMTab; label: string }> = [
+    { id: "blueprint", label: "SHIP" },
+    { id: "crew",      label: "CREW" },
+    { id: "artifacts", label: "ARTIFACTS" },
+    { id: "archive",   label: "SIGNAL ARCHIVE" },
+    { id: "stats",     label: "STATISTICS" },
+  ]
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape" || e.key === "Tab") { e.preventDefault(); onResume() }
+      if (e.key === "r" || e.key === "R") onResume()
+    }
+    window.addEventListener("keydown", h)
+    return () => window.removeEventListener("keydown", h)
+  }, [onResume])
+
+  return (
+    <div style={{ position:"absolute", inset:0, background:"rgba(4,4,10,0.97)", zIndex:30,
+      display:"flex", flexDirection:"column", fontFamily:"monospace", overflowY:"auto" }}>
+      {/* Header */}
+      <div style={{ borderBottom:"1px solid rgba(150,107,236,0.2)", padding:"0.55rem 1.2rem",
+        display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:"0.8rem" }}>
+          <span style={{ color:"rgba(150,107,236,0.7)", fontSize:"0.52rem", letterSpacing:"0.2em" }}>COMMAND MODE</span>
+          <span style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem" }}>·</span>
+          <span style={{ color:"rgba(255,255,255,0.3)", fontSize:"0.5rem" }}>SECTOR {level} · {score.toLocaleString()} PTS</span>
+        </div>
+        <button onClick={onResume} style={{ background:"rgba(150,107,236,0.15)", border:"1px solid rgba(150,107,236,0.3)",
+          borderRadius:"4px", padding:"0.25rem 0.75rem", color:"#a78bfa", cursor:"pointer",
+          fontSize:"0.6rem", fontFamily:"monospace", letterSpacing:"0.1em" }}>
+          RESUME MISSION  [ESC]
+        </button>
+      </div>
+
+      {/* Tab bar */}
+      <div style={{ display:"flex", gap:"0", borderBottom:"1px solid rgba(255,255,255,0.06)", flexShrink:0 }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            style={{ background: tab === t.id ? "rgba(150,107,236,0.12)" : "transparent",
+              border:"none", borderBottom: tab === t.id ? "2px solid #a78bfa" : "2px solid transparent",
+              color: tab === t.id ? "#c4b5fd" : "rgba(255,255,255,0.3)",
+              padding:"0.5rem 0.9rem", cursor:"pointer", fontSize:"0.58rem",
+              fontFamily:"monospace", letterSpacing:"0.08em" }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div style={{ flex:1, overflowY:"auto", padding:"1rem 1.2rem" }}>
+        {tab === "blueprint" && <CMBlueprint g={g} lives={lives} liveG={liveG} />}
+        {tab === "crew"      && <CMCrew crewStats={crewStats} />}
+        {tab === "artifacts" && <CMArtifacts artifacts={g.artifacts} />}
+        {tab === "archive"   && <CMSignalArchive />}
+        {tab === "stats"     && <CMStats g={g} score={score} />}
+      </div>
+    </div>
+  )
+}
+
+// ── CM: Ship Blueprint ─────────────────────────────────────────────────────
+function CMBlueprint({ g, lives, liveG }: { g: GState; lives: number; liveG: LiveGSnapshot }) {
+  const hullPct = Math.round((lives / MAX_LIVES) * 100)
+  const crewAssign = getCrewAssignments()
+  return (
+    <div style={{ display:"flex", gap:"1.5rem", flexWrap:"wrap" }}>
+      {/* Hull */}
+      <div style={{ minWidth:"180px" }}>
+        <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.54rem", letterSpacing:"0.14em", margin:"0 0 0.5rem" }}>HULL INTEGRITY</p>
+        <p style={{ color: hullPct > 60 ? "#4ade80" : hullPct > 30 ? "#facc15" : "#f87171",
+          fontSize:"2rem", fontWeight:700, margin:"0 0 0.35rem" }}>{hullPct}%</p>
+        <p style={{ color:"rgba(255,255,255,0.3)", fontSize:"0.58rem", margin:0 }}>{lives}/{MAX_LIVES} sections intact</p>
+
+        <div style={{ marginTop:"1rem" }}>
+          <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.54rem", letterSpacing:"0.14em", margin:"0 0 0.5rem" }}>ROOMS</p>
+          {(["bridge","turret","salvage","engineering"] as StationId[]).map(r => {
+            const dmg  = g.roomDamage[r] ?? 0
+            const crew = crewAssign[r] ?? null
+            const dmgCol = dmg > 0 ? DAMAGE_COLORS[dmg] : "#4ade80"
+            return (
+              <div key={r} style={{ display:"flex", justifyContent:"space-between", padding:"0.3rem 0",
+                borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                <span style={{ color:"rgba(255,255,255,0.5)", fontSize:"0.6rem", textTransform:"uppercase" }}>{r}</span>
+                <div style={{ display:"flex", gap:"0.6rem", alignItems:"center" }}>
+                  {crew && <span style={{ color:OPS_CREW_COLORS[CREW_ROLE_MAP[crew] ?? ""] ?? "rgba(255,255,255,0.4)",
+                    fontSize:"0.52rem" }}>{CREW_ROLE_MAP[crew] ?? crew}</span>}
+                  <span style={{ color:dmgCol, fontSize:"0.52rem" }}>
+                    {dmg === 0 ? "NOMINAL" : DAMAGE_LABELS[dmg]}
+                  </span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Power allocation */}
+      <div style={{ minWidth:"160px" }}>
+        <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.54rem", letterSpacing:"0.14em", margin:"0 0 0.5rem" }}>POWER SYSTEMS</p>
+        {POWER_SYSTEMS.map(s => {
+          const val = _stationState.power[s.id] ?? 0
+          return (
+            <div key={s.id} style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.3rem" }}>
+              <span style={{ color:s.col, fontSize:"0.58rem" }}>{s.label}</span>
+              <span style={{ color:"rgba(255,255,255,0.4)", fontSize:"0.58rem" }}>{val}</span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── CM: Crew ───────────────────────────────────────────────────────────────
+function CMCrew({ crewStats }: { crewStats: Partial<Record<string, number>> }) {
+  const crewAssign = getCrewAssignments()
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:"0.8rem" }}>
+      <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.54rem", letterSpacing:"0.14em", margin:0 }}>CREW MANIFEST</p>
+      {CREW_TYPE_DEFS.map(def => {
+        const assigned = Object.entries(crewAssign).find(([, v]) => v === def.id)
+        if (!assigned && def.id !== "player") return null  // only show assigned crew
+        const [station] = assigned ?? ["unassigned"]
+        const label = CREW_ROLE_MAP[def.id] ?? def.id.toUpperCase()
+        const col   = OPS_CREW_COLORS[label] ?? "rgba(255,255,255,0.4)"
+        return (
+          <div key={def.id} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.07)",
+            borderRadius:"5px", padding:"0.6rem 0.8rem" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.2rem" }}>
+              <span style={{ color:col, fontSize:"0.68rem", fontWeight:700 }}>{label}</span>
+              <span style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.52rem" }}>{station.toUpperCase()}</span>
+            </div>
+            <p style={{ color:"rgba(255,255,255,0.4)", fontSize:"0.56rem", margin:"0 0 0.3rem" }}>{def.role} · {def.desc}</p>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── CM: Artifacts ──────────────────────────────────────────────────────────
+function CMArtifacts({ artifacts }: { artifacts: string[] }) {
+  const active = artifacts.filter(id => !id.startsWith("_"))
+  return (
+    <div>
+      <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.54rem", letterSpacing:"0.14em", margin:"0 0 0.6rem" }}>
+        ACTIVE ARTIFACTS · {active.length}
+      </p>
+      {active.length === 0 && (
+        <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.6rem", fontStyle:"italic" }}>
+          No artifacts acquired — clear a sector to access the reward screen.
+        </p>
+      )}
+      <div style={{ display:"flex", flexDirection:"column", gap:"0.4rem" }}>
+        {active.map(id => {
+          const def = ARTIFACT_DEFS.find(a => a.id === id); if (!def) return null
+          const col = ARTIFACT_RARITY_COLORS[def.rarity]
+          return (
+            <div key={id} style={{ background:`rgba(${def.rarity === "legendary" ? "250,204,21" : def.rarity === "rare" ? "167,139,250" : "255,255,255"},0.03)`,
+              border:`1px solid ${col}33`, borderRadius:"4px", padding:"0.5rem 0.7rem" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:"0.5rem", marginBottom:"0.15rem" }}>
+                <span style={{ color:col, fontSize:"0.65rem", fontWeight:700 }}>{def.name}</span>
+                <span style={{ color:`${col}70`, fontSize:"0.46rem", border:`1px solid ${col}44`,
+                  borderRadius:"2px", padding:"0.02rem 0.25rem", textTransform:"uppercase" }}>{def.rarity}</span>
+              </div>
+              <p style={{ color:"rgba(255,255,255,0.45)", fontSize:"0.58rem", margin:0 }}>{def.desc}</p>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── CM: Signal Archive ─────────────────────────────────────────────────────
+function CMSignalArchive() {
+  const W = 380, H = 280
+  return (
+    <div>
+      <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.54rem", letterSpacing:"0.14em", margin:"0 0 0.4rem" }}>
+        SIGNAL ARCHIVE · EPOCH 1: STRUCTURED SYSTEMS
+      </p>
+      <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.52rem", margin:"0 0 0.8rem", fontStyle:"italic" }}>
+        Infrastructure topology · choose your path through the failing system
+      </p>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`}
+        style={{ display:"block", background:"rgba(0,0,0,0.4)", borderRadius:"6px",
+          border:"1px solid rgba(150,107,236,0.15)" }}>
+        {/* Draw edges */}
+        {SIGNAL_ARCHIVE_E1.map(node => node.connections.map(toId => {
+          const to = SIGNAL_ARCHIVE_E1.find(n => n.id === toId)
+          if (!to) return null
+          return (
+            <line key={`${node.id}-${toId}`}
+              x1={node.x * W} y1={node.y * H + 12}
+              x2={to.x * W}   y2={to.y * H - 12}
+              stroke="rgba(150,107,236,0.25)" strokeWidth="1" strokeDasharray="3 4" />
+          )
+        }))}
+        {/* Draw nodes */}
+        {SIGNAL_ARCHIVE_E1.map(node => (
+          <g key={node.id} transform={`translate(${node.x * W},${node.y * H})`}>
+            <rect x={-55} y={-10} width={110} height={22} rx={3}
+              fill="rgba(12,12,22,0.9)" stroke="rgba(150,107,236,0.4)" strokeWidth="1" />
+            <text x={0} y={5} textAnchor="middle" fill="#a78bfa"
+              fontSize="7" fontFamily="monospace" fontWeight="bold">
+              {node.name}
+            </text>
+            <text x={0} y={14} textAnchor="middle" fill="rgba(255,255,255,0.3)"
+              fontSize="5.5" fontFamily="monospace">
+              {node.bossName}
+            </text>
+          </g>
+        ))}
+      </svg>
+      <div style={{ marginTop:"0.8rem", display:"flex", flexWrap:"wrap", gap:"0.4rem" }}>
+        {SIGNAL_ARCHIVE_E1.map(node => (
+          <div key={node.id} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.07)",
+            borderRadius:"4px", padding:"0.3rem 0.5rem", fontSize:"0.52rem" }}>
+            <span style={{ color:"rgba(150,107,236,0.7)", fontWeight:700 }}>{node.name}</span>
+            <span style={{ color:"rgba(255,255,255,0.2)", margin:"0 0.3rem" }}>→</span>
+            <span style={{ color:"rgba(248,113,113,0.6)" }}>{node.bossName}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── CM: Statistics ─────────────────────────────────────────────────────────
+function CMStats({ g, score }: { g: GState; score: number }) {
+  const rows = [
+    ["Score", score.toLocaleString()],
+    ["Kills", g.kills],
+    ["Max Combo", `×${g.maxCombo}`],
+    ["Shots Fired", g.shotsFired],
+    ["Words Escaped", g.wordsEscaped],
+    ["Salvage Collected", g.salvageCollected],
+    ["Fragments Earned", g.fragmentsEarned],
+    ["Artifacts Active", g.artifacts.filter(id => !id.startsWith("_")).length],
+    ["Engineering Bonus", `+${g.engineeringPoolBonus ?? 0} power`],
+  ] as [string, string | number][]
+  return (
+    <div>
+      <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.54rem", letterSpacing:"0.14em", margin:"0 0 0.6rem" }}>
+        RUN STATISTICS
+      </p>
+      <div style={{ display:"flex", flexDirection:"column", gap:"0.2rem", maxWidth:"300px" }}>
+        {rows.map(([label, val]) => (
+          <div key={label} style={{ display:"flex", justifyContent:"space-between",
+            padding:"0.25rem 0", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+            <span style={{ color:"rgba(255,255,255,0.35)", fontSize:"0.6rem" }}>{label}</span>
+            <span style={{ color:"rgba(255,255,255,0.65)", fontSize:"0.62rem", fontWeight:500 }}>{val}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
