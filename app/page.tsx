@@ -192,6 +192,91 @@ const SIGNAL_ARCHIVE_E1: SignalNode[] = [
     connections: [], x: 0.5, y: 1.0 },
 ]
 
+// ── Archive Node Configuration ─────────────────────────────────────────────
+// Each node defines boss, word pool, corruption effect, depth, and reward weighting.
+// Boss phase controls bullet behavior: 1=bounce 2=drift 3=split 4=spiral
+
+type CorruptionId = "identity_drift"|"packet_loss"|"data_staleness"|"signal_duplication"|"radar_degradation"|"state_fragmentation"|"recursive_collapse"
+type NodeState = "unknown" | "available" | "completed" | "corrupted"
+
+interface ArchiveNodeConfig {
+  boss:        { name: string; color: string; hp: number; phase: number }
+  depth:       number           // 1-7, drives difficulty scaling
+  corruption:  { id: CorruptionId; desc: string }
+  rewardBias?: "artifact" | "intent" | "hull"  // weighted reward type
+  taunts:      string[]
+}
+
+const ARCHIVE_NODE_CFG: Record<string, ArchiveNodeConfig> = {
+  auth:     {
+    depth: 1, boss: { name:"AUTHORITY",      color:"#818cf8", hp:30, phase:1 },
+    corruption: { id:"identity_drift",        desc:"Enemy patterns shift trajectory mid-flight." },
+    rewardBias: "artifact",
+    taunts: ["Your credentials have expired.","Identity is a permission you did not request.","Authentication: rejected.","You were never authorized to be here."],
+  },
+  api:      {
+    depth: 2, boss: { name:"GATEKEEPER",     color:"#fb923c", hp:36, phase:4 },
+    corruption: { id:"packet_loss",           desc:"15% of shots are lost in transit." },
+    rewardBias: "hull",
+    taunts: ["Request rejected: 403.","Rate limit exceeded.","Gateway timeout. Retry later.","This endpoint is no longer maintained."],
+  },
+  cache:    {
+    depth: 3, boss: { name:"THE STALE",      color:"#94a3b8", hp:32, phase:2 },
+    corruption: { id:"data_staleness",        desc:"Word patterns loop through outdated values." },
+    taunts: ["Your data is 7 years old.","TTL: expired.","Serving from cache. Cache is corrupted.","Invalidation was never implemented."],
+  },
+  eventbus: {
+    depth: 3, boss: { name:"AMPLIFIER",      color:"#f472b6", hp:38, phase:3 },
+    corruption: { id:"signal_duplication",    desc:"Killed patterns respawn once at half HP." },
+    rewardBias: "intent",
+    taunts: ["Every signal becomes two.","You cannot destroy a message. Only copy it.","Event: published. Subscribers: infinite.","Your actions echo forward."],
+  },
+  db:       {
+    depth: 4, boss: { name:"THE ARCHIVIST",  color:"#facc15", hp:42, phase:1 },
+    corruption: { id:"data_staleness",        desc:"Salvage field generates corrupted fragments." },
+    rewardBias: "intent",
+    taunts: ["Schema migration failed.","Your records are inconsistent.","Index: corrupted.","The query will never complete."],
+  },
+  queue:    {
+    depth: 4, boss: { name:"BACKPRESSURE",   color:"#a78bfa", hp:40, phase:2 },
+    corruption: { id:"state_fragmentation",   desc:"Words spawn in bursts then stall." },
+    taunts: ["Consumer lag: 4.2 million.","The queue does not drain.","Dead letter. Dead letter. Dead letter.","Workers failed. Workers retried. Workers failed."],
+  },
+  observe:  {
+    depth: 5, boss: { name:"BLIND WATCHER",  color:"#7dd3fc", hp:46, phase:3 },
+    corruption: { id:"radar_degradation",     desc:"Bridge radar begins the expedition damaged." },
+    taunts: ["No metrics. No logs. No alerts.","Observability: offline.","You cannot measure what is already gone.","The dashboard shows nothing. That is intentional."],
+  },
+  flags:    {
+    depth: 6, boss: { name:"THE SPLITTER",   color:"#4ade80", hp:50, phase:3 },
+    corruption: { id:"identity_drift",        desc:"Feature flags randomize word behavior mid-flight." },
+    taunts: ["Flag: enabled. Flag: disabled. Flag: undefined.","This variant was never supposed to ship.","Rollout: 100%. Rollback: failed.","Every user is in a different reality now."],
+  },
+  recursion:{
+    depth: 7, boss: { name:"THE RECURSOR",   color:"#f87171", hp:55, phase:1 },
+    corruption: { id:"recursive_collapse",    desc:"System instability increases with each kill." },
+    taunts: ["There is no base case.","You called yourself. You called yourself. You called yourself.","Stack depth: ∞.","The exit condition was removed in a refactor."],
+  },
+}
+
+// Initial archive state: AUTH is available, everything else unknown
+function initialArchiveNodeState(): Record<string, NodeState> {
+  const s: Record<string, NodeState> = {}
+  SIGNAL_ARCHIVE_E1.forEach(n => { s[n.id] = n.id === "auth" ? "available" : "unknown" })
+  return s
+}
+
+// Unlock connections of a completed node
+function unlockConnections(state: Record<string, NodeState>, completedId: string): Record<string, NodeState> {
+  const node = SIGNAL_ARCHIVE_E1.find(n => n.id === completedId)
+  if (!node) return state
+  const next = { ...state }
+  node.connections.forEach(cid => {
+    if (next[cid] === "unknown") next[cid] = "available"
+  })
+  return next
+}
+
 // ── Persistent Signal ──────────────────────────────────────────────────────
 // The Signal is the player's true character — persists across all runs.
 
@@ -205,8 +290,9 @@ interface PersistentSignal {
   operationalAge:   number            // total run count (including failures)
   recoveredIntent:  number            // total signal fragments accumulated
   clearedBosses:    string[]          // unique boss names defeated at least once
-  operatorsEver:    string[]          // unique operator IDs that have served
+  operatorsEver:    string[]
   operatorHistory:  Record<string, OperatorHistory>
+  archiveNodeState: Record<string, NodeState>  // per-node progression state
 }
 
 const SIGNAL_KEY = "sb_signal"
@@ -217,12 +303,12 @@ function loadSignal(): PersistentSignal {
     const raw = localStorage.getItem(SIGNAL_KEY)
     if (raw) {
       const s = JSON.parse(raw) as PersistentSignal
-      // Migrate old sb_fragments if present
+      // Migrate: init archiveNodeState if missing
+      if (!s.archiveNodeState) s.archiveNodeState = initialArchiveNodeState()
+      // Migrate old sb_fragments
       const oldFrag = parseInt(localStorage.getItem("sb_fragments") || "0")
       if (oldFrag > 0 && s.recoveredIntent === 0) {
-        s.recoveredIntent = oldFrag
-        saveSignal(s)
-        localStorage.removeItem("sb_fragments")
+        s.recoveredIntent = oldFrag; saveSignal(s); localStorage.removeItem("sb_fragments")
       }
       return s
     }
@@ -234,6 +320,7 @@ function loadSignal(): PersistentSignal {
     clearedBosses:   [],
     operatorsEver:   [],
     operatorHistory: {},
+    archiveNodeState: initialArchiveNodeState(),
   }
 }
 
@@ -253,16 +340,24 @@ function mergeRunIntoSignal(
     defeatedBosses: string[]
     crewStats: Partial<Record<string, number>>
     crewAssign: Partial<Record<string, string | null>>
+    completedArchiveNodes?: string[]
   }
 ): PersistentSignal {
+  // Archive node state: mark completed nodes and unlock their connections
+  let nodeState = prev.archiveNodeState ?? initialArchiveNodeState()
+  ;(run.completedArchiveNodes ?? []).forEach(nid => {
+    nodeState = { ...nodeState, [nid]: "completed" as NodeState }
+    nodeState = unlockConnections(nodeState, nid)
+  })
   const next: PersistentSignal = {
     ...prev,
-    foundedAt:       prev.foundedAt || Date.now(),
-    operationalAge:  prev.operationalAge + 1,
-    recoveredIntent: prev.recoveredIntent + run.fragmentsEarned,
-    clearedBosses:   [...new Set([...prev.clearedBosses, ...run.defeatedBosses])],
-    operatorsEver:   [...prev.operatorsEver],
-    operatorHistory: { ...prev.operatorHistory },
+    foundedAt:        prev.foundedAt || Date.now(),
+    operationalAge:   prev.operationalAge + 1,
+    recoveredIntent:  prev.recoveredIntent + run.fragmentsEarned,
+    clearedBosses:    [...new Set([...prev.clearedBosses, ...run.defeatedBosses])],
+    operatorsEver:    [...prev.operatorsEver],
+    operatorHistory:  { ...prev.operatorHistory },
+    archiveNodeState: nodeState,
   }
   // Update operator lifetime history for each crew who served this run
   const servedIds = Object.values(run.crewAssign).filter(Boolean) as string[]
@@ -750,8 +845,14 @@ interface GState {
   _hardenedUsed: boolean; _powerSurgeKills: number; _battleHardenedStacks: number
   engineeringPoolBonus: number
   crewStats: Partial<Record<string, number>>
-  // Persistent Signal: bosses defeated this run
   defeatedBosses: string[]
+  // Archive mode — layered on top of the existing sector system
+  archiveMode:       boolean
+  archiveNodeId:     string | null
+  archiveNodeWords:  string[]
+  archiveBoss:       { name: string; color: string; hp: number; phase: number } | null
+  archiveDepth:      number          // node depth for difficulty scaling
+  archiveCorruption: CorruptionId | null
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -793,6 +894,8 @@ function initState(W: number): GState {
     roomDamage: {},
     artifacts: [], _hardenedUsed: false, _powerSurgeKills: 0, _battleHardenedStacks: 0,
     engineeringPoolBonus: 0, crewStats: {}, defeatedBosses: [],
+    archiveMode: false, archiveNodeId: null, archiveNodeWords: [], archiveBoss: null,
+    archiveDepth: 0, archiveCorruption: null,
   }
 }
 
@@ -803,7 +906,10 @@ export default function HomePage() {
   const rafRef    = useRef(0)
   const G         = useRef<GState>(initState(GW))
 
-  const [phase, setPhase]           = useState<"attract"|"playing"|"capy"|"reward"|"upgrade"|"over">("attract")
+  const [phase, setPhase]           = useState<"attract"|"archive"|"briefing"|"playing"|"capy"|"reward"|"upgrade"|"over">("attract")
+  const [archiveSelectedNode, setArchiveSelectedNode] = useState<string | null>(null)
+  const [archiveCompletedThisRun, setArchiveCompletedThisRun] = useState<string[]>([])
+  const completeArchiveNodeRef = useRef<(nodeId: string) => void>(() => {})
   const [score, setScore]           = useState(0)
   const [level, setLevel]           = useState(1)
   const [lives, setLives]           = useState(MAX_LIVES)
@@ -823,7 +929,7 @@ export default function HomePage() {
   const [personalSectorBest, setPersonalSectorBest] = useState(0)
   // THE SIGNAL — persistent player character across all runs
   const [signal, setSignal] = useState<PersistentSignal>(() => loadSignal())
-  const updateSignalRef = useRef<(run: { fragmentsEarned: number; defeatedBosses: string[]; crewStats: Partial<Record<string,number>>; crewAssign: Partial<Record<string,string|null>> }) => void>(() => {})
+  const updateSignalRef = useRef<(run: { fragmentsEarned: number; defeatedBosses: string[]; crewStats: Partial<Record<string,number>>; crewAssign: Partial<Record<string,string|null>>; completedArchiveNodes?: string[] }) => void>(() => {})
   const fragmentBank = signal.recoveredIntent  // derived alias — all existing UI reads this
   const [isTouchDevice, setIsTouchDevice]         = useState(false)
   const [unlockedAgents, setUnlockedAgents] = useState<string[]>([])
@@ -1087,6 +1193,37 @@ export default function HomePage() {
     setIsTouchDevice("ontouchstart" in window || navigator.maxTouchPoints > 0)
   }, [])
 
+  // ── Archive: launch an expedition into a specific node ──────────────────
+  function startExpedition(nodeId: string) {
+    const cfg  = ARCHIVE_NODE_CFG[nodeId]
+    const node = SIGNAL_ARCHIVE_E1.find(n => n.id === nodeId)
+    if (!cfg || !node) return
+    startGame()  // reset all state, sets phase to "playing"
+    const g = G.current
+    // Layer archive config on top of the reset state
+    g.archiveMode      = true
+    g.archiveNodeId    = nodeId
+    g.archiveNodeWords = node.words
+    g.archiveBoss      = cfg.boss
+    g.archiveDepth     = cfg.depth
+    g.archiveCorruption= cfg.corruption.id
+    g.level            = Math.min(4, cfg.depth)  // cap at 4 for existing difficulty tables
+    // Apply immediate corruption effects
+    if (cfg.corruption.id === "radar_degradation") g.roomDamage.bridge = 1
+    // Override wave announcement
+    g.waveAnn = { text: `${node.name.toUpperCase()} · ${cfg.boss.name}`, t: 0 }
+    // Archive node entry capy message (fires ~3.2s in)
+    g.nextCapyMsg = Date.now() + 3200
+    _stationState.sectorStart = Date.now()
+    setArchiveSelectedNode(null)
+  }
+
+  function returnToArchive() {
+    setArchiveSelectedNode(null)
+    setArchiveCompletedThisRun([])
+    phaseRef.current = "archive"; setPhase("archive")
+  }
+
   function startGame() {
     const g = G.current
     const W = g.W
@@ -1120,6 +1257,18 @@ export default function HomePage() {
       const next = mergeRunIntoSignal(prev, run)
       saveSignal(next)
       return next
+    })
+  }
+
+  // Complete an archive node and unlock its connections in persistent signal
+  completeArchiveNodeRef.current = (nodeId: string) => {
+    setArchiveCompletedThisRun(prev => prev.includes(nodeId) ? prev : [...prev, nodeId])
+    setSignal(prev => {
+      let ns = { ...(prev.archiveNodeState ?? initialArchiveNodeState()), [nodeId]: "completed" as NodeState }
+      ns = unlockConnections(ns, nodeId)
+      const updated = { ...prev, archiveNodeState: ns }
+      saveSignal(updated)
+      return updated
     })
   }
 
@@ -1178,6 +1327,11 @@ export default function HomePage() {
     } else {
       capyIdxRef.current = 0; setCapyIdx(0)
       const g = G.current
+      // In archive mode: return to archive selection instead of next linear sector
+      if (g.archiveMode) {
+        returnToArchive()
+        return
+      }
       g.running = true; g.bossSpawned = false; g.wordsKilled = 0
       g.livesAtWave = g.lives; g.sectorClearAt = 0; g.lastMsWave = -1
       g.agentSectorRevived = false
@@ -1661,10 +1815,14 @@ export default function HomePage() {
           else if (roll < 0.19) { type = "bug";     text = BUG_WORDS[Math.floor(Math.random() * BUG_WORDS.length)] }
           else if (roll < 0.26) { type = "powerup"; text = POWERUP_WORDS[Math.floor(Math.random() * POWERUP_WORDS.length)] }
           else {
-            const accentPool = !g.endless ? SECTOR_ACCENT_WORDS[g.level - 1] : null
-            // Pre-boss buildup: force sector accent words in the last 4 slots before boss
+            // Archive mode: use node word pool as primary accent; else use sector accent
+            const accentPool = g.archiveMode && g.archiveNodeWords.length > 0
+              ? g.archiveNodeWords
+              : (!g.endless ? SECTOR_ACCENT_WORDS[g.level - 1] : null)
             const nearBossThreshold = !g.endless && !g.boss && g.wordsKilled >= WORDS_TO_BOSS - 4
-            if (accentPool && (nearBossThreshold || Math.random() < 0.35)) {
+            // Archive mode: much higher node-word frequency (60%); standard 35%
+            const accentChance = g.archiveMode ? 0.60 : 0.35
+            if (accentPool && (nearBossThreshold || Math.random() < accentChance)) {
               text = accentPool[Math.floor(Math.random() * accentPool.length)]
             } else {
               text = STORY_WORDS[Math.floor(Math.random() * STORY_WORDS.length)]
@@ -1888,8 +2046,9 @@ export default function HomePage() {
           l.y += (l.ty - l.y) * easeFactor
         })
         if (bw.t >= 170) {
-          const bd = BOSSES[g.level - 1]
-          g.boss = { x: g.W/2, y: 70, hp: bd.hp, maxHp: bd.hp, name: bd.name, color: bd.color, dir: 1, t: 0, phase: g.level, raged: false, halfTriggered: false }
+          const bd = (g.archiveMode && g.archiveBoss) ? g.archiveBoss : BOSSES[g.level - 1]
+          const bossPhase = (g.archiveMode && g.archiveBoss) ? g.archiveBoss.phase : g.level
+          g.boss = { x: g.W/2, y: 70, hp: bd.hp, maxHp: bd.hp, name: bd.name, color: bd.color, dir: 1, t: 0, phase: bossPhase, raged: false, halfTriggered: false }
           g.bossWarn = null
           g.bossNextTaunt = now + 7000  // first taunt ~7s after boss appears
           g.shake = 32; g.accentFlash = 45; g.accentFlashCol = bd.color  // slam arrival
@@ -1916,7 +2075,7 @@ export default function HomePage() {
       // spawn boss warning
       if (!g.boss && !g.bossWarn && !g.bossSpawned && !g.endless && g.wordsKilled >= WORDS_TO_BOSS) {
         g.bossSpawned = true
-        const bd = BOSSES[g.level - 1]  // must be before forEach — bd.color used inside
+        const bd = (g.archiveMode && g.archiveBoss) ? g.archiveBoss : BOSSES[g.level - 1]
         // Scatter remaining words as score bonus before boss warning
         g.words.forEach(w => {
           if (w.type === "powerup") return
@@ -2241,6 +2400,8 @@ export default function HomePage() {
 
       // move bullets
       g.bullets = g.bullets.filter(b => {
+        // CORRUPTION: packet_loss — 15% of player shots vanish in transit
+        if (!b.enemy && g.archiveCorruption === "packet_loss" && Math.random() < 0.0025) return false
         b.y += b.vy ?? (b.enemy ? 4 : -9)
         if (b.vx) b.x += b.vx
         // THE RECURSION: wall-bouncing bullets
@@ -2425,6 +2586,11 @@ export default function HomePage() {
             const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul * pmMul * dataMul * markedMul)
             g.score += pts
             g.kills++; if (!w.fragment) g.wordsKilled++
+            // CORRUPTION: signal_duplication — killed word respawns once at half HP
+            if (g.archiveCorruption === "signal_duplication" && !w.fragment && !w.regenBoss && Math.random() < 0.22) {
+              g.words.push({ ...w, hp: 1, hitFlash: 0, y: w.y - 20, id: g.nextWordId++, age: 0 })
+              g.particles.push({ x: w.x, y: w.y - 10, vx: 0, vy: -0.8, life: 0.9, glyph: "DUPLICATE", col: "#f472b6", sz: 8, gravity: 0 })
+            }
             // Track crew kills by bullet color signature
             if (b.col === "#fbbf24") {
               crewStat(g, "veteran_kills"); if (w.elite) crewStat(g, "veteran_eliteKills")
@@ -2772,11 +2938,20 @@ export default function HomePage() {
           if (noReg) {
             g.score += 300
             g.particles.push({ x: bx.x, y: bx.y - 35, vx: 0, vy: -0.8, life: 2.0, glyph: "no regressions +300", col: "#4ade80", sz: 10 })
-            showCapyMsg(g, "Signal intact.\nNo corruption.", now)
+            if (!g.archiveMode) showCapyMsg(g, "Signal intact.\nNo corruption.", now)
           }
-          const lvl = g.level; g.level++
-          const agentUnlocks: Record<number, string[]> = { 1: ["claude_pm"], 2: ["claude_qa"], 3: ["claude_eng"], 4: ["claude_design", "claude_infra"] }
-          ;(agentUnlocks[lvl] ?? []).forEach(id => unlockAgentRef.current(id))
+          const lvl = g.level
+          if (!g.archiveMode) {
+            g.level++  // only increment level in linear mode
+            const agentUnlocks: Record<number, string[]> = { 1: ["claude_pm"], 2: ["claude_qa"], 3: ["claude_eng"], 4: ["claude_design", "claude_infra"] }
+            ;(agentUnlocks[lvl] ?? []).forEach(id => unlockAgentRef.current(id))
+          } else {
+            // Archive mode: mark node complete, queue return to archive
+            if (g.archiveNodeId) {
+              completeArchiveNodeRef.current(g.archiveNodeId)
+              g.defeatedBosses.push(bx.name)
+            }
+          }
           // Sector complete: clear remaining noise
           g.words.forEach(w => spawnLetterExplosion(g, w, 0, 1))
           g.score += g.words.length * 20
@@ -2830,14 +3005,21 @@ export default function HomePage() {
             for (let ri = 0; ri < 2; ri++) {
               g.particles.push({ x: bx.x, y: bx.y, vx: 0, vy: 0, life: 1.4 - ri * 0.4, initLife: 1.4 - ri * 0.4, glyph: "", col: ri === 0 ? clearCol : "#fbbf24", ring: true })
             }
-            // Sector clear text — big and earned
-            g.particles.push({ x: g.W/2, y: GH/2 - 18, vx: 0, vy: -0.32, life: 3.8, glyph: sectorNames[lvl] ?? "", col: clearCol, sz: 20, gravity: 0 })
+            // Clear text — archive-aware
+            const clearGlyph = g.archiveMode
+              ? `${SIGNAL_ARCHIVE_E1.find(n=>n.id===g.archiveNodeId)?.name ?? "SYSTEM"} · SEVERED`
+              : (sectorNames[lvl] ?? "")
+            g.particles.push({ x: g.W/2, y: GH/2 - 18, vx: 0, vy: -0.32, life: 3.8, glyph: clearGlyph, col: clearCol, sz: g.archiveMode ? 14 : 20, gravity: 0 })
             g.particles.push({ x: g.W/2, y: GH/2 + 10, vx: 0, vy: -0.22, life: 3.2, glyph: `${bx.name} · SEVERED`, col: "#facc15", sz: 12, gravity: 0 })
             if (noReg) g.particles.push({ x: g.W/2, y: GH/2 + 26, vx: 0, vy: -0.16, life: 2.8, glyph: "NO REGRESSIONS  +800", col: "#4ade80", sz: 11, gravity: 0 })
-            const nextSector = lvl + 1
-            const nextBoss = BOSSES[nextSector - 1]
-            if (nextBoss) {
-              g.particles.push({ x: g.W/2, y: GH/2 + (noReg ? 42 : 26), vx: 0, vy: -0.12, life: 2.6, glyph: `▸ SECTOR ${nextSector} · ${nextBoss.name}`, col: "rgba(200,180,255,0.7)", sz: 10, gravity: 0 })
+            if (!g.archiveMode) {
+              const nextSector = lvl + 1
+              const nextBoss = BOSSES[nextSector - 1]
+              if (nextBoss) {
+                g.particles.push({ x: g.W/2, y: GH/2 + (noReg ? 42 : 26), vx: 0, vy: -0.12, life: 2.6, glyph: `▸ SECTOR ${nextSector} · ${nextBoss.name}`, col: "rgba(200,180,255,0.7)", sz: 10, gravity: 0 })
+              }
+            } else {
+              g.particles.push({ x: g.W/2, y: GH/2 + (noReg ? 42 : 26), vx: 0, vy: -0.12, life: 2.6, glyph: "▸ RETURN TO SIGNAL ARCHIVE", col: "rgba(200,180,255,0.7)", sz: 10, gravity: 0 })
             }
             // Extra boss dead fanfare for later sectors
             if (lvl >= 2) setTimeout(() => sfx.bossDead(), 350)
@@ -2845,7 +3027,10 @@ export default function HomePage() {
             g.sectorClearAt = now + 3500
           }
           setLevel(g.level); setScore(g.score); setLives(g.lives)
-          pendingCapyRef.current = CAPY_DIALOG[lvl - 1] || ["You made it.", "Keep shipping."]
+          // Capy dialog: archive uses generic "system cleared" message
+          pendingCapyRef.current = g.archiveMode
+            ? [`${SIGNAL_ARCHIVE_E1.find(n=>n.id===g.archiveNodeId)?.name ?? "SYSTEM"} · SEVERED.\n\nThe pattern has been resolved.\nSignal integrity: restored.\n\nReturn to the Archive.`]
+            : (CAPY_DIALOG[lvl - 1] || ["You made it.", "Keep shipping."])
           const opts = pickUpgrades(g.upgrades)
           upgradeOptionsRef.current = opts
           setUpgradeOptions(opts)
@@ -3088,12 +3273,13 @@ export default function HomePage() {
           glyph: "SIGNAL LOST", col: "#f87171", sz: 16, gravity: 0 })
         g.running = false; g.deathFadeAt = now + 1400; stopDrone()
         setScore(g.score); setLevel(g.level)
-        // Merge this run into the persistent Signal
+        // Merge this run into the persistent Signal (including archive node completions)
         updateSignalRef.current({
-          fragmentsEarned: g.fragmentsEarned,
-          defeatedBosses:  g.defeatedBosses,
-          crewStats:       { ...g.crewStats },
-          crewAssign:      getCrewAssignments(),
+          fragmentsEarned:       g.fragmentsEarned,
+          defeatedBosses:        g.defeatedBosses,
+          crewStats:             { ...g.crewStats },
+          crewAssign:            getCrewAssignments(),
+          completedArchiveNodes: g.archiveMode && g.archiveNodeId ? [g.archiveNodeId] : [],
         })
         try {
           const pb = parseInt(localStorage.getItem("sb_pb") || "0")
@@ -3137,7 +3323,7 @@ export default function HomePage() {
         <div ref={wrapRef} style={{ position:"relative", width:"100%", borderRadius:"6px", overflow:"hidden", border:"1px solid rgba(255,255,255,0.08)" }}>
 
           {phase === "attract" && (
-            <Overlay onClick={startGame} dim={0.92}>
+            <Overlay onClick={() => { phaseRef.current = "archive"; setPhase("archive") }} dim={0.92}>
               <div style={{
                 background:"#0c0c16", border:"1px solid rgba(150,107,236,0.28)",
                 borderRadius:"10px", padding:"1.6rem 1.5rem",
@@ -3176,8 +3362,8 @@ export default function HomePage() {
                   )}
                 </div>
 
-                {/* ── Launch button ── */}
-                <button onClick={startGame} style={{
+                {/* ── Launch button — goes to Archive ── */}
+                <button onClick={() => { phaseRef.current = "archive"; setPhase("archive") }} style={{
                   width:"100%", background:"linear-gradient(135deg,#7c3aed,#6d28d9)",
                   color:"#fff", border:"none", borderRadius:"7px",
                   padding:"0.85rem", fontSize:"0.9rem", fontWeight:700,
@@ -3185,7 +3371,7 @@ export default function HomePage() {
                   marginBottom:"1rem",
                   boxShadow:"0 0 28px rgba(124,58,237,0.5)",
                 }}>
-                  LAUNCH EXPEDITION
+                  ENTER SIGNAL ARCHIVE
                 </button>
 
                 {/* ── Crew ── */}
@@ -3287,6 +3473,22 @@ export default function HomePage() {
 
               </div>
             </Overlay>
+          )}
+
+          {phase === "archive" && (
+            <ArchiveScreen
+              signal={signal}
+              onSelectNode={(nodeId) => { setArchiveSelectedNode(nodeId); phaseRef.current = "briefing"; setPhase("briefing") }}
+            />
+          )}
+
+          {phase === "briefing" && archiveSelectedNode && (
+            <BriefingScreen
+              nodeId={archiveSelectedNode}
+              signal={signal}
+              onLaunch={() => startExpedition(archiveSelectedNode)}
+              onBack={() => { phaseRef.current = "archive"; setPhase("archive") }}
+            />
           )}
 
           {phase === "reward" && (
@@ -8211,6 +8413,262 @@ function CMStats({ g, score }: { g: GState; score: number }) {
             <span style={{ color:"rgba(255,255,255,0.65)", fontSize:"0.62rem", fontWeight:500 }}>{val}</span>
           </div>
         ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Archive Screen ─────────────────────────────────────────────────────────
+// The Signal Archive is the backbone of progression. Every expedition routes through it.
+
+const NODE_STATE_STYLE: Record<NodeState, { border: string; bg: string; textCol: string; labelCol: string }> = {
+  unknown:   { border: "rgba(255,255,255,0.06)", bg: "rgba(255,255,255,0.01)", textCol: "rgba(255,255,255,0.12)", labelCol: "rgba(255,255,255,0.1)" },
+  available: { border: "rgba(150,107,236,0.5)",  bg: "rgba(150,107,236,0.06)", textCol: "#c4b5fd",               labelCol: "rgba(150,107,236,0.6)" },
+  completed: { border: "rgba(74,222,128,0.25)",  bg: "rgba(74,222,128,0.03)",  textCol: "rgba(74,222,128,0.55)", labelCol: "rgba(74,222,128,0.35)" },
+  corrupted: { border: "rgba(248,113,113,0.4)",  bg: "rgba(248,113,113,0.05)", textCol: "#f87171",               labelCol: "rgba(248,113,113,0.5)" },
+}
+
+function ArchiveScreen({ signal, onSelectNode }: {
+  signal: PersistentSignal
+  onSelectNode: (nodeId: string) => void
+}) {
+  const [hoveredNode, setHoveredNode] = useState<string | null>(null)
+  const nodeState = signal.archiveNodeState ?? initialArchiveNodeState()
+  const W = 560, H = 340
+
+  return (
+    <div style={{ position:"absolute", inset:0, background:"rgba(4,4,10,0.97)", zIndex:10,
+      display:"flex", flexDirection:"column", fontFamily:"monospace" }}>
+      {/* Header */}
+      <div style={{ borderBottom:"1px solid rgba(150,107,236,0.18)", padding:"0.65rem 1.2rem",
+        display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div>
+          <p style={{ color:"rgba(150,107,236,0.5)", fontSize:"0.5rem", letterSpacing:"0.22em", margin:"0 0 0.12rem" }}>SIGNAL ARCHIVE · EPOCH 1</p>
+          <p style={{ color:"#c4b5fd", fontSize:"0.78rem", fontWeight:700, margin:0, letterSpacing:"0.1em" }}>STRUCTURED SYSTEMS</p>
+        </div>
+        <div style={{ textAlign:"right" }}>
+          <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", margin:"0 0 0.1rem" }}>ARCHIVE COMPLETION</p>
+          <p style={{ color:"rgba(74,222,128,0.7)", fontSize:"0.72rem", fontWeight:700, margin:0 }}>
+            {signalArchiveCompletion(signal)}% · {signal.clearedBosses.length}/{TOTAL_ARCHIVE_NODES}
+          </p>
+        </div>
+      </div>
+
+      {/* Main layout: topology + detail */}
+      <div style={{ flex:1, display:"flex", gap:"0", overflow:"hidden" }}>
+        {/* SVG topology */}
+        <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", padding:"1rem" }}>
+          <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ maxHeight:"100%", overflow:"visible" }}>
+            {/* Edges */}
+            {SIGNAL_ARCHIVE_E1.flatMap(node => node.connections.map(toId => {
+              const to = SIGNAL_ARCHIVE_E1.find(n => n.id === toId); if (!to) return null
+              const fromState = nodeState[node.id] ?? "unknown"
+              const isActive  = fromState === "completed" || fromState === "available"
+              return (
+                <line key={`${node.id}-${toId}`}
+                  x1={node.x * W} y1={node.y * (H - 40) + 24}
+                  x2={to.x * W}   y2={to.y * (H - 40) + 24}
+                  stroke={isActive ? "rgba(150,107,236,0.3)" : "rgba(255,255,255,0.06)"}
+                  strokeWidth="1" strokeDasharray={isActive ? "none" : "3 5"} />
+              )
+            }))}
+            {/* Nodes */}
+            {SIGNAL_ARCHIVE_E1.map(node => {
+              const ns      = nodeState[node.id] ?? "unknown"
+              const style   = NODE_STATE_STYLE[ns]
+              const nx      = node.x * W
+              const ny      = node.y * (H - 40) + 24
+              const cfg     = ARCHIVE_NODE_CFG[node.id]
+              const isHover = hoveredNode === node.id
+              const canClick= ns === "available"
+              return (
+                <g key={node.id} transform={`translate(${nx},${ny})`}
+                  onClick={() => canClick && onSelectNode(node.id)}
+                  onMouseEnter={() => setHoveredNode(node.id)}
+                  onMouseLeave={() => setHoveredNode(null)}
+                  style={{ cursor: canClick ? "pointer" : "default" }}>
+                  <rect x={-60} y={-12} width={120} height={26} rx={4}
+                    fill={isHover && canClick ? "rgba(150,107,236,0.12)" : style.bg}
+                    stroke={isHover && canClick ? "rgba(150,107,236,0.8)" : style.border}
+                    strokeWidth={isHover ? 1.5 : 1} />
+                  {/* Completion check */}
+                  {ns === "completed" && <text x={-50} y={4} fontSize="8" fill="rgba(74,222,128,0.7)" fontFamily="monospace">✓</text>}
+                  {/* Node name */}
+                  <text x={ns === "completed" ? -36 : 0} y={2} textAnchor={ns === "completed" ? "start" : "middle"}
+                    fontSize="6.5" fontFamily="monospace" fontWeight="bold" fill={style.textCol}>
+                    {ns === "unknown" ? "???" : node.name}
+                  </text>
+                  {/* Boss name */}
+                  {ns !== "unknown" && cfg && (
+                    <text x={0} y={11} textAnchor="middle" fontSize="5.5" fontFamily="monospace" fill={style.labelCol}>
+                      {cfg.boss.name}
+                    </text>
+                  )}
+                  {/* AVAILABLE indicator */}
+                  {ns === "available" && (
+                    <text x={0} y={-15} textAnchor="middle" fontSize="5" fontFamily="monospace"
+                      fill="rgba(150,107,236,0.7)">AVAILABLE</text>
+                  )}
+                </g>
+              )
+            })}
+          </svg>
+        </div>
+
+        {/* Detail panel */}
+        <div style={{ width:"200px", flexShrink:0, borderLeft:"1px solid rgba(255,255,255,0.06)",
+          padding:"0.8rem 0.9rem", display:"flex", flexDirection:"column", gap:"0.5rem", overflowY:"auto" }}>
+          {hoveredNode ? (() => {
+            const node = SIGNAL_ARCHIVE_E1.find(n => n.id === hoveredNode)!
+            const cfg  = ARCHIVE_NODE_CFG[hoveredNode]
+            const ns   = nodeState[hoveredNode] ?? "unknown"
+            const style= NODE_STATE_STYLE[ns]
+            return (
+              <>
+                <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.48rem", letterSpacing:"0.14em", margin:0 }}>NODE INTEL</p>
+                <div style={{ border:`1px solid ${style.border}`, borderRadius:"4px", padding:"0.45rem 0.5rem",
+                  background:style.bg }}>
+                  <p style={{ color:style.textCol, fontSize:"0.6rem", fontWeight:700, margin:"0 0 0.15rem" }}>
+                    {ns === "unknown" ? "UNKNOWN SYSTEM" : node.name}
+                  </p>
+                  {ns !== "unknown" && cfg && (
+                    <>
+                      <p style={{ color:"rgba(255,255,255,0.35)", fontSize:"0.52rem", margin:"0 0 0.3rem" }}>{node.theme}</p>
+                      <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.48rem", letterSpacing:"0.08em", margin:"0 0 0.1rem" }}>BOSS PATTERN</p>
+                      <p style={{ color:cfg.boss.color, fontSize:"0.55rem", fontWeight:700, margin:"0 0 0.3rem" }}>{cfg.boss.name}</p>
+                      <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.48rem", letterSpacing:"0.08em", margin:"0 0 0.1rem" }}>CORRUPTION</p>
+                      <p style={{ color:"rgba(248,113,113,0.65)", fontSize:"0.52rem", margin:"0 0 0.3rem" }}>{cfg.corruption.desc}</p>
+                      <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.48rem", letterSpacing:"0.08em", margin:"0 0 0.1rem" }}>DEPTH</p>
+                      <p style={{ color:"rgba(255,255,255,0.5)", fontSize:"0.55rem", margin:0 }}>Level {cfg.depth}</p>
+                    </>
+                  )}
+                </div>
+                {ns === "available" && (
+                  <button onClick={() => onSelectNode(hoveredNode)}
+                    style={{ background:"rgba(150,107,236,0.15)", border:"1px solid rgba(150,107,236,0.5)",
+                      borderRadius:"4px", padding:"0.4rem", color:"#c4b5fd", cursor:"pointer",
+                      fontSize:"0.6rem", fontFamily:"monospace", letterSpacing:"0.1em" }}>
+                    ENTER BRIEFING →
+                  </button>
+                )}
+                {ns === "completed" && (
+                  <p style={{ color:"rgba(74,222,128,0.5)", fontSize:"0.52rem", fontStyle:"italic" }}>System severed. Path continues.</p>
+                )}
+              </>
+            )
+          })() : (
+            <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.54rem", fontStyle:"italic", lineHeight:1.6 }}>
+              Hover a node to view system intel.<br/><br/>
+              Select an available node to begin an expedition.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", padding:"0.45rem 1.2rem",
+        display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <span style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.5rem" }}>
+          hover = intel · click available = briefing
+        </span>
+        <span style={{ color:"rgba(150,107,236,0.4)", fontSize:"0.5rem" }}>
+          SIGNAL AGE: {signal.operationalAge} runs · INTENT: {signal.recoveredIntent.toLocaleString()}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// ── Briefing Screen ────────────────────────────────────────────────────────
+function BriefingScreen({ nodeId, signal, onLaunch, onBack }: {
+  nodeId: string
+  signal: PersistentSignal
+  onLaunch: () => void
+  onBack: () => void
+}) {
+  const node = SIGNAL_ARCHIVE_E1.find(n => n.id === nodeId)
+  const cfg  = ARCHIVE_NODE_CFG[nodeId]
+  if (!node || !cfg) return null
+  const nodeState = signal.archiveNodeState ?? initialArchiveNodeState()
+  const depth = cfg.depth
+  const threatLabel = depth <= 2 ? "LOW" : depth <= 4 ? "MODERATE" : depth <= 6 ? "HIGH" : "CRITICAL"
+  const threatCol   = depth <= 2 ? "#4ade80" : depth <= 4 ? "#facc15" : depth <= 6 ? "#fb923c" : "#f87171"
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Enter") onLaunch()
+      if (e.key === "Escape") onBack()
+    }
+    window.addEventListener("keydown", h)
+    return () => window.removeEventListener("keydown", h)
+  }, [onLaunch, onBack])
+
+  return (
+    <div style={{ position:"absolute", inset:0, background:"rgba(4,4,10,0.97)", zIndex:10,
+      display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"monospace" }}>
+      <div style={{ maxWidth:"460px", width:"calc(100% - 2rem)", padding:"1.6rem" }}>
+
+        {/* Header */}
+        <div style={{ marginBottom:"1.2rem" }}>
+          <p style={{ color:"rgba(150,107,236,0.45)", fontSize:"0.5rem", letterSpacing:"0.22em", margin:"0 0 0.3rem" }}>
+            EXPEDITION BRIEFING
+          </p>
+          <p style={{ color:"#c4b5fd", fontSize:"1.1rem", fontWeight:700, margin:"0 0 0.15rem", letterSpacing:"0.12em" }}>
+            {node.name}
+          </p>
+          <p style={{ color:"rgba(255,255,255,0.35)", fontSize:"0.6rem", margin:0 }}>{node.theme}</p>
+        </div>
+
+        {/* Intel rows */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.5rem", marginBottom:"1rem" }}>
+          {/* Threat level */}
+          <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"5px", padding:"0.5rem 0.65rem" }}>
+            <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.48rem", letterSpacing:"0.1em", margin:"0 0 0.18rem" }}>THREAT LEVEL</p>
+            <p style={{ color:threatCol, fontSize:"0.72rem", fontWeight:700, margin:0 }}>{threatLabel}</p>
+            <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", margin:"0.1rem 0 0" }}>Depth {depth}</p>
+          </div>
+          {/* Boss */}
+          <div style={{ background:"rgba(255,255,255,0.02)", border:`1px solid ${cfg.boss.color}22`, borderRadius:"5px", padding:"0.5rem 0.65rem" }}>
+            <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.48rem", letterSpacing:"0.1em", margin:"0 0 0.18rem" }}>BOSS PATTERN</p>
+            <p style={{ color:cfg.boss.color, fontSize:"0.65rem", fontWeight:700, margin:0 }}>{cfg.boss.name}</p>
+            <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", margin:"0.1rem 0 0" }}>HP: {cfg.boss.hp}</p>
+          </div>
+          {/* Corruption */}
+          <div style={{ background:"rgba(248,113,113,0.04)", border:"1px solid rgba(248,113,113,0.15)", borderRadius:"5px", padding:"0.5rem 0.65rem", gridColumn:"1/-1" }}>
+            <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.48rem", letterSpacing:"0.1em", margin:"0 0 0.18rem" }}>ACTIVE CORRUPTION</p>
+            <p style={{ color:"rgba(248,113,113,0.8)", fontSize:"0.62rem", fontWeight:700, margin:"0 0 0.1rem" }}>
+              {cfg.corruption.id.replace(/_/g, " ").toUpperCase()}
+            </p>
+            <p style={{ color:"rgba(255,255,255,0.4)", fontSize:"0.56rem", margin:0 }}>{cfg.corruption.desc}</p>
+          </div>
+        </div>
+
+        {/* Signal vocabulary */}
+        <div style={{ marginBottom:"1rem" }}>
+          <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.48rem", letterSpacing:"0.12em", margin:"0 0 0.3rem" }}>SIGNAL VOCABULARY</p>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:"0.25rem" }}>
+            {node.words.map(w => (
+              <span key={w} style={{ color:"rgba(196,181,253,0.6)", fontSize:"0.54rem",
+                background:"rgba(150,107,236,0.06)", border:"1px solid rgba(150,107,236,0.15)",
+                borderRadius:"3px", padding:"0.1rem 0.32rem" }}>{w}</span>
+            ))}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div style={{ display:"flex", gap:"0.5rem" }}>
+          <button onClick={onBack} style={{ background:"transparent",
+            border:"1px solid rgba(255,255,255,0.12)", borderRadius:"5px", padding:"0.6rem 1rem",
+            color:"rgba(255,255,255,0.35)", cursor:"pointer", fontSize:"0.62rem", fontFamily:"monospace" }}>
+            ← ARCHIVE  [ESC]
+          </button>
+          <button onClick={onLaunch} style={{ flex:1, background:"linear-gradient(135deg,#7c3aed,#6d28d9)",
+            border:"none", borderRadius:"5px", padding:"0.7rem", color:"#fff", cursor:"pointer",
+            fontSize:"0.8rem", fontWeight:700, fontFamily:"monospace", letterSpacing:"0.1em",
+            boxShadow:"0 0 20px rgba(124,58,237,0.4)" }}>
+            LAUNCH EXPEDITION  [ENTER]
+          </button>
+        </div>
       </div>
     </div>
   )
