@@ -1919,11 +1919,33 @@ export default function HomePage() {
 
       // Movement: autopilot when player is at turret station, otherwise normal
       if (g.turretControlMode) {
-        // Autopilot: smooth sine-wave oscillation — feels like a competent pilot
-        const autoTarget = g.W * 0.5 + Math.sin(now / 2400) * g.W * 0.28
-        const autoDx     = autoTarget - g.px
-        g.px = Math.max(20, Math.min(g.W - 20, g.px + autoDx * 0.018))
-        g.py = PLAYER_Y + Math.sin(now / 3100) * 10  // subtle vertical drift
+        // Autopilot: simple left-right patrol (5s per full cycle)
+        const margin = 70
+        const range  = g.W - margin * 2
+        const phase  = (now % 5000) / 5000           // 0 → 1 over 5s
+        const tri    = phase < 0.5 ? phase * 2 : 2 - phase * 2  // triangle wave
+        const autoTarget = margin + tri * range
+        g.px = Math.max(20, Math.min(g.W - 20, g.px + (autoTarget - g.px) * 0.025))
+        g.py = PLAYER_Y  // stable vertical
+
+        // Keyboard barrel rotation — A/Left = CCW, D/Right = CW
+        const rotSpeed = 0.045
+        if (g.keys.has("ArrowLeft")  || g.keys.has("a")) _stationState.turretAngle -= rotSpeed
+        if (g.keys.has("ArrowRight") || g.keys.has("d")) _stationState.turretAngle += rotSpeed
+        // W/Up = snap toward nearest enemy above player
+        if (g.keys.has("ArrowUp") || g.keys.has("w")) {
+          const targets = g.words.filter(w => !w.fragment && w.type !== "powerup" && w.y < g.py - 20)
+          if (targets.length > 0) {
+            const nearest = targets.reduce((a, b) =>
+              Math.hypot(b.x - g.px, b.y - g.py) < Math.hypot(a.x - g.px, a.y - g.py) ? b : a)
+            const snapAngle = Math.atan2(nearest.y - (g.py-5), nearest.x - g.px)
+            // Smooth snap toward target
+            let da = snapAngle - _stationState.turretAngle
+            while (da > Math.PI)  da -= Math.PI * 2
+            while (da < -Math.PI) da += Math.PI * 2
+            _stationState.turretAngle += da * 0.18
+          }
+        }
       } else {
         // Normal player movement
         const movingByKey = g.keys.has("ArrowLeft") || g.keys.has("a") || g.keys.has("ArrowRight") || g.keys.has("d")
@@ -1942,9 +1964,10 @@ export default function HomePage() {
       g.trail.push({ x: g.px, y: g.py })
       if (g.trail.length > 10) g.trail.shift()
 
-      // thruster particles when moving
-      const moving = g.keys.has("ArrowLeft") || g.keys.has("a") || g.keys.has("ArrowRight") || g.keys.has("d")
-        || (g.mouseX >= 0 && Math.abs(g.mouseX - g.px) > 8)
+      // thruster particles when ship is actually moving (not when keys are rotating the turret)
+      const moving = !g.turretControlMode && (
+        g.keys.has("ArrowLeft") || g.keys.has("a") || g.keys.has("ArrowRight") || g.keys.has("d")
+        || (g.mouseX >= 0 && Math.abs(g.mouseX - g.px) > 8))
       if (moving && Math.random() < 0.45) {
         g.particles.push({
           x: g.px + (Math.random()-0.5)*10, y: g.py + 6,
@@ -2000,7 +2023,28 @@ export default function HomePage() {
         }
       }
 
-      // Normal shoot (suppressed if laser has been held > 300ms)
+      // Turret control mode: SPACE fires the turret barrel instead of ship gun
+      if (g.turretControlMode && g.keys.has(" ") && now - turretLastFire.current > 280) {
+        turretLastFire.current = now
+        const ta = _stationState.turretAngle
+        const SPEED = 10
+        const base = { kind: "turret" as const }
+        const weapon = _stationState.turretWeapon
+        if (weapon === "flak") {
+          for (let i = -3; i <= 3; i++)
+            g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(ta + i * 0.22) * (SPEED-1.5), vy: Math.sin(ta + i * 0.22) * (SPEED-1.5), col:"#fdba74", ...base })
+        } else {
+          g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(ta) * SPEED, vy: Math.sin(ta) * SPEED, col:"#a78bfa", ...base })
+          if (weapon === "triple" && (g.upgrades.triple ?? 0) >= 1) {
+            for (const sp of [-0.22, 0.22])
+              g.bullets.push({ x: g.px, y: g.py - 20, vx: Math.cos(ta+sp) * SPEED, vy: Math.sin(ta+sp) * SPEED, col:"#a78bfa", ...base })
+          }
+        }
+        _stationState.turretFiring = true
+        setTimeout(() => { _stationState.turretFiring = false }, 90)
+      }
+
+      // Normal shoot (suppressed if laser has been held > 300ms; suppressed in turret mode)
       const laserCharging = g.upgrades.laser && g.laserChargeStart > 0 && (now - g.laserChargeStart) > 300
       // API GATEWAY corruption: rate limiting — bursts of >3 shots in 600ms window are throttled
       let rateLimited = false
@@ -2017,7 +2061,7 @@ export default function HomePage() {
           }
         }
       }
-      if (!rateLimited && !laserCharging && g.keys.has(" ") && now - g.lastShot > fireInterval) {
+      if (!g.turretControlMode && !rateLimited && !laserCharging && g.keys.has(" ") && now - g.lastShot > fireInterval) {
         if (g.archiveCorruption === "packet_loss") g.archiveRateLimitCount++
         if (g.upgrades.spray) {
           for (let a = -2; a <= 2; a++)
@@ -5887,7 +5931,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
 
     // "TURRET CONTROL" status bar — bottom center
     ctx.globalAlpha = 0.75
-    const tcLabel = "TURRET CONTROL  ·  ESC or [2] to exit"
+    const tcLabel = "A/D aim  ·  W snap  ·  SPACE fire  ·  [2]/ESC exit"
     ctx.font = "8px monospace"; ctx.textAlign = "center"
     const tcW = ctx.measureText(tcLabel).width + 16
     ctx.fillStyle = "rgba(8,4,20,0.8)"; ctx.fillRect(cw/2 - tcW/2, GH - 22, tcW, 14)
