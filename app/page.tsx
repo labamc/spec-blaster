@@ -3142,6 +3142,22 @@ export default function HomePage() {
                   </div>
                 )}
 
+                {/* Signal Archive teaser */}
+                <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"0.55rem" }}>
+                  <p style={{ color:"rgba(150,107,236,0.35)", fontSize:"0.5rem", fontFamily:"monospace",
+                    letterSpacing:"0.15em", margin:"0 0 0.2rem", textAlign:"center" }}>
+                    SIGNAL ARCHIVE · EPOCH 1
+                  </p>
+                  <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.52rem", fontFamily:"monospace",
+                    margin:0, textAlign:"center", fontStyle:"italic" }}>
+                    9 failing systems · Choose your path
+                  </p>
+                  <p style={{ color:"rgba(150,107,236,0.25)", fontSize:"0.48rem", fontFamily:"monospace",
+                    margin:"0.15rem 0 0", textAlign:"center" }}>
+                    TAB → Command Mode → Signal Archive
+                  </p>
+                </div>
+
               </div>
             </Overlay>
           )}
@@ -6470,12 +6486,13 @@ function ShipBlueprint({ activeStation, roomDamage, crewAssign, roomActions, age
   roomActions: Partial<Record<StationId, string>>
   agentNames: Record<string, string>
 }) {
-  const rooms: Array<{ id: StationId; label: string; icon: string }> = [
-    { id: "bridge",      label: "BRIDGE",      icon: "◈" },
-    { id: "turret",      label: "TURRET",      icon: "⊕" },
-    { id: "salvage",     label: "SALVAGE",     icon: "◇" },
-    { id: "engineering", label: "ENGINEERING", icon: "⚙" },
+  const rooms: Array<{ id: StationId; label: string; icon: string; powerKey?: string }> = [
+    { id: "bridge",      label: "BRIDGE",      icon: "◈", powerKey: "sensors" },
+    { id: "turret",      label: "TURRET",      icon: "⊕", powerKey: "turret"  },
+    { id: "salvage",     label: "SALVAGE",     icon: "◇"                       },
+    { id: "engineering", label: "ENGINEERING", icon: "⚙", powerKey: "shields" },
   ]
+  const totalPower = Object.values(_stationState.power).reduce((a, b) => a + b, 0)
   return (
     <div>
       <span style={{ color: "rgba(255,255,255,0.2)", fontSize: "0.52rem", letterSpacing: "0.14em" }}>BLUEPRINT</span>
@@ -6496,13 +6513,16 @@ function ShipBlueprint({ activeStation, roomDamage, crewAssign, roomActions, age
             : crew === "player" ? "#a78bfa"
             : crew ? "#86efac"
             : "rgba(255,255,255,0.2)"
+          const powerVal = r.powerKey ? (_stationState.power[r.powerKey] ?? 0) : 0
+          const powerPct = powerVal / POWER_POOL
+          const powerCol = POWER_SYSTEMS.find(s => s.id === r.powerKey)?.col ?? "transparent"
           return (
             <div key={r.id} style={{ display: "flex", alignItems: "flex-start", gap: "0.35rem",
               padding: "0.2rem 0.35rem",
               border: `1px solid ${dmg > 0 ? `${dmgCol}55` : active ? "rgba(150,107,236,0.4)" : "rgba(255,255,255,0.07)"}`,
               borderRadius: "3px",
               background: dmg > 0 ? `${dmgCol}08` : active ? "rgba(150,107,236,0.05)" : "transparent" }}>
-              <span style={{ color: dmg > 0 ? dmgCol! : active ? "#a78bfa" : "rgba(255,255,255,0.2)", fontSize: "0.58rem", lineHeight:"1.3rem" }}>{r.icon}</span>
+              <span style={{ color: dmg > 0 ? dmgCol! : active ? "#a78bfa" : "rgba(255,255,255,0.2)", fontSize: "0.58rem", lineHeight:"1.5rem" }}>{r.icon}</span>
               <div style={{ flex:1 }}>
                 <div style={{ display:"flex", justifyContent:"space-between" }}>
                   <span style={{ color: dmg > 0 ? dmgCol! : "rgba(255,255,255,0.45)", fontSize: "0.52rem", letterSpacing: "0.08em" }}>
@@ -6512,11 +6532,14 @@ function ShipBlueprint({ activeStation, roomDamage, crewAssign, roomActions, age
                 </div>
                 <div style={{ display:"flex", alignItems:"center", gap:"0.3rem" }}>
                   {crew && <span style={{ color:"rgba(255,255,255,0.5)", fontSize:"0.5rem" }}>{crewName}</span>}
-                  <span style={{ color:statusCol, fontSize:"0.48rem", letterSpacing:"0.06em",
-                    animation: action ? "none" : "none" }}>
-                    {statusLine}
-                  </span>
+                  <span style={{ color:statusCol, fontSize:"0.48rem", letterSpacing:"0.06em" }}>{statusLine}</span>
                 </div>
+                {r.powerKey && powerVal > 0 && (
+                  <div style={{ height:"2px", background:"rgba(255,255,255,0.05)", borderRadius:"1px", marginTop:"0.12rem" }}>
+                    <div style={{ height:"100%", width:`${powerPct * 100}%`, background:powerCol,
+                      borderRadius:"1px", boxShadow:`0 0 3px ${powerCol}88`, transition:"width 0.3s" }} />
+                  </div>
+                )}
               </div>
             </div>
           )
@@ -7788,54 +7811,113 @@ function CMArtifacts({ artifacts }: { artifacts: string[] }) {
 
 // ── CM: Signal Archive ─────────────────────────────────────────────────────
 function CMSignalArchive() {
-  const W = 380, H = 280
+  const W = 480, H = 300
+  const [selected, setSelected] = useState<SignalNode | null>(null)
+
   return (
-    <div>
-      <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.54rem", letterSpacing:"0.14em", margin:"0 0 0.4rem" }}>
-        SIGNAL ARCHIVE · EPOCH 1: STRUCTURED SYSTEMS
-      </p>
-      <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.52rem", margin:"0 0 0.8rem", fontStyle:"italic" }}>
-        Infrastructure topology · choose your path through the failing system
-      </p>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`}
-        style={{ display:"block", background:"rgba(0,0,0,0.4)", borderRadius:"6px",
-          border:"1px solid rgba(150,107,236,0.15)" }}>
-        {/* Draw edges */}
-        {SIGNAL_ARCHIVE_E1.map(node => node.connections.map(toId => {
-          const to = SIGNAL_ARCHIVE_E1.find(n => n.id === toId)
-          if (!to) return null
-          return (
-            <line key={`${node.id}-${toId}`}
-              x1={node.x * W} y1={node.y * H + 12}
-              x2={to.x * W}   y2={to.y * H - 12}
-              stroke="rgba(150,107,236,0.25)" strokeWidth="1" strokeDasharray="3 4" />
-          )
-        }))}
-        {/* Draw nodes */}
-        {SIGNAL_ARCHIVE_E1.map(node => (
-          <g key={node.id} transform={`translate(${node.x * W},${node.y * H})`}>
-            <rect x={-55} y={-10} width={110} height={22} rx={3}
-              fill="rgba(12,12,22,0.9)" stroke="rgba(150,107,236,0.4)" strokeWidth="1" />
-            <text x={0} y={5} textAnchor="middle" fill="#a78bfa"
-              fontSize="7" fontFamily="monospace" fontWeight="bold">
-              {node.name}
-            </text>
-            <text x={0} y={14} textAnchor="middle" fill="rgba(255,255,255,0.3)"
-              fontSize="5.5" fontFamily="monospace">
-              {node.bossName}
-            </text>
-          </g>
-        ))}
-      </svg>
-      <div style={{ marginTop:"0.8rem", display:"flex", flexWrap:"wrap", gap:"0.4rem" }}>
-        {SIGNAL_ARCHIVE_E1.map(node => (
-          <div key={node.id} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.07)",
-            borderRadius:"4px", padding:"0.3rem 0.5rem", fontSize:"0.52rem" }}>
-            <span style={{ color:"rgba(150,107,236,0.7)", fontWeight:700 }}>{node.name}</span>
-            <span style={{ color:"rgba(255,255,255,0.2)", margin:"0 0.3rem" }}>→</span>
-            <span style={{ color:"rgba(248,113,113,0.6)" }}>{node.bossName}</span>
+    <div style={{ display:"flex", gap:"1rem", flexWrap:"wrap" }}>
+      {/* Topology map */}
+      <div style={{ flex:"1 1 300px", minWidth:280 }}>
+        <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.54rem", letterSpacing:"0.14em", margin:"0 0 0.3rem" }}>
+          EPOCH 1: STRUCTURED SYSTEMS
+        </p>
+        <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.5rem", margin:"0 0 0.6rem", fontStyle:"italic" }}>
+          Infrastructure topology — click a node for system intel
+        </p>
+        <svg width="100%" viewBox={`0 0 ${W} ${H}`}
+          style={{ display:"block", background:"rgba(0,0,0,0.5)", borderRadius:"6px",
+            border:"1px solid rgba(150,107,236,0.15)", cursor:"pointer" }}>
+          {/* Edges */}
+          {SIGNAL_ARCHIVE_E1.flatMap(node => node.connections.map(toId => {
+            const to = SIGNAL_ARCHIVE_E1.find(n => n.id === toId); if (!to) return null
+            return (
+              <line key={`${node.id}-${toId}`}
+                x1={node.x * W} y1={node.y * (H - 30) + 20}
+                x2={to.x * W}   y2={to.y * (H - 30) + 20}
+                stroke="rgba(150,107,236,0.2)" strokeWidth="1" strokeDasharray="4 5" />
+            )
+          }))}
+          {/* Nodes */}
+          {SIGNAL_ARCHIVE_E1.map(node => {
+            const nx = node.x * W, ny = node.y * (H - 30) + 20
+            const isSelected = selected?.id === node.id
+            return (
+              <g key={node.id} transform={`translate(${nx},${ny})`}
+                onClick={() => setSelected(isSelected ? null : node)}
+                style={{ cursor:"pointer" }}>
+                <rect x={-56} y={-11} width={112} height={24} rx={4}
+                  fill={isSelected ? "rgba(150,107,236,0.15)" : "rgba(10,10,20,0.95)"}
+                  stroke={isSelected ? "#a78bfa" : "rgba(150,107,236,0.35)"} strokeWidth={isSelected ? 1.5 : 1} />
+                <text x={0} y={3} textAnchor="middle"
+                  fill={isSelected ? "#c4b5fd" : "#a78bfa"}
+                  fontSize="6.5" fontFamily="monospace" fontWeight="bold">
+                  {node.name}
+                </text>
+                <text x={0} y={11} textAnchor="middle"
+                  fill="rgba(248,113,113,0.5)" fontSize="5.5" fontFamily="monospace">
+                  {node.bossName}
+                </text>
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+
+      {/* System intel panel */}
+      <div style={{ flex:"0 0 200px", minWidth:160 }}>
+        {selected ? (
+          <div>
+            <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.52rem", letterSpacing:"0.1em", margin:"0 0 0.5rem" }}>SYSTEM INTEL</p>
+            <p style={{ color:"#a78bfa", fontSize:"0.72rem", fontWeight:700, margin:"0 0 0.2rem", fontFamily:"monospace" }}>
+              {selected.name}
+            </p>
+            <p style={{ color:"rgba(248,113,113,0.65)", fontSize:"0.56rem", margin:"0 0 0.6rem" }}>
+              {selected.theme}
+            </p>
+            <div style={{ background:"rgba(248,113,113,0.05)", border:"1px solid rgba(248,113,113,0.15)",
+              borderRadius:"4px", padding:"0.4rem 0.5rem", marginBottom:"0.5rem" }}>
+              <p style={{ color:"rgba(248,113,113,0.5)", fontSize:"0.48rem", letterSpacing:"0.1em", margin:"0 0 0.1rem" }}>BOSS PATTERN</p>
+              <p style={{ color:"#f87171", fontSize:"0.6rem", fontWeight:700, margin:0 }}>{selected.bossName}</p>
+              <p style={{ color:"rgba(255,255,255,0.3)", fontSize:"0.52rem", margin:"0.15rem 0 0" }}>{selected.effect}</p>
+            </div>
+            <div>
+              <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.48rem", letterSpacing:"0.1em", margin:"0 0 0.2rem" }}>SIGNAL PATTERNS</p>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:"0.2rem" }}>
+                {selected.words.map(w => (
+                  <span key={w} style={{ color:"rgba(196,181,253,0.6)", fontSize:"0.52rem",
+                    background:"rgba(150,107,236,0.06)", border:"1px solid rgba(150,107,236,0.15)",
+                    borderRadius:"3px", padding:"0.1rem 0.3rem", fontFamily:"monospace" }}>
+                    {w}
+                  </span>
+                ))}
+              </div>
+            </div>
+            {selected.connections.length > 0 && (
+              <div style={{ marginTop:"0.5rem" }}>
+                <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.48rem", margin:"0 0 0.15rem" }}>DOWNSTREAM</p>
+                {selected.connections.map(id => {
+                  const node = SIGNAL_ARCHIVE_E1.find(n => n.id === id)
+                  return node ? <p key={id} style={{ color:"rgba(150,107,236,0.5)", fontSize:"0.52rem", margin:"0.05rem 0" }}>→ {node.name}</p> : null
+                })}
+              </div>
+            )}
           </div>
-        ))}
+        ) : (
+          <div>
+            <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.52rem", letterSpacing:"0.1em", margin:"0 0 0.5rem" }}>SIGNAL ARCHIVE</p>
+            <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.54rem", fontStyle:"italic", lineHeight:1.6 }}>
+              The Signal has identified 9 failing infrastructure systems.
+            </p>
+            <p style={{ color:"rgba(150,107,236,0.4)", fontSize:"0.52rem", margin:"0.5rem 0", lineHeight:1.6 }}>
+              Select a node to view system intel.
+            </p>
+            <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", paddingTop:"0.5rem", marginTop:"0.5rem" }}>
+              <p style={{ color:"rgba(255,255,255,0.1)", fontSize:"0.5rem", fontStyle:"italic" }}>
+                Selectable run mode: Season 1
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
