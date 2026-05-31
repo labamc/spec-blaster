@@ -1015,7 +1015,13 @@ export default function HomePage() {
   const [personalDepthBest, setPersonalDepthBest] = useState(0)
   const [personalSectorBest, setPersonalSectorBest] = useState(0)
   // THE SIGNAL — persistent player character across all runs
-  const [signal, setSignal] = useState<PersistentSignal>(() => loadSignal())
+  // SSR-safe: initialize with empty default so server and client render identically.
+  // The mount useEffect loads real localStorage data client-side after hydration.
+  const [signal, setSignal] = useState<PersistentSignal>({
+    foundedAt: 0, operationalAge: 0, recoveredIntent: 0,
+    clearedBosses: [], operatorsEver: [], operatorHistory: {},
+    archiveNodeState: initialArchiveNodeState(), humanArchive: {},
+  })
   const updateSignalRef = useRef<(run: { fragmentsEarned: number; defeatedBosses: string[]; crewStats: Partial<Record<string,number>>; crewAssign: Partial<Record<string,string|null>>; completedArchiveNodes?: string[] }) => void>(() => {})
   const fragmentBank = signal.recoveredIntent  // derived alias — all existing UI reads this
   const [isTouchDevice, setIsTouchDevice]         = useState(false)
