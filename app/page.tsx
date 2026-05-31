@@ -20,25 +20,23 @@ type StationId = "bridge" | "turret" | "salvage" | "engineering"
 // Module-level station state — readable by the draw() function without prop drilling
 // Written by station component event handlers, read by the canvas renderer
 const _stationState = {
-  active:           "bridge" as StationId,
-  turretAngle:      -Math.PI / 2,
-  turretWeapon:     "pulse" as "pulse" | "triple" | "spray" | "flak" | "grapple",
-  turretFiring:     false,
-  commsLog:         [] as string[],
-  sectorStart:      0,
-  markedTargetId:   null as number | null,
-  markedAt:         0,
+  active:            "bridge" as StationId,
+  turretAngle:       -Math.PI / 2,
+  turretWeapon:      "pulse" as "pulse" | "triple" | "spray" | "flak" | "grapple",
+  turretFiring:      false,
+  turretControlMode: false,   // player is in turret seat; ship on autopilot
+  commsLog:          [] as string[],
+  sectorStart:       0,
+  markedTargetId:    null as number | null,
+  markedAt:          0,
   power: { turret: 3, shields: 3, engines: 2, sensors: 2 } as Record<string, number>,
-  // Phase 4: crew AI
-  opsFeedBuffer:    [] as Array<{ crew: string; message: string; type: string; ts: number }>,
-  roomActions:      {} as Partial<Record<StationId, { text: string; until: number }>>,
-  // Operator status — current intent per crew, shown in Operator Status panel
-  operatorStatus:   {} as Partial<Record<string, { action: string; detail?: string; ts: number }>>,
-  lastCrewAI:       0,
-  crewAssignCache:  {} as Partial<Record<StationId, string>>,
-  crewCacheTime:    0,
-  // Feed rate limiting — enforce max 1 meaningful event per 5s per crew
-  lastFeedTs:       {} as Partial<Record<string, number>>,
+  opsFeedBuffer:     [] as Array<{ crew: string; message: string; type: string; ts: number }>,
+  roomActions:       {} as Partial<Record<StationId, { text: string; until: number }>>,
+  operatorStatus:    {} as Partial<Record<string, { action: string; detail?: string; ts: number }>>,
+  lastCrewAI:        0,
+  crewAssignCache:   {} as Partial<Record<StationId, string>>,
+  crewCacheTime:     0,
+  lastFeedTs:        {} as Partial<Record<string, number>>,
 }
 
 interface Station {
@@ -941,7 +939,8 @@ interface GState {
   archiveRateLimitCount:     number
   archiveRateLimitWindowEnd: number
   archiveCachedWords:        Array<{ text: string; type: Word["type"]; respawnAt: number }>
-  archiveEpochComplete:      boolean  // RECURSION CORE cleared this expedition
+  archiveEpochComplete:      boolean
+  turretControlMode:         boolean  // player is at turret station; ship on autopilot
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -986,7 +985,7 @@ function initState(W: number): GState {
     archiveMode: false, archiveNodeId: null, archiveNodeWords: [], archiveBoss: null,
     archiveDepth: 0, archiveCorruption: null, archiveInstability: 0, archiveLastRadarDmg: 0,
     archiveRateLimitCount: 0, archiveRateLimitWindowEnd: 0, archiveCachedWords: [],
-    archiveEpochComplete: false,
+    archiveEpochComplete: false, turretControlMode: false,
   }
 }
 
@@ -1046,6 +1045,12 @@ export default function HomePage() {
   // ── Station system state ────────────────────────────────────────────────
   const [activeStation, setActiveStation] = useState<StationId>("bridge")
 
+  // Turret Control Mode — player pilots turret, ship on autopilot
+  const [turretControlMode, setTurretControlMode] = useState(false)
+  const canvasFireRef     = useRef(false)      // mouse held on canvas
+  const canvasFireInterval= useRef<ReturnType<typeof setInterval>|null>(null)
+  const canvasAngleRef    = useRef(-Math.PI/2)  // current aim angle from canvas mouse
+
   // Command Mode — TAB to freeze game, full mission control overlay
   const [commandMode, setCommandMode] = useState(false)
   useEffect(() => {
@@ -1089,6 +1094,8 @@ export default function HomePage() {
       for (const [k, v] of Object.entries(_stationState.roomActions)) {
         if (v && v.until > now) actions[k as StationId] = v.text
       }
+      // Turret control mode overrides the turret room action
+      if (_stationState.turretControlMode) actions["turret"] = "PLAYER CONTROL"
       setRoomActionsSnap(actions)
       // Snapshot crew stats
       setCrewStatsSnap({ ...g.crewStats })
@@ -1262,22 +1269,35 @@ export default function HomePage() {
     }
   }
 
-  // ── Station keyboard shortcuts (1/2/3) ─────────────────────────────────
-  // Disabled during "upgrade" phase where 1/2/3 already select upgrade cards
+  // ── Station keyboard shortcuts ──────────────────────────────────────────
+  // Disabled during "upgrade" phase where 1/2/3 select upgrade cards
   useEffect(() => {
     const stationKeys: Record<string, StationId> = { "1": "bridge", "2": "turret", "3": "salvage", "4": "engineering" }
     const handler = (e: KeyboardEvent) => {
-      if (phaseRef.current === "upgrade") return  // defer to CLIScreen
+      if (phaseRef.current === "upgrade") return
+
+      // ESC exits turret control mode
+      if (e.key === "Escape" && _stationState.turretControlMode) {
+        e.preventDefault(); exitTurretControl(); return
+      }
+
       if (stationKeys[e.key]) {
         e.preventDefault()
         const sid = stationKeys[e.key]
-        _stationState.active = sid
-        setActiveStation(sid)
+        if (sid === "turret" && phaseRef.current === "playing") {
+          // 2 toggles turret control when in an active expedition
+          if (_stationState.turretControlMode) { exitTurretControl() }
+          else                                  { enterTurretControl() }
+        } else {
+          // Exit turret mode if switching to another station
+          if (_stationState.turretControlMode) exitTurretControl()
+          _stationState.active = sid; setActiveStation(sid)
+        }
       }
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [])
+  }, [])  // eslint-disable-line
 
   // load leaderboard top + personal best on mount
   useEffect(() => {
@@ -1311,6 +1331,59 @@ export default function HomePage() {
     try { const an = localStorage.getItem("sb_agent_names"); if (an) setAgentNames(JSON.parse(an)) } catch {}
     setIsTouchDevice("ontouchstart" in window || navigator.maxTouchPoints > 0)
   }, [])
+
+  // ── Turret Control Mode ─────────────────────────────────────────────────
+  function enterTurretControl() {
+    _stationState.active = "turret"; setActiveStation("turret")
+    _stationState.turretControlMode = true
+    G.current.turretControlMode = true
+    setTurretControlMode(true)
+    crewLogForce("VETERAN", "Turret control transferred to player", "action")
+  }
+
+  function exitTurretControl() {
+    _stationState.turretControlMode = false
+    G.current.turretControlMode = false
+    setTurretControlMode(false)
+    if (canvasFireInterval.current) { clearInterval(canvasFireInterval.current); canvasFireInterval.current = null }
+    canvasFireRef.current = false
+    crewLogForce("VETERAN", "Turret control returned to operator", "action")
+  }
+
+  // Canvas mouse handlers for turret control mode
+  function getCanvasAngle(e: React.MouseEvent<HTMLCanvasElement>): number {
+    const canvas = canvasRef.current; if (!canvas) return canvasAngleRef.current
+    const rect   = canvas.getBoundingClientRect()
+    const scaleX = GW / rect.width
+    const cx     = (e.clientX - rect.left) * scaleX
+    const cy     = (e.clientY - rect.top)  * scaleX
+    const g      = G.current
+    return Math.atan2(cy - (g.py - 5), cx - g.px)
+  }
+
+  function handleCanvasMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (!turretControlMode) return
+    const angle = getCanvasAngle(e)
+    canvasAngleRef.current = angle
+    _stationState.turretAngle = angle
+  }
+
+  function handleCanvasMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (!turretControlMode || e.button !== 0) return
+    const angle = getCanvasAngle(e)
+    canvasAngleRef.current = angle; _stationState.turretAngle = angle
+    canvasFireRef.current = true
+    onTurretFire(angle)
+    canvasFireInterval.current = setInterval(() => {
+      if (!canvasFireRef.current) return
+      onTurretFire(canvasAngleRef.current)
+    }, 80)  // poll fast; onTurretFire rate-limits internally
+  }
+
+  function handleCanvasMouseUp() {
+    canvasFireRef.current = false
+    if (canvasFireInterval.current) { clearInterval(canvasFireInterval.current); canvasFireInterval.current = null }
+  }
 
   // ── Archive: launch an expedition into a specific node ──────────────────
   function startExpedition(nodeId: string) {
@@ -1844,17 +1917,25 @@ export default function HomePage() {
       }
       if (g.capyMsg && now > g.capyMsgEnd) g.capyMsg = ""
 
-      // keyboard player movement (takes priority — suppresses mouse tracking while held)
-      const movingByKey = g.keys.has("ArrowLeft") || g.keys.has("a") || g.keys.has("ArrowRight") || g.keys.has("d")
-      if (g.keys.has("ArrowLeft")  || g.keys.has("a")) g.px = Math.max(20, g.px - spd)
-      if (g.keys.has("ArrowRight") || g.keys.has("d")) g.px = Math.min(g.W - 20, g.px + spd)
-      if (g.keys.has("ArrowUp")    || g.keys.has("w")) g.py = Math.max(PLAYER_Y - 50, g.py - spd)
-      if (g.keys.has("ArrowDown")  || g.keys.has("s")) g.py = Math.min(PLAYER_Y + 18, g.py + spd)
-
-      // mouse tracking (only when no keyboard movement keys are held)
-      if (!movingByKey && g.mouseX >= 0) {
-        const dx = g.mouseX - g.px
-        if (Math.abs(dx) > 4) g.px += Math.sign(dx) * Math.min(Math.abs(dx) * 0.12, 6)
+      // Movement: autopilot when player is at turret station, otherwise normal
+      if (g.turretControlMode) {
+        // Autopilot: smooth sine-wave oscillation — feels like a competent pilot
+        const autoTarget = g.W * 0.5 + Math.sin(now / 2400) * g.W * 0.28
+        const autoDx     = autoTarget - g.px
+        g.px = Math.max(20, Math.min(g.W - 20, g.px + autoDx * 0.018))
+        g.py = PLAYER_Y + Math.sin(now / 3100) * 10  // subtle vertical drift
+      } else {
+        // Normal player movement
+        const movingByKey = g.keys.has("ArrowLeft") || g.keys.has("a") || g.keys.has("ArrowRight") || g.keys.has("d")
+        if (g.keys.has("ArrowLeft")  || g.keys.has("a")) g.px = Math.max(20, g.px - spd)
+        if (g.keys.has("ArrowRight") || g.keys.has("d")) g.px = Math.min(g.W - 20, g.px + spd)
+        if (g.keys.has("ArrowUp")    || g.keys.has("w")) g.py = Math.max(PLAYER_Y - 50, g.py - spd)
+        if (g.keys.has("ArrowDown")  || g.keys.has("s")) g.py = Math.min(PLAYER_Y + 18, g.py + spd)
+        // Mouse tracking
+        if (!movingByKey && g.mouseX >= 0) {
+          const dx = g.mouseX - g.px
+          if (Math.abs(dx) > 4) g.px += Math.sign(dx) * Math.min(Math.abs(dx) * 0.12, 6)
+        }
       }
 
       // motion trail
@@ -3843,7 +3924,14 @@ export default function HomePage() {
               onClose={() => setShowAgentModule(false)} />
           )}
 
-          <canvas ref={canvasRef} height={GH} style={{ display:"block", width:"100%", height:GH, cursor:"crosshair" }} />
+          <canvas ref={canvasRef} height={GH}
+            style={{ display:"block", width:"100%", height:GH,
+              cursor: turretControlMode ? "none" : "crosshair" }}
+            onMouseMove={handleCanvasMouseMove}
+            onMouseDown={handleCanvasMouseDown}
+            onMouseUp={handleCanvasMouseUp}
+            onMouseLeave={handleCanvasMouseUp}
+          />
 
           {/* Command Mode Overlay */}
           {commandMode && (
@@ -3865,7 +3953,15 @@ export default function HomePage() {
             hull={{ maxHull: MAX_LIVES, currentHull: lives }}
             stations={STATION_DEFS}
             activeStation={activeStation}
-            onSelectStation={(sid) => { _stationState.active = sid; setActiveStation(sid) }}
+            onSelectStation={(sid) => {
+              if (sid === "turret" && phaseRef.current === "playing") {
+                if (_stationState.turretControlMode) { exitTurretControl() }
+                else                                  { enterTurretControl() }
+              } else {
+                if (_stationState.turretControlMode) exitTurretControl()
+                _stationState.active = sid; setActiveStation(sid)
+              }
+            }}
             liveG={liveG}
             unlockedAgents={unlockedAgents}
             agentNames={agentNames}
@@ -5710,8 +5806,107 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     }
   }
 
-  // ── Turret station reticle — draws when turret station is active ──────────
-  if (!attractMode && _stationState.active === "turret") {
+  // ── Turret Control Mode — full HUD overlay when player is at the turret ──
+  if (!attractMode && _stationState.turretControlMode) {
+    const ta      = _stationState.turretAngle
+    const px      = g.px, py = g.py - 5
+    const weapon  = _stationState.turretWeapon
+    const weaponColor: Record<string, string> = {
+      pulse:"#a78bfa", triple:"#a78bfa", spray:"#a78bfa", flak:"#fdba74", grapple:"#4ade80"
+    }
+    const wCol = weaponColor[weapon] ?? "#a78bfa"
+
+    ctx.save()
+
+    // Vignette frame — dark edges signal station immersion
+    try {
+      const vgn = ctx.createRadialGradient(cw/2, GH*0.55, GH*0.22, cw/2, GH*0.55, Math.max(cw,GH)*0.72)
+      vgn.addColorStop(0, "rgba(0,0,0,0)")
+      vgn.addColorStop(1, "rgba(8,4,20,0.55)")
+      ctx.fillStyle = vgn; ctx.fillRect(0, 0, cw, GH)
+    } catch {}
+
+    // Corner brackets — station viewport frame
+    const bsz = 22, bw2 = 2
+    ctx.strokeStyle = `${wCol}60`; ctx.lineWidth = bw2
+    for (const [bx, by] of [[0,0],[cw-bsz,0],[0,GH-bsz],[cw-bsz,GH-bsz]] as [number,number][]) {
+      ctx.beginPath()
+      ctx.moveTo(bx + bsz, by); ctx.lineTo(bx, by); ctx.lineTo(bx, by + bsz)
+      ctx.stroke()
+    }
+
+    // Large aiming circle around player
+    const RING1 = 70, RING2 = 110
+    ctx.globalAlpha = 0.18
+    ctx.strokeStyle = wCol; ctx.lineWidth = 1
+    ctx.beginPath(); ctx.arc(px, py, RING1, 0, Math.PI*2); ctx.stroke()
+    ctx.globalAlpha = 0.08
+    ctx.beginPath(); ctx.arc(px, py, RING2, 0, Math.PI*2); ctx.stroke()
+
+    // Barrel line — long, prominent
+    const BARREL_LEN = 90
+    const bx2 = px + Math.cos(ta) * BARREL_LEN
+    const by2 = py + Math.sin(ta) * BARREL_LEN
+    ctx.globalAlpha = 0.6
+    ctx.strokeStyle = wCol; ctx.lineWidth = 1.5; ctx.setLineDash([6, 5])
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(bx2, by2); ctx.stroke()
+    ctx.setLineDash([])
+
+    // Reticle at barrel tip
+    const pulse = 0.65 + 0.25 * Math.abs(Math.sin(now / 200))
+    ctx.globalAlpha = pulse
+    ctx.strokeStyle = wCol; ctx.lineWidth = 1.8
+    ctx.shadowColor = wCol; ctx.shadowBlur = 10
+    ctx.beginPath(); ctx.arc(bx2, by2, 9, 0, Math.PI*2); ctx.stroke()
+    ctx.globalAlpha = pulse * 0.55; ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(bx2-6, by2); ctx.lineTo(bx2+6, by2)
+    ctx.moveTo(bx2, by2-6); ctx.lineTo(bx2, by2+6)
+    ctx.stroke()
+    ctx.shadowBlur = 0
+
+    // Target acquisition — ring nearest words
+    const targets = g.words.filter(w => !w.fragment && w.type !== "powerup").slice(0, 5)
+    targets.forEach(w => {
+      const dist = Math.hypot(w.x - px, w.y - py)
+      const isMarked = w.id === _stationState.markedTargetId
+      const tPulse = 0.4 + 0.25 * Math.abs(Math.sin(now / 300 + w.id))
+      ctx.globalAlpha = tPulse * (isMarked ? 0.9 : 0.35)
+      ctx.strokeStyle = isMarked ? "#f87171" : (w.elite ? "#facc15" : wCol)
+      ctx.lineWidth = isMarked ? 1.5 : 0.8
+      ctx.beginPath(); ctx.arc(w.x, w.y, (isMarked ? 14 : 11) + 2 * Math.sin(now/180 + w.id), 0, Math.PI*2); ctx.stroke()
+    })
+
+    // Weapon mode badge — top left of viewport
+    ctx.globalAlpha = 0.85
+    ctx.fillStyle = "rgba(8,4,20,0.7)"; ctx.fillRect(8, 20, 70, 18)
+    ctx.strokeStyle = `${wCol}50`; ctx.lineWidth = 1
+    ctx.strokeRect(8, 20, 70, 18)
+    ctx.fillStyle = wCol; ctx.font = "bold 9px monospace"; ctx.textAlign = "left"
+    ctx.fillText(`⊕ ${weapon.toUpperCase()}`, 13, 32)
+
+    // "TURRET CONTROL" status bar — bottom center
+    ctx.globalAlpha = 0.75
+    const tcLabel = "TURRET CONTROL  ·  ESC or [2] to exit"
+    ctx.font = "8px monospace"; ctx.textAlign = "center"
+    const tcW = ctx.measureText(tcLabel).width + 16
+    ctx.fillStyle = "rgba(8,4,20,0.8)"; ctx.fillRect(cw/2 - tcW/2, GH - 22, tcW, 14)
+    ctx.strokeStyle = `${wCol}44`; ctx.lineWidth = 1
+    ctx.strokeRect(cw/2 - tcW/2, GH - 22, tcW, 14)
+    ctx.fillStyle = `${wCol}cc`
+    ctx.fillText(tcLabel, cw/2, GH - 12)
+
+    // Autopilot indicator — top right
+    ctx.globalAlpha = 0.6; ctx.textAlign = "right"
+    ctx.fillStyle = "rgba(8,4,20,0.7)"; ctx.fillRect(cw - 80, 20, 72, 14)
+    ctx.fillStyle = "rgba(74,222,128,0.8)"; ctx.font = "7.5px monospace"
+    ctx.fillText("● AUTOPILOT", cw - 12, 30)
+
+    ctx.globalAlpha = 1; ctx.restore()
+  }
+
+  // ── Turret station reticle — small passive indicator when turret tab is active ──
+  if (!attractMode && _stationState.active === "turret" && !_stationState.turretControlMode) {
     const ta       = _stationState.turretAngle
     const isFiring = _stationState.turretFiring
     const REL      = 55            // aiming line length from player
