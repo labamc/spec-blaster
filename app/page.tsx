@@ -855,9 +855,10 @@ interface GState {
   archiveCorruption:     CorruptionId | null
   archiveInstability:        number
   archiveLastRadarDmg:       number
-  archiveRateLimitCount:     number   // packet_loss: shots fired in current window
-  archiveRateLimitWindowEnd: number   // packet_loss: window expiry timestamp
+  archiveRateLimitCount:     number
+  archiveRateLimitWindowEnd: number
   archiveCachedWords:        Array<{ text: string; type: Word["type"]; respawnAt: number }>
+  archiveEpochComplete:      boolean  // RECURSION CORE cleared this expedition
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -902,6 +903,7 @@ function initState(W: number): GState {
     archiveMode: false, archiveNodeId: null, archiveNodeWords: [], archiveBoss: null,
     archiveDepth: 0, archiveCorruption: null, archiveInstability: 0, archiveLastRadarDmg: 0,
     archiveRateLimitCount: 0, archiveRateLimitWindowEnd: 0, archiveCachedWords: [],
+    archiveEpochComplete: false,
   }
 }
 
@@ -915,6 +917,8 @@ export default function HomePage() {
   const [phase, setPhase]           = useState<"attract"|"archive"|"briefing"|"playing"|"capy"|"reward"|"upgrade"|"over">("attract")
   const [archiveSelectedNode, setArchiveSelectedNode] = useState<string | null>(null)
   const [archiveCompletedThisRun, setArchiveCompletedThisRun] = useState<string[]>([])
+  const [lastCompletedNodeId, setLastCompletedNodeId] = useState<string | null>(null)
+  const [epochCompleteData, setEpochCompleteData] = useState<{ fragmentsGained: number; newAge: number } | null>(null)
   const completeArchiveNodeRef = useRef<(nodeId: string) => void>(() => {})
   const [score, setScore]           = useState(0)
   const [level, setLevel]           = useState(1)
@@ -1235,6 +1239,15 @@ export default function HomePage() {
   function returnToArchive() {
     setArchiveSelectedNode(null)
     setArchiveCompletedThisRun([])
+    const g = G.current
+    // Epoch 1 complete: RECURSION CORE was just cleared
+    if (g.archiveEpochComplete) {
+      g.archiveEpochComplete = false
+      setEpochCompleteData({
+        fragmentsGained: g.fragmentsEarned,
+        newAge: signal.operationalAge + 1,  // +1 because run end hasn't merged yet
+      })
+    }
     phaseRef.current = "archive"; setPhase("archive")
   }
 
@@ -1276,6 +1289,7 @@ export default function HomePage() {
 
   // Complete an archive node and unlock its connections in persistent signal
   completeArchiveNodeRef.current = (nodeId: string) => {
+    setLastCompletedNodeId(nodeId)
     setArchiveCompletedThisRun(prev => prev.includes(nodeId) ? prev : [...prev, nodeId])
     setSignal(prev => {
       let ns = { ...(prev.archiveNodeState ?? initialArchiveNodeState()), [nodeId]: "completed" as NodeState }
@@ -1284,6 +1298,10 @@ export default function HomePage() {
       saveSignal(updated)
       return updated
     })
+    // Flag epoch complete when RECURSION CORE (the final Epoch 1 node) is cleared
+    if (nodeId === "recursion") {
+      G.current.archiveEpochComplete = true
+    }
   }
 
   unlockAgentRef.current = (id: string) => {
@@ -3559,10 +3577,28 @@ export default function HomePage() {
             </Overlay>
           )}
 
-          {phase === "archive" && (
+          {phase === "archive" && !epochCompleteData && (
             <ArchiveScreen
               signal={signal}
-              onSelectNode={(nodeId) => { setArchiveSelectedNode(nodeId); phaseRef.current = "briefing"; setPhase("briefing") }}
+              lastCompletedNodeId={lastCompletedNodeId}
+              onSelectNode={(nodeId) => {
+                setLastCompletedNodeId(null)  // clear after player acts on the context
+                setArchiveSelectedNode(nodeId)
+                phaseRef.current = "briefing"; setPhase("briefing")
+              }}
+            />
+          )}
+
+          {phase === "archive" && epochCompleteData && (
+            <EpochCompleteScreen
+              signal={signal}
+              fragmentsGained={epochCompleteData.fragmentsGained}
+              newAge={epochCompleteData.newAge}
+              onContinue={() => {
+                setEpochCompleteData(null)
+                setLastCompletedNodeId(null)
+                phaseRef.current = "attract"; setPhase("attract")
+              }}
             />
           )}
 
@@ -8597,30 +8633,70 @@ const NODE_STATE_STYLE: Record<NodeState, { border: string; bg: string; textCol:
   corrupted: { border: "rgba(248,113,113,0.4)",  bg: "rgba(248,113,113,0.05)", textCol: "#f87171",               labelCol: "rgba(248,113,113,0.5)" },
 }
 
-function ArchiveScreen({ signal, onSelectNode }: {
+// Compute which nodes were newly unlocked when a given node was completed
+function getNewlyUnlocked(completedId: string, nodeState: Record<string, NodeState>): string[] {
+  const node = SIGNAL_ARCHIVE_E1.find(n => n.id === completedId)
+  if (!node) return []
+  return node.connections.filter(cid => nodeState[cid] === "available")
+}
+
+// Build post-expedition summary line
+function buildArchiveSummary(completedId: string, nodeState: Record<string, NodeState>): string {
+  const node = SIGNAL_ARCHIVE_E1.find(n => n.id === completedId)
+  if (!node) return ""
+  const unlocked = node.connections
+    .map(cid => SIGNAL_ARCHIVE_E1.find(n => n.id === cid))
+    .filter((n): n is SignalNode => !!n && nodeState[n.id] === "available")
+  if (unlocked.length === 0) return `${node.name} severed.`
+  const names = unlocked.map(n => n.name).join(" and ")
+  return `${node.name} severed — ${names} ${unlocked.length > 1 ? "are" : "is"} now accessible.`
+}
+
+function ArchiveScreen({ signal, lastCompletedNodeId, onSelectNode }: {
   signal: PersistentSignal
+  lastCompletedNodeId: string | null
   onSelectNode: (nodeId: string) => void
 }) {
   const [hoveredNode, setHoveredNode] = useState<string | null>(null)
   const nodeState = signal.archiveNodeState ?? initialArchiveNodeState()
   const W = 560, H = 340
 
+  // Newly unlocked nodes — pulse/glow to show they're freshly accessible
+  const newlyUnlocked = lastCompletedNodeId ? getNewlyUnlocked(lastCompletedNodeId, nodeState) : []
+  const summaryLine   = lastCompletedNodeId ? buildArchiveSummary(lastCompletedNodeId, nodeState) : null
+
   return (
     <div style={{ position:"absolute", inset:0, background:"rgba(4,4,10,0.97)", zIndex:10,
       display:"flex", flexDirection:"column", fontFamily:"monospace" }}>
       {/* Header */}
-      <div style={{ borderBottom:"1px solid rgba(150,107,236,0.18)", padding:"0.65rem 1.2rem",
-        display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <div>
-          <p style={{ color:"rgba(150,107,236,0.5)", fontSize:"0.5rem", letterSpacing:"0.22em", margin:"0 0 0.12rem" }}>SIGNAL ARCHIVE · EPOCH 1</p>
-          <p style={{ color:"#c4b5fd", fontSize:"0.78rem", fontWeight:700, margin:0, letterSpacing:"0.1em" }}>STRUCTURED SYSTEMS</p>
+      <div style={{ borderBottom:"1px solid rgba(150,107,236,0.18)", padding:"0.55rem 1.2rem",
+        display:"flex", flexDirection:"column", gap:"0.2rem" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div>
+            <p style={{ color:"rgba(150,107,236,0.5)", fontSize:"0.5rem", letterSpacing:"0.22em", margin:"0 0 0.1rem" }}>SIGNAL ARCHIVE · EPOCH 1</p>
+            <p style={{ color:"#c4b5fd", fontSize:"0.78rem", fontWeight:700, margin:0, letterSpacing:"0.1em" }}>STRUCTURED SYSTEMS</p>
+          </div>
+          <div style={{ textAlign:"right" }}>
+            <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", margin:"0 0 0.1rem" }}>ARCHIVE COMPLETION</p>
+            <p style={{ color:"rgba(74,222,128,0.7)", fontSize:"0.72rem", fontWeight:700, margin:0 }}>
+              {signalArchiveCompletion(signal)}% · {signal.clearedBosses.length}/{TOTAL_ARCHIVE_NODES}
+            </p>
+          </div>
         </div>
-        <div style={{ textAlign:"right" }}>
-          <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", margin:"0 0 0.1rem" }}>ARCHIVE COMPLETION</p>
-          <p style={{ color:"rgba(74,222,128,0.7)", fontSize:"0.72rem", fontWeight:700, margin:0 }}>
-            {signalArchiveCompletion(signal)}% · {signal.clearedBosses.length}/{TOTAL_ARCHIVE_NODES}
-          </p>
-        </div>
+        {/* Post-node summary — shows immediately after returning from an expedition */}
+        {summaryLine && (
+          <div style={{ background:"rgba(74,222,128,0.06)", border:"1px solid rgba(74,222,128,0.2)",
+            borderRadius:"4px", padding:"0.28rem 0.6rem" }}>
+            <span style={{ color:"rgba(74,222,128,0.8)", fontSize:"0.58rem", fontFamily:"monospace" }}>
+              ◈ {summaryLine}
+            </span>
+            {newlyUnlocked.length > 0 && (
+              <span style={{ color:"rgba(196,181,253,0.55)", fontSize:"0.54rem", marginLeft:"0.5rem" }}>
+                Hover to view intel. Click to begin.
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Main layout: topology + detail */}
@@ -8643,28 +8719,37 @@ function ArchiveScreen({ signal, onSelectNode }: {
             }))}
             {/* Nodes */}
             {SIGNAL_ARCHIVE_E1.map(node => {
-              const ns      = nodeState[node.id] ?? "unknown"
-              const style   = NODE_STATE_STYLE[ns]
-              const nx      = node.x * W
-              const ny      = node.y * (H - 40) + 24
-              const cfg     = ARCHIVE_NODE_CFG[node.id]
-              const isHover = hoveredNode === node.id
-              const canClick= ns === "available"
+              const ns       = nodeState[node.id] ?? "unknown"
+              const style    = NODE_STATE_STYLE[ns]
+              const nx       = node.x * W
+              const ny       = node.y * (H - 40) + 24
+              const cfg      = ARCHIVE_NODE_CFG[node.id]
+              const isHover  = hoveredNode === node.id
+              const canClick = ns === "available"
+              const isNew    = newlyUnlocked.includes(node.id)  // just unlocked this return
+              // Pulse animation for newly unlocked nodes — CSS animation via opacity
+              const newPulse = isNew ? 0.7 + 0.3 * Math.abs(Math.sin(Date.now() / 500)) : 1
               return (
                 <g key={node.id} transform={`translate(${nx},${ny})`}
                   onClick={() => canClick && onSelectNode(node.id)}
                   onMouseEnter={() => setHoveredNode(node.id)}
                   onMouseLeave={() => setHoveredNode(null)}
                   style={{ cursor: canClick ? "pointer" : "default" }}>
+                  {/* Glow ring for newly unlocked nodes */}
+                  {isNew && (
+                    <rect x={-64} y={-16} width={128} height={34} rx={6}
+                      fill="none" stroke="rgba(150,107,236,0.6)" strokeWidth="1.5" strokeDasharray="4 3"
+                      opacity={newPulse} />
+                  )}
                   <rect x={-60} y={-12} width={120} height={26} rx={4}
-                    fill={isHover && canClick ? "rgba(150,107,236,0.12)" : style.bg}
-                    stroke={isHover && canClick ? "rgba(150,107,236,0.8)" : style.border}
-                    strokeWidth={isHover ? 1.5 : 1} />
+                    fill={isNew ? "rgba(150,107,236,0.1)" : isHover && canClick ? "rgba(150,107,236,0.12)" : style.bg}
+                    stroke={isNew ? "rgba(150,107,236,0.75)" : isHover && canClick ? "rgba(150,107,236,0.8)" : style.border}
+                    strokeWidth={isNew || isHover ? 1.5 : 1} />
                   {/* Completion check */}
                   {ns === "completed" && <text x={-50} y={4} fontSize="8" fill="rgba(74,222,128,0.7)" fontFamily="monospace">✓</text>}
                   {/* Node name */}
                   <text x={ns === "completed" ? -36 : 0} y={2} textAnchor={ns === "completed" ? "start" : "middle"}
-                    fontSize="6.5" fontFamily="monospace" fontWeight="bold" fill={style.textCol}>
+                    fontSize="6.5" fontFamily="monospace" fontWeight="bold" fill={isNew ? "#c4b5fd" : style.textCol}>
                     {ns === "unknown" ? "???" : node.name}
                   </text>
                   {/* Boss name */}
@@ -8673,14 +8758,39 @@ function ArchiveScreen({ signal, onSelectNode }: {
                       {cfg.boss.name}
                     </text>
                   )}
-                  {/* AVAILABLE indicator */}
-                  {ns === "available" && (
+                  {/* NEW badge — shown for freshly unlocked nodes */}
+                  {isNew && (
+                    <g>
+                      <rect x={34} y={-22} width={22} height={10} rx={2} fill="rgba(150,107,236,0.9)" />
+                      <text x={45} y={-14} textAnchor="middle" fontSize="5.5" fontFamily="monospace"
+                        fontWeight="bold" fill="#ffffff">NEW</text>
+                    </g>
+                  )}
+                  {/* AVAILABLE indicator — shown for all selectable nodes (dimmer than NEW) */}
+                  {ns === "available" && !isNew && (
                     <text x={0} y={-15} textAnchor="middle" fontSize="5" fontFamily="monospace"
-                      fill="rgba(150,107,236,0.7)">AVAILABLE</text>
+                      fill="rgba(150,107,236,0.55)">AVAILABLE</text>
                   )}
                 </g>
               )
             })}
+            {/* Epoch 2 teaser node — visible but locked when any Epoch 1 nodes are completed */}
+            {signal.clearedBosses.length > 0 && (() => {
+              const ep2x = 0.5 * W, ep2y = (H - 40) + 24 + 26
+              return (
+                <g>
+                  <line x1={0.5 * W} y1={(1.0 * (H-40) + 24) + 13}
+                        x2={ep2x}    y2={ep2y - 12}
+                    stroke="rgba(255,255,255,0.04)" strokeWidth="1" strokeDasharray="3 6" />
+                  <rect x={ep2x - 60} y={ep2y - 11} width={120} height={22} rx={3}
+                    fill="rgba(255,255,255,0.01)" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
+                  <text x={ep2x} y={ep2y + 1} textAnchor="middle" fontSize="6" fontFamily="monospace"
+                    fill="rgba(255,255,255,0.14)" fontWeight="bold">EPOCH 2: PLATFORM SPRAWL</text>
+                  <text x={ep2x} y={ep2y + 9} textAnchor="middle" fontSize="5.5" fontFamily="monospace"
+                    fill="rgba(255,255,255,0.08)">⊗ LOCKED</text>
+                </g>
+              )
+            })()}
           </svg>
         </div>
 
@@ -8743,6 +8853,88 @@ function ArchiveScreen({ signal, onSelectNode }: {
         <span style={{ color:"rgba(150,107,236,0.4)", fontSize:"0.5rem" }}>
           SIGNAL AGE: {signal.operationalAge} runs · INTENT: {signal.recoveredIntent.toLocaleString()}
         </span>
+      </div>
+    </div>
+  )
+}
+
+// ── Epoch Complete Screen ──────────────────────────────────────────────────
+function EpochCompleteScreen({ signal, fragmentsGained, newAge, onContinue }: {
+  signal: PersistentSignal
+  fragmentsGained: number
+  newAge: number
+  onContinue: () => void
+}) {
+  const completion = signalArchiveCompletion(signal)
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") onContinue() }
+    window.addEventListener("keydown", h)
+    return () => window.removeEventListener("keydown", h)
+  }, [onContinue])
+
+  return (
+    <div style={{ position:"absolute", inset:0, background:"rgba(4,4,10,0.98)", zIndex:20,
+      display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"monospace" }}>
+      <div style={{ maxWidth:"420px", width:"calc(100% - 2rem)", textAlign:"center", padding:"2rem" }}>
+
+        {/* Epoch marker */}
+        <p style={{ color:"rgba(150,107,236,0.4)", fontSize:"0.5rem", letterSpacing:"0.3em",
+          margin:"0 0 0.6rem" }}>EPOCH 1 · STRUCTURED SYSTEMS</p>
+
+        {/* Primary headline */}
+        <p style={{ color:"#4ade80", fontSize:"1.4rem", fontWeight:700, letterSpacing:"0.15em",
+          margin:"0 0 0.2rem", textShadow:"0 0 30px rgba(74,222,128,0.4)" }}>
+          NETWORK SEVERED
+        </p>
+        <p style={{ color:"rgba(255,255,255,0.4)", fontSize:"0.65rem", margin:"0 0 1.6rem",
+          lineHeight:1.6 }}>
+          The Signal has severed the Recursion Core.<br/>
+          All structured systems are offline.
+        </p>
+
+        {/* Stats */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.5rem", marginBottom:"1.8rem" }}>
+          {[
+            ["ARCHIVE COMPLETION", `${completion}%`],
+            ["OPERATIONAL AGE",    `${newAge} runs`],
+            ["RECOVERED INTENT",   fragmentsGained > 0 ? `+${fragmentsGained} this run` : signal.recoveredIntent.toLocaleString()],
+            ["SYSTEMS SEVERED",    `${signal.clearedBosses.length}/${TOTAL_ARCHIVE_NODES}`],
+          ].map(([label, val]) => (
+            <div key={label} style={{ background:"rgba(74,222,128,0.04)",
+              border:"1px solid rgba(74,222,128,0.12)", borderRadius:"5px", padding:"0.55rem 0.6rem" }}>
+              <p style={{ color:"rgba(74,222,128,0.7)", fontSize:"0.75rem", fontWeight:700,
+                margin:"0 0 0.12rem" }}>{val}</p>
+              <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.48rem", letterSpacing:"0.1em",
+                margin:0 }}>{label}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Epoch 2 teaser */}
+        <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.07)",
+          borderRadius:"5px", padding:"0.6rem 0.8rem", marginBottom:"1.4rem" }}>
+          <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", letterSpacing:"0.14em",
+            margin:"0 0 0.2rem" }}>NEXT EPOCH</p>
+          <p style={{ color:"rgba(255,255,255,0.35)", fontSize:"0.65rem", fontWeight:700,
+            margin:"0 0 0.1rem" }}>EPOCH 2: PLATFORM SPRAWL</p>
+          <p style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.55rem", fontStyle:"italic", margin:0 }}>
+            SaaS · Integrations · ETL · Workflows · Microservices
+          </p>
+          <p style={{ color:"rgba(150,107,236,0.35)", fontSize:"0.5rem", margin:"0.3rem 0 0" }}>
+            Coming in a future update
+          </p>
+        </div>
+
+        {/* Continue */}
+        <button onClick={onContinue} style={{ width:"100%",
+          background:"linear-gradient(135deg,rgba(74,222,128,0.2),rgba(74,222,128,0.1))",
+          border:"1px solid rgba(74,222,128,0.35)", borderRadius:"6px", padding:"0.75rem",
+          color:"rgba(74,222,128,0.9)", cursor:"pointer", fontSize:"0.75rem", fontWeight:700,
+          fontFamily:"monospace", letterSpacing:"0.12em" }}>
+          RETURN TO THE SIGNAL  [ENTER]
+        </button>
+
       </div>
     </div>
   )
