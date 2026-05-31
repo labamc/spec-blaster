@@ -259,6 +259,80 @@ const ARCHIVE_NODE_CFG: Record<string, ArchiveNodeConfig> = {
   },
 }
 
+// ── Recovery Layer — what each system was preserving before collapse ────────
+// These are narrative milestones, not gameplay rewards.
+// Each node cleared recovers a fragment of human meaning.
+
+interface RecoveryDef {
+  category:       string   // "Identity" | "Communication" | etc.
+  fragmentName:   string
+  beforeCollapse: string   // 1-2 sentence narrative about what was lost
+  percentContrib: number   // how much this node contributes to its category (0-100)
+}
+
+const RECOVERY_DEFS: Record<string, RecoveryDef> = {
+  auth: {
+    category:       "Identity",
+    fragmentName:   "Identity Fragment",
+    beforeCollapse: "People could trust that who they were remained consistent across all systems. Authentication was a contract of presence — a promise that the self persisted.",
+    percentContrib: 14,
+  },
+  api: {
+    category:       "Coordination",
+    fragmentName:   "Coordination Fragment",
+    beforeCollapse: "Systems spoke to each other through contracts called APIs. Every endpoint was a handshake — a promise that complexity could be made comprehensible.",
+    percentContrib: 13,
+  },
+  cache: {
+    category:       "Reliability",
+    fragmentName:   "Reliability Fragment",
+    beforeCollapse: "Caches held the world fast. Reliability was the difference between systems that could be trusted and systems that collapsed under their own weight.",
+    percentContrib: 11,
+  },
+  eventbus: {
+    category:       "Communication",
+    fragmentName:   "Communication Fragment",
+    beforeCollapse: "Events carried intent forward across time and distance. Systems could publish meaning and trust that something, somewhere, would receive it.",
+    percentContrib: 12,
+  },
+  db: {
+    category:       "Knowledge",
+    fragmentName:   "Knowledge Fragment",
+    beforeCollapse: "Persistent records were how civilization remembered. A database was not just data — it was the accumulated weight of every decision ever made.",
+    percentContrib: 18,
+  },
+  queue: {
+    category:       "Trust",
+    fragmentName:   "Trust Fragment",
+    beforeCollapse: "Message queues promised delivery. The belief that a message sent would eventually arrive was the quiet foundation of every distributed system.",
+    percentContrib: 12,
+  },
+  observe: {
+    category:       "Awareness",
+    fragmentName:   "Awareness Fragment",
+    beforeCollapse: "Observability was how systems saw themselves. Without it, failure was invisible until it was total. Awareness was the difference between blindness and understanding.",
+    percentContrib: 15,
+  },
+  flags: {
+    category:       "Decision Making",
+    fragmentName:   "Decision Fragment",
+    beforeCollapse: "Feature flags gave humans control over deployed systems. In a world of autonomous machines, the ability to decide in production preserved the last edge of human agency.",
+    percentContrib: 10,
+  },
+  recursion: {
+    category:       "Understanding",
+    fragmentName:   "Understanding Fragment",
+    beforeCollapse: "Recursive systems gave machines the ability to reason about themselves. Understanding — not computation, but true comprehension of structure — was the last thing preserved before the collapse.",
+    percentContrib: 20,
+  },
+}
+
+// The full set of categories the Human Archive tracks
+const HUMAN_ARCHIVE_CATEGORIES = [
+  "Identity", "Communication", "Knowledge", "Awareness",
+  "Reliability", "Coordination", "Trust", "Decision Making", "Understanding",
+]
+
 // Initial archive state: AUTH is available, everything else unknown
 function initialArchiveNodeState(): Record<string, NodeState> {
   const s: Record<string, NodeState> = {}
@@ -292,7 +366,8 @@ interface PersistentSignal {
   clearedBosses:    string[]          // unique boss names defeated at least once
   operatorsEver:    string[]
   operatorHistory:  Record<string, OperatorHistory>
-  archiveNodeState: Record<string, NodeState>  // per-node progression state
+  archiveNodeState: Record<string, NodeState>
+  humanArchive:     Partial<Record<string, number>>  // category → % recovered (0-100)
 }
 
 const SIGNAL_KEY = "sb_signal"
@@ -303,8 +378,8 @@ function loadSignal(): PersistentSignal {
     const raw = localStorage.getItem(SIGNAL_KEY)
     if (raw) {
       const s = JSON.parse(raw) as PersistentSignal
-      // Migrate: init archiveNodeState if missing
       if (!s.archiveNodeState) s.archiveNodeState = initialArchiveNodeState()
+      if (!s.humanArchive)    s.humanArchive = {}
       // Migrate old sb_fragments
       const oldFrag = parseInt(localStorage.getItem("sb_fragments") || "0")
       if (oldFrag > 0 && s.recoveredIntent === 0) {
@@ -321,6 +396,7 @@ function loadSignal(): PersistentSignal {
     operatorsEver:   [],
     operatorHistory: {},
     archiveNodeState: initialArchiveNodeState(),
+    humanArchive: {},
   }
 }
 
@@ -914,7 +990,8 @@ export default function HomePage() {
   const rafRef    = useRef(0)
   const G         = useRef<GState>(initState(GW))
 
-  const [phase, setPhase]           = useState<"attract"|"archive"|"briefing"|"playing"|"capy"|"reward"|"upgrade"|"over">("attract")
+  const [phase, setPhase]           = useState<"attract"|"archive"|"briefing"|"playing"|"capy"|"recovery"|"reward"|"upgrade"|"over">("attract")
+  const [currentRecovery, setCurrentRecovery] = useState<{ nodeId: string; def: RecoveryDef } | null>(null)
   const [archiveSelectedNode, setArchiveSelectedNode] = useState<string | null>(null)
   const [archiveCompletedThisRun, setArchiveCompletedThisRun] = useState<string[]>([])
   const [lastCompletedNodeId, setLastCompletedNodeId] = useState<string | null>(null)
@@ -1236,6 +1313,23 @@ export default function HomePage() {
     setArchiveSelectedNode(null)
   }
 
+  function onRecoveryComplete() {
+    if (currentRecovery) {
+      const { def } = currentRecovery
+      setSignal(prev => {
+        const cur     = prev.humanArchive?.[def.category] ?? 0
+        const updated = {
+          ...prev,
+          humanArchive: { ...prev.humanArchive, [def.category]: Math.min(100, cur + def.percentContrib) },
+        }
+        saveSignal(updated)
+        return updated
+      })
+      setCurrentRecovery(null)
+    }
+    returnToArchive()
+  }
+
   function returnToArchive() {
     setArchiveSelectedNode(null)
     setArchiveCompletedThisRun([])
@@ -1359,9 +1453,16 @@ export default function HomePage() {
     } else {
       capyIdxRef.current = 0; setCapyIdx(0)
       const g = G.current
-      // In archive mode: return to archive selection instead of next linear sector
+      // In archive mode: show recovery event if this node has one, then return to archive
       if (g.archiveMode) {
-        returnToArchive()
+        const nodeId = g.archiveNodeId
+        const recoveryDef = nodeId ? RECOVERY_DEFS[nodeId] : null
+        if (recoveryDef) {
+          setCurrentRecovery({ nodeId: nodeId!, def: recoveryDef })
+          phaseRef.current = "recovery"; setPhase("recovery")
+        } else {
+          returnToArchive()
+        }
         return
       }
       g.running = true; g.bossSpawned = false; g.wordsKilled = 0
@@ -3617,6 +3718,14 @@ export default function HomePage() {
               level={level}
               onPick={onRewardPick}
               artifacts={G.current.artifacts}
+            />
+          )}
+
+          {phase === "recovery" && currentRecovery && (
+            <RecoveryScreen
+              def={currentRecovery.def}
+              signal={signal}
+              onContinue={onRecoveryComplete}
             />
           )}
 
@@ -8282,7 +8391,7 @@ function CMSignal({ signal, runScore }: { signal: PersistentSignal; runScore: nu
   return (
     <div style={{ display:"flex", gap:"1.5rem", flexWrap:"wrap" }}>
       {/* Signal identity block */}
-      <div style={{ minWidth:"200px" }}>
+      <div style={{ minWidth:"180px" }}>
         <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.54rem", letterSpacing:"0.14em", margin:"0 0 0.6rem" }}>SIGNAL IDENTITY</p>
 
         {isNew ? (
@@ -8360,6 +8469,11 @@ function CMSignal({ signal, runScore }: { signal: PersistentSignal; runScore: nu
           </div>
         </div>
       )}
+
+      {/* Human Archive — recovered meaning from Archive expeditions */}
+      <div style={{ flex:"1 1 200px", minWidth:"180px" }}>
+        <CMHumanArchive signal={signal} />
+      </div>
     </div>
   )
 }
@@ -8401,7 +8515,7 @@ function CMBlueprint({ g, lives, liveG }: { g: GState; lives: number; liveG: Liv
       </div>
 
       {/* Power allocation */}
-      <div style={{ minWidth:"160px" }}>
+      <div style={{ minWidth:"140px" }}>
         <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.54rem", letterSpacing:"0.14em", margin:"0 0 0.5rem" }}>POWER SYSTEMS</p>
         {POWER_SYSTEMS.map(s => {
           const val = _stationState.power[s.id] ?? 0
@@ -8413,6 +8527,7 @@ function CMBlueprint({ g, lives, liveG }: { g: GState; lives: number; liveG: Liv
           )
         })}
       </div>
+
     </div>
   )
 }
@@ -8474,6 +8589,76 @@ function CMArtifacts({ artifacts }: { artifacts: string[] }) {
           )
         })}
       </div>
+    </div>
+  )
+}
+
+// ── CM: Human Archive ──────────────────────────────────────────────────────
+// Shows recovery progress from all archive expeditions.
+// Each category accumulates as nodes are cleared across the Signal's lifetime.
+function CMHumanArchive({ signal }: { signal: PersistentSignal }) {
+  const archive    = signal.humanArchive ?? {}
+  const hasAny     = HUMAN_ARCHIVE_CATEGORIES.some(c => (archive[c] ?? 0) > 0)
+  const totalPct   = Math.round(HUMAN_ARCHIVE_CATEGORIES.reduce((sum, c) => sum + (archive[c] ?? 0), 0) / HUMAN_ARCHIVE_CATEGORIES.length)
+  // Find which node contributes to each category
+  const categoryNode: Record<string, string> = {}
+  Object.entries(RECOVERY_DEFS).forEach(([nodeId, def]) => { categoryNode[def.category] = nodeId })
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline",
+        marginBottom:"0.7rem" }}>
+        <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.54rem", letterSpacing:"0.14em", margin:0 }}>
+          HUMAN ARCHIVE
+        </p>
+        {hasAny && (
+          <span style={{ color:"rgba(196,181,253,0.5)", fontSize:"0.55rem" }}>
+            {totalPct}% total recovery
+          </span>
+        )}
+      </div>
+
+      {!hasAny ? (
+        <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.6rem", fontStyle:"italic", lineHeight:1.6 }}>
+          No fragments recovered yet.<br/>
+          Complete Archive expeditions to begin recovering what was preserved.
+        </p>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:"0.45rem" }}>
+          {HUMAN_ARCHIVE_CATEGORIES.map(cat => {
+            const pct     = archive[cat] ?? 0
+            const nodeId  = categoryNode[cat]
+            const node    = nodeId ? SIGNAL_ARCHIVE_E1.find(n => n.id === nodeId) : null
+            const isRecov = pct > 0
+            return (
+              <div key={cat} style={{ opacity: isRecov ? 1 : 0.35 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.18rem" }}>
+                  <span style={{ color: isRecov ? "rgba(196,181,253,0.75)" : "rgba(255,255,255,0.2)",
+                    fontSize:"0.58rem" }}>{cat}</span>
+                  <div style={{ display:"flex", gap:"0.5rem", alignItems:"baseline" }}>
+                    {node && isRecov && (
+                      <span style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.48rem" }}>
+                        {node.name}
+                      </span>
+                    )}
+                    <span style={{ color: isRecov ? "rgba(196,181,253,0.65)" : "rgba(255,255,255,0.15)",
+                      fontSize:"0.56rem", fontWeight: isRecov ? 600 : 400 }}>
+                      {pct > 0 ? `${pct}%` : "—"}
+                    </span>
+                  </div>
+                </div>
+                <div style={{ height:"2px", background:"rgba(255,255,255,0.05)", borderRadius:"1px" }}>
+                  {pct > 0 && (
+                    <div style={{ height:"100%", width:`${pct}%`,
+                      background:"rgba(196,181,253,0.55)", borderRadius:"1px",
+                      boxShadow:"0 0 4px rgba(196,181,253,0.3)" }} />
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -8853,6 +9038,113 @@ function ArchiveScreen({ signal, lastCompletedNodeId, onSelectNode }: {
         <span style={{ color:"rgba(150,107,236,0.4)", fontSize:"0.5rem" }}>
           SIGNAL AGE: {signal.operationalAge} runs · INTENT: {signal.recoveredIntent.toLocaleString()}
         </span>
+      </div>
+    </div>
+  )
+}
+
+// ── Recovery Screen ────────────────────────────────────────────────────────
+// Appears after clearing a node. Shows what was preserved inside the system.
+// Sparse, still, meaningful — this is a pause, not a reward screen.
+
+function RecoveryScreen({ def, signal, onContinue }: {
+  def: RecoveryDef
+  signal: PersistentSignal
+  onContinue: () => void
+}) {
+  const [revealed, setRevealed] = useState(false)
+  const prevProgress = signal.humanArchive?.[def.category] ?? 0
+  const newProgress  = Math.min(100, prevProgress + def.percentContrib)
+
+  // Brief delay before showing full content — let the silence breathe
+  useEffect(() => {
+    const id = setTimeout(() => setRevealed(true), 600)
+    return () => clearTimeout(id)
+  }, [])
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if ((e.key === "Enter" || e.key === " ") && revealed) onContinue()
+    }
+    window.addEventListener("keydown", h)
+    return () => window.removeEventListener("keydown", h)
+  }, [revealed, onContinue])
+
+  return (
+    <div style={{ position:"absolute", inset:0, background:"rgba(2,3,8,0.99)", zIndex:10,
+      display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"monospace",
+      cursor: revealed ? "pointer" : "default" }}
+      onClick={() => revealed && onContinue()}>
+      <div style={{ maxWidth:"480px", width:"calc(100% - 2rem)", padding:"2rem" }}>
+
+        {/* Recovery header */}
+        <div style={{ marginBottom:"2rem", opacity: revealed ? 1 : 0, transition:"opacity 0.8s" }}>
+          <p style={{ color:"rgba(150,107,236,0.45)", fontSize:"0.48rem", letterSpacing:"0.3em",
+            margin:"0 0 0.5rem", textTransform:"uppercase" }}>
+            RECOVERY DETECTED
+          </p>
+          <p style={{ color:"#c4b5fd", fontSize:"1.2rem", fontWeight:700, letterSpacing:"0.1em",
+            margin:"0 0 0.15rem" }}>
+            {def.fragmentName}
+          </p>
+          <p style={{ color:"rgba(150,107,236,0.35)", fontSize:"0.58rem", margin:0 }}>
+            {def.category} · recovered from {Object.keys(RECOVERY_DEFS).find(k => RECOVERY_DEFS[k] === def) ? SIGNAL_ARCHIVE_E1.find(n => RECOVERY_DEFS[n.id] === def)?.name ?? "" : ""}
+          </p>
+        </div>
+
+        {/* Before Collapse narrative — the emotional core */}
+        <div style={{ marginBottom:"2rem", opacity: revealed ? 1 : 0, transition:"opacity 1.2s 0.3s" }}>
+          <p style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.48rem", letterSpacing:"0.18em",
+            margin:"0 0 0.6rem", textTransform:"uppercase" }}>
+            BEFORE COLLAPSE
+          </p>
+          <p style={{ color:"rgba(255,255,255,0.65)", fontSize:"0.72rem", lineHeight:1.9,
+            margin:0, fontStyle:"italic", borderLeft:"2px solid rgba(150,107,236,0.3)",
+            paddingLeft:"0.9rem" }}>
+            {def.beforeCollapse}
+          </p>
+        </div>
+
+        {/* Human Archive progress */}
+        <div style={{ opacity: revealed ? 1 : 0, transition:"opacity 1s 0.6s", marginBottom:"1.8rem" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline",
+            marginBottom:"0.35rem" }}>
+            <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.48rem", letterSpacing:"0.18em",
+              margin:0, textTransform:"uppercase" }}>
+              HUMAN ARCHIVE PROGRESS · {def.category}
+            </p>
+            <span style={{ color:"rgba(196,181,253,0.7)", fontSize:"0.6rem", fontWeight:700 }}>
+              {prevProgress}% → {newProgress}%
+            </span>
+          </div>
+          <div style={{ height:"3px", background:"rgba(255,255,255,0.05)", borderRadius:"2px" }}>
+            {/* Previous progress — dim */}
+            <div style={{ height:"100%", width:`${prevProgress}%`, background:"rgba(150,107,236,0.35)",
+              borderRadius:"2px" }} />
+          </div>
+          <div style={{ height:"3px", marginTop:"3px", background:"rgba(255,255,255,0.04)",
+            borderRadius:"2px", position:"relative" }}>
+            {/* New progress gained — bright, with transition */}
+            <div style={{ height:"100%", width:`${newProgress}%`, background:"rgba(196,181,253,0.7)",
+              borderRadius:"2px", boxShadow:"0 0 8px rgba(196,181,253,0.4)",
+              transition:"width 1s 0.8s ease-out" }} />
+            {/* Gain marker */}
+            {def.percentContrib > 0 && (
+              <div style={{ position:"absolute", left:`${prevProgress}%`, top:"-8px",
+                color:"rgba(196,181,253,0.6)", fontSize:"0.44rem", whiteSpace:"nowrap" }}>
+                +{def.percentContrib}%
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Continue prompt */}
+        <p style={{ color: revealed ? "rgba(255,255,255,0.2)" : "transparent",
+          fontSize:"0.52rem", textAlign:"center", transition:"color 1s 1s",
+          margin:0, letterSpacing:"0.1em" }}>
+          [ click · space · enter ] to continue
+        </p>
+
       </div>
     </div>
   )
