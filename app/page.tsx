@@ -196,7 +196,7 @@ const SIGNAL_ARCHIVE_E1: SignalNode[] = [
 // Each node defines boss, word pool, corruption effect, depth, and reward weighting.
 // Boss phase controls bullet behavior: 1=bounce 2=drift 3=split 4=spiral
 
-type CorruptionId = "identity_drift"|"packet_loss"|"data_staleness"|"signal_duplication"|"radar_degradation"|"state_fragmentation"|"recursive_collapse"
+type CorruptionId = "identity_drift"|"packet_loss"|"data_staleness"|"data_corruption"|"signal_duplication"|"radar_degradation"|"state_fragmentation"|"recursive_collapse"
 type NodeState = "unknown" | "available" | "completed" | "corrupted"
 
 interface ArchiveNodeConfig {
@@ -233,7 +233,7 @@ const ARCHIVE_NODE_CFG: Record<string, ArchiveNodeConfig> = {
   },
   db:       {
     depth: 4, boss: { name:"THE ARCHIVIST",  color:"#facc15", hp:42, phase:1 },
-    corruption: { id:"data_staleness",        desc:"Salvage field generates corrupted fragments." },
+    corruption: { id:"data_corruption",       desc:"35% of salvage items are corrupted — collecting them loses score." },
     rewardBias: "intent",
     taunts: ["Schema migration failed.","Your records are inconsistent.","Index: corrupted.","The query will never complete."],
   },
@@ -803,7 +803,7 @@ interface Bullet    { x: number; y: number; vx?: number; vy?: number; enemy?: bo
 interface Mine      { x: number; y: number; age: number; armAt: number }
 interface Particle  { x: number; y: number; vx: number; vy: number; life: number; glyph: string; col: string; rot?: number; rotV?: number; sz?: number; ring?: boolean; initLife?: number; gravity?: number; friction?: number }
 interface BgGlyph   { x: number; y: number; vy: number; a: number; ch: string }
-interface SalvageItem { id: number; x: number; y: number; vx: number; vy: number; type: "scrap"|"fragment"|"artifact"; spawnTime: number; life: number }
+interface SalvageItem { id: number; x: number; y: number; vx: number; vy: number; type: "scrap"|"fragment"|"artifact"; spawnTime: number; life: number; corrupted?: boolean }
 interface Boss      { x: number; y: number; hp: number; maxHp: number; name: string; color: string; dir: number; t: number; phase: number; raged: boolean; halfTriggered: boolean; quarterTriggered?: boolean; hitFlash?: number }
 interface BossWarn  { name: string; color: string; t: number; letters: Array<{ ch: string; x: number; y: number; tx: number; ty: number }> }
 interface WaveAnn   { text: string; t: number }
@@ -847,12 +847,14 @@ interface GState {
   crewStats: Partial<Record<string, number>>
   defeatedBosses: string[]
   // Archive mode — layered on top of the existing sector system
-  archiveMode:       boolean
-  archiveNodeId:     string | null
-  archiveNodeWords:  string[]
-  archiveBoss:       { name: string; color: string; hp: number; phase: number } | null
-  archiveDepth:      number          // node depth for difficulty scaling
-  archiveCorruption: CorruptionId | null
+  archiveMode:           boolean
+  archiveNodeId:         string | null
+  archiveNodeWords:      string[]
+  archiveBoss:           { name: string; color: string; hp: number; phase: number } | null
+  archiveDepth:          number
+  archiveCorruption:     CorruptionId | null
+  archiveInstability:    number   // recursive_collapse: increases per kill
+  archiveLastRadarDmg:   number   // radar_degradation: timestamp of last auto-damage
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -895,7 +897,7 @@ function initState(W: number): GState {
     artifacts: [], _hardenedUsed: false, _powerSurgeKills: 0, _battleHardenedStacks: 0,
     engineeringPoolBonus: 0, crewStats: {}, defeatedBosses: [],
     archiveMode: false, archiveNodeId: null, archiveNodeWords: [], archiveBoss: null,
-    archiveDepth: 0, archiveCorruption: null,
+    archiveDepth: 0, archiveCorruption: null, archiveInstability: 0, archiveLastRadarDmg: 0,
   }
 }
 
@@ -1008,7 +1010,7 @@ export default function HomePage() {
     wordsEscaped: 0,
     salvageCount: 0,
     salvageCollected: 0,
-    salvageItems: [] as Array<{ id: number; type: SalvageItem["type"] }>,
+    salvageItems: [] as Array<{ id: number; type: SalvageItem["type"]; corrupted?: boolean }>,
     roomDamage: {} as Partial<Record<StationId, number>>,
     artifacts: [] as string[],
     engineeringPoolBonus: 0,
@@ -1036,7 +1038,7 @@ export default function HomePage() {
         wordsEscaped: g.wordsEscaped,
         salvageCount: g.salvage.length,
         salvageCollected: g.salvageCollected,
-        salvageItems: g.salvage.slice(0, 12).map(s => ({ id: s.id, type: s.type })),
+        salvageItems: g.salvage.slice(0, 12).map(s => ({ id: s.id, type: s.type, corrupted: s.corrupted })),
         roomDamage: { ...g.roomDamage },
         artifacts: [...g.artifacts],
         engineeringPoolBonus: g.engineeringPoolBonus ?? 0,
@@ -1133,13 +1135,21 @@ export default function HomePage() {
     const collected = [...g.salvage]
     g.salvage = []
     collected.forEach(s => {
-      const bonus = s.type === "artifact" ? 500 : s.type === "fragment" ? 150 : 50
-      total += bonus; g.salvageCollected++
-      if (s.type === "fragment" || s.type === "artifact") g.fragmentsEarned++
-      g.particles.push({ x: s.x, y: s.y, vx: (g.px - s.x) * 0.08, vy: (g.py - s.y) * 0.08,
-        life: 0.7, glyph: s.type === "artifact" ? "★" : s.type === "fragment" ? "◈" : "◆",
-        col: s.type === "artifact" ? "#facc15" : s.type === "fragment" ? "#c4b5fd" : "#94a3b8",
-        gravity: 0, friction: 0.92 })
+      if (s.corrupted) {
+        // DATA_CORRUPTION: corrupted item subtracts score
+        const penalty = s.type === "artifact" ? -200 : s.type === "fragment" ? -75 : -25
+        total += penalty
+        g.particles.push({ x: s.x, y: s.y, vx: (g.px - s.x) * 0.08, vy: (g.py - s.y) * 0.08,
+          life: 0.8, glyph: "CORRUPTED", col: "#f87171", gravity: 0, friction: 0.92 })
+      } else {
+        const bonus = s.type === "artifact" ? 500 : s.type === "fragment" ? 150 : 50
+        total += bonus; g.salvageCollected++
+        if (s.type === "fragment" || s.type === "artifact") g.fragmentsEarned++
+        g.particles.push({ x: s.x, y: s.y, vx: (g.px - s.x) * 0.08, vy: (g.py - s.y) * 0.08,
+          life: 0.7, glyph: s.type === "artifact" ? "★" : s.type === "fragment" ? "◈" : "◆",
+          col: s.type === "artifact" ? "#facc15" : s.type === "fragment" ? "#c4b5fd" : "#94a3b8",
+          gravity: 0, friction: 0.92 })
+      }
     })
     g.score += total
     setScore(g.score)
@@ -1581,9 +1591,10 @@ export default function HomePage() {
         return
       }
 
-      // Apply engineering power allocation + artifact passive effects each frame
+      // Apply engineering power + artifact + corruption passive effects each frame
       applyPowerEffects(g)
       applyArtifactPassive(g, now)
+      applyCorruptionPassive(g, now)
 
       const spd = g.fast && now < g.fastEnd ? 8 : 5
 
@@ -1852,7 +1863,19 @@ export default function HomePage() {
           const ox = 30 + Math.random() * (g.W - 60)
           // Elite words in endless: 3 HP, worth 3× score, slightly slower
           const isElite = g.endless && type !== "powerup" && Math.random() < 0.12
-          g.words.push({ x: ox, y: -18, text, type, spd: spd2 * (isElite ? 0.7 : 1), beh, ph: Math.random() * Math.PI * 2, ox, hp: isElite ? 3 : 1, hitFlash: 0, elite: isElite, age: 0, id: g.nextWordId++ })
+          // Corruption modifiers at word spawn
+          let spawnHp   = isElite ? 3 : 1
+          let spawnSpd  = spd2 * (isElite ? 0.7 : 1)
+          let spawnType = type
+          if (g.archiveMode && type !== "powerup" && !isElite) {
+            // STATE_FRAGMENTATION: 20% of words have hp:2 but look normal ("flagged" state)
+            if (g.archiveCorruption === "state_fragmentation" && Math.random() < 0.20) spawnHp = 2
+            // RECURSIVE_COLLAPSE: instability accelerates word speed
+            if (g.archiveCorruption === "recursive_collapse") spawnSpd *= 1 + Math.min(1.0, g.archiveInstability * 0.025)
+            // IDENTITY_DRIFT: some words start with a random behavior drift
+            if (g.archiveCorruption === "identity_drift" && Math.random() < 0.30) beh = "charge"
+          }
+          g.words.push({ x: ox, y: -18, text, type: spawnType, spd: spawnSpd, beh, ph: Math.random() * Math.PI * 2, ox, hp: spawnHp, hitFlash: 0, elite: isElite, age: 0, id: g.nextWordId++ })
         }
       }
 
@@ -2586,10 +2609,28 @@ export default function HomePage() {
             const pts = Math.floor(base * Math.pow(1.2, g.upgrades.score_mul ?? 0) * mult * eliteMul * pmMul * dataMul * markedMul)
             g.score += pts
             g.kills++; if (!w.fragment) g.wordsKilled++
-            // CORRUPTION: signal_duplication — killed word respawns once at half HP
-            if (g.archiveCorruption === "signal_duplication" && !w.fragment && !w.regenBoss && Math.random() < 0.22) {
-              g.words.push({ ...w, hp: 1, hitFlash: 0, y: w.y - 20, id: g.nextWordId++, age: 0 })
-              g.particles.push({ x: w.x, y: w.y - 10, vx: 0, vy: -0.8, life: 0.9, glyph: "DUPLICATE", col: "#f472b6", sz: 8, gravity: 0 })
+            // Corruption on-kill effects
+            if (g.archiveMode && !w.fragment && !w.regenBoss) {
+              // SIGNAL_DUPLICATION: fork into 2 fragments moving apart
+              if (g.archiveCorruption === "signal_duplication" && Math.random() < 0.35) {
+                const half = Math.ceil(w.text.length / 2)
+                const frag1 = w.text.slice(0, half), frag2 = w.text.slice(half) || w.text[0]
+                const fragSpd = w.spd * 1.2
+                if (frag1) g.words.push({ ...w, text: frag1, x: w.x - 18, hp: 1, hitFlash: 0, beh: "fall", spd: fragSpd, id: g.nextWordId++, age: 3, fragment: true })
+                if (frag2) g.words.push({ ...w, text: frag2, x: w.x + 18, hp: 1, hitFlash: 0, beh: "fall", spd: fragSpd, id: g.nextWordId++, age: 3, fragment: true })
+                g.particles.push({ x: w.x, y: w.y - 8, vx: 0, vy: -0.9, life: 1.0, glyph: "DUPLICATED", col: "#f472b6", sz: 9, gravity: 0 })
+              }
+              // RECURSIVE_COLLAPSE: each kill increases instability
+              if (g.archiveCorruption === "recursive_collapse") {
+                g.archiveInstability++
+                if (g.archiveInstability % 10 === 0) {
+                  const lvl = Math.min(3, Math.floor(g.archiveInstability / 10))
+                  const col = ["","#facc15","#fb923c","#f87171"][lvl]
+                  g.particles.push({ x: g.W/2, y: GH*0.38, vx: 0, vy: -0.5, life: 1.8,
+                    glyph: `INSTABILITY +${lvl} — SYSTEM ACCELERATING`, col, sz: 9, gravity: 0 })
+                  g.shake = 4 + lvl * 2
+                }
+              }
             }
             // Track crew kills by bullet color signature
             if (b.col === "#fbbf24") {
@@ -3804,14 +3845,17 @@ function applyPowerup(g: GState, word: Word, now: number) {
 
 // ── Salvage drop helper ────────────────────────────────────────────────────
 function spawnSalvage(g: GState, x: number, y: number, type: SalvageItem["type"], now: number) {
+  // DATA_CORRUPTION: 35% of salvage items are corrupted — collecting them subtracts score
+  const corrupted = g.archiveCorruption === "data_corruption" && Math.random() < 0.35
   g.salvage.push({
     id: g.nextSalvageId++,
     x, y,
     vx: (Math.random() - 0.5) * 0.9,
-    vy: -(0.5 + Math.random() * 0.5),  // drifts upward
+    vy: -(0.5 + Math.random() * 0.5),
     type,
     spawnTime: now,
-    life: 9000,  // 9 seconds before despawn
+    life: 9000,
+    corrupted,
   })
 }
 
@@ -5145,12 +5189,21 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       const fadeIn = Math.min(1, age / 400)
       const fadeOut= Math.max(0, 1 - Math.max(0, age - (s.life - 1500)) / 1500)
       const alpha  = fadeIn * fadeOut * (0.7 + 0.2 * Math.abs(Math.sin(now / 500 + s.id)))
+      // DATA_CORRUPTION: corrupted items shown with red warning tint + warning glyph
+      const dispCol  = s.corrupted ? "#f87171" : salvageColors[s.type]
+      const dispBlur = s.corrupted ? 8 : (s.type === "artifact" ? 10 : 5)
       ctx.save()
       ctx.globalAlpha = alpha
-      ctx.fillStyle = salvageColors[s.type]
-      ctx.shadowColor = salvageColors[s.type]; ctx.shadowBlur = s.type === "artifact" ? 10 : 5
-      ctx.font = `${s.type === "artifact" ? 11 : 9}px monospace`; ctx.textAlign = "center"
-      ctx.fillText(salvageGlyphs[s.type], s.x, s.y)
+      ctx.fillStyle = dispCol
+      ctx.shadowColor = dispCol; ctx.shadowBlur = dispBlur
+      ctx.font = `${s.type === "artifact" && !s.corrupted ? 11 : 9}px monospace`; ctx.textAlign = "center"
+      ctx.fillText(s.corrupted ? "⊗" : salvageGlyphs[s.type], s.x, s.y)
+      // Pulsing warning ring for corrupted items
+      if (s.corrupted) {
+        ctx.globalAlpha = alpha * 0.35 * Math.abs(Math.sin(now / 300 + s.id))
+        ctx.strokeStyle = "#f87171"; ctx.lineWidth = 0.8
+        ctx.beginPath(); ctx.arc(s.x, s.y - 2, 7, 0, Math.PI * 2); ctx.stroke()
+      }
       ctx.restore()
     })
   }
@@ -6974,7 +7027,7 @@ type LiveGSnapshot = {
   wordsEscaped: number
   salvageCount: number
   salvageCollected: number
-  salvageItems: Array<{ id: number; type: SalvageItem["type"] }>
+  salvageItems: Array<{ id: number; type: SalvageItem["type"]; corrupted?: boolean }>
   roomDamage: Partial<Record<StationId, number>>
   artifacts: string[]
   engineeringPoolBonus: number
@@ -7398,9 +7451,10 @@ function SalvageStationView({ liveG, score, phase, onGrapple }: {
   }
 
   // Breakdown of field debris by type
-  const scraps    = liveG.salvageItems.filter(s => s.type === "scrap").length
-  const fragments = liveG.salvageItems.filter(s => s.type === "fragment").length
-  const artifacts = liveG.salvageItems.filter(s => s.type === "artifact").length
+  const scraps    = liveG.salvageItems.filter(s => s.type === "scrap" && !s.corrupted).length
+  const fragments = liveG.salvageItems.filter(s => s.type === "fragment" && !s.corrupted).length
+  const artifacts = liveG.salvageItems.filter(s => s.type === "artifact" && !s.corrupted).length
+  const corrupted = liveG.salvageItems.filter(s => s.corrupted).length
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.42rem" }}>
@@ -7424,6 +7478,7 @@ function SalvageStationView({ liveG, score, phase, onGrapple }: {
                 {scraps > 0    && <span style={{ color:"#94a3b8", fontSize:"0.56rem" }}>◆ {scraps} scrap</span>}
                 {fragments > 0 && <span style={{ color:"#c4b5fd", fontSize:"0.56rem" }}>◈ {fragments} frag</span>}
                 {artifacts > 0 && <span style={{ color:"#facc15", fontSize:"0.56rem" }}>★ {artifacts} artifact</span>}
+                {corrupted > 0 && <span style={{ color:"#f87171", fontSize:"0.56rem" }}>⊗ {corrupted} corrupted</span>}
               </div>
             ) : (
               <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.54rem", margin:"0.1rem 0 0.3rem", fontStyle:"italic" }}>
@@ -7626,13 +7681,22 @@ function runSalvagerAI(g: GState, station: StationId, now: number) {
   if (now - _salvAILast < 3200) return
   if (g.salvage.length === 0) return
   _salvAILast = now
-  // Priority: artifact > fragment > scrap (value-based, not nearest)
-  const byPriority = [...g.salvage].sort((a, b) => {
+  // Salvager prefers uncorrupted items; will skip corrupted unless nothing else exists
+  const uncorrupted = g.salvage.filter(s => !s.corrupted)
+  const pool = uncorrupted.length > 0 ? uncorrupted : g.salvage
+  const byPriority = [...pool].sort((a, b) => {
     const priority = { artifact: 3, fragment: 2, scrap: 1 }
     return priority[b.type] - priority[a.type]
   })
   const target = byPriority[0]
   g.salvage = g.salvage.filter(s => s.id !== target.id)
+  if (target.corrupted) {
+    // Salvager detects corruption and discards — no score change
+    crewLog("SALVAGER", "Corrupted item quarantined", "recover")
+    setOperatorStatus("SALVAGER", "Quarantine", "corrupted")
+    g.particles.push({ x: target.x, y: target.y, vx: 0, vy: -0.9, life: 1.2, glyph: "⊗ CORRUPTED", col: "#f87171", sz: 9, gravity: 0 })
+    return
+  }
   const bonus = target.type === "artifact" ? 500 : target.type === "fragment" ? 150 : 50
   g.score += bonus; g.salvageCollected++
   if (target.type !== "scrap") g.fragmentsEarned++
@@ -7689,6 +7753,65 @@ function applyPowerEffects(g: GState) {
 }
 
 // ── Artifact effect hooks — called from game events ────────────────────────
+
+// ── Archive Corruption Effects — applied every frame ──────────────────────
+const IDENTITY_DRIFT_CHARS: Record<string, string> = {
+  o:"0", a:"@", e:"3", i:"!", l:"1", s:"$", t:"+", b:"6", g:"9", n:"η", r:"я"
+}
+
+function applyCorruptionPassive(g: GState, now: number) {
+  if (!g.archiveMode || !g.archiveCorruption) return
+
+  // IDENTITY DRIFT: characters in word text mutate periodically
+  if ((g.archiveCorruption === "identity_drift" || g.archiveCorruption === "state_fragmentation") && g.words.length > 0) {
+    // Mutate ~every 120 frames (2s at 60fps) — pick random word, random char
+    if (Math.floor(now / 2000) % 7 < 1 && Math.random() < 0.15) {
+      const w = g.words[Math.floor(Math.random() * g.words.length)]
+      if (!w.fragment && w.type !== "powerup") {
+        const idx  = Math.floor(Math.random() * w.text.length)
+        const orig = w.text[idx].toLowerCase()
+        const sub  = IDENTITY_DRIFT_CHARS[orig]
+        if (sub) w.text = w.text.slice(0, idx) + (w.text[idx] === w.text[idx].toUpperCase() ? sub.toUpperCase() : sub) + w.text.slice(idx + 1)
+      }
+    }
+  }
+
+  // RADAR DEGRADATION: Bridge auto-damages every 90s during expedition
+  if (g.archiveCorruption === "radar_degradation") {
+    if (g.archiveLastRadarDmg === 0) g.archiveLastRadarDmg = now
+    if (now - g.archiveLastRadarDmg > 90000 && (g.roomDamage.bridge ?? 0) < 3) {
+      g.roomDamage.bridge = (g.roomDamage.bridge ?? 0) + 1
+      g.archiveLastRadarDmg = now
+      g.particles.push({ x: g.W/2, y: GH*0.4, vx: 0, vy: -0.5, life: 2.0,
+        glyph: "OBSERVABILITY DEGRADED", col: "#7dd3fc", sz: 10, gravity: 0 })
+      g.shake = 6; g.accentFlash = 8; g.accentFlashCol = "#7dd3fc"
+    }
+  }
+
+  // PACKET LOSS: ~10% of freshly-fired player bullets vanish near player
+  if (g.archiveCorruption === "packet_loss") {
+    g.bullets = g.bullets.filter(b => {
+      if (!b.enemy && Math.abs(b.y - (g.py - 20)) < 30 && Math.random() < 0.10) {
+        g.particles.push({ x: b.x, y: b.y + 4, vx: (Math.random()-0.5)*1.5, vy: -0.8,
+          life: 0.55, glyph: "×", col: "#fb923c", sz: 8, gravity: 0 })
+        return false
+      }
+      return true
+    })
+  }
+
+  // RECURSIVE COLLAPSE: instability grows with kill count — modify word speed inline
+  // (actual speed boost applied at spawn via archiveInstability field)
+  if (g.archiveCorruption === "recursive_collapse" && g.archiveInstability > 0 && Math.floor(now / 6000) % 5 === 0 && Math.random() < 0.12) {
+    // Periodic instability broadcast particle
+    const lvl = Math.min(3, Math.floor(g.archiveInstability / 10))
+    if (lvl > 0) {
+      const col = lvl >= 3 ? "#f87171" : lvl >= 2 ? "#fb923c" : "#facc15"
+      g.particles.push({ x: g.W/2, y: GH*0.38, vx: 0, vy: -0.4, life: 1.6,
+        glyph: `INSTABILITY: ${["LOW","MODERATE","HIGH","CRITICAL"][lvl]}`, col, sz: 9, gravity: 0 })
+    }
+  }
+}
 
 // Called each frame in the game loop for passive artifact effects
 function applyArtifactPassive(g: GState, now: number) {
