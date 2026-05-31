@@ -25,7 +25,9 @@ const _stationState = {
   turretWeapon:      "pulse" as "pulse" | "triple" | "spray" | "flak" | "grapple",
   turretFiring:      false,
   turretControlMode:      false,
-  engineeringControlMode: false,  // player is in engineering; ship on autopilot
+  engineeringControlMode: false,
+  salvageControlMode:     false,
+  bridgeControlMode:      false,  // player is at the bridge; ship on autopilot
   commsLog:          [] as string[],
   sectorStart:       0,
   markedTargetId:    null as number | null,
@@ -943,6 +945,8 @@ interface GState {
   archiveEpochComplete:      boolean
   turretControlMode:         boolean
   engineeringControlMode:    boolean
+  salvageControlMode:        boolean
+  bridgeControlMode:         boolean
   // Engineering station actions
   engRepair:         Partial<Record<StationId, number>>   // room → repair start timestamp
   engOverclock:      Partial<Record<StationId, number>>   // room → overclock end timestamp
@@ -992,7 +996,7 @@ function initState(W: number): GState {
     archiveMode: false, archiveNodeId: null, archiveNodeWords: [], archiveBoss: null,
     archiveDepth: 0, archiveCorruption: null, archiveInstability: 0, archiveLastRadarDmg: 0,
     archiveRateLimitCount: 0, archiveRateLimitWindowEnd: 0, archiveCachedWords: [],
-    archiveEpochComplete: false, turretControlMode: false, engineeringControlMode: false,
+    archiveEpochComplete: false, turretControlMode: false, engineeringControlMode: false, salvageControlMode: false, bridgeControlMode: false,
     engRepair: {}, engOverclock: {}, engStabilizeCd: 0, engShieldCd: 0,
   }
 }
@@ -1056,6 +1060,8 @@ export default function HomePage() {
   // Station Control Modes — player enters a station; ship on autopilot
   const [turretControlMode,      setTurretControlMode]      = useState(false)
   const [engineeringControlMode, setEngineeringControlMode] = useState(false)
+  const [salvageControlMode,     setSalvageControlMode]     = useState(false)
+  const [bridgeControlMode,      setBridgeControlMode]      = useState(false)
   const canvasFireRef     = useRef(false)      // mouse held on canvas
   const canvasFireInterval= useRef<ReturnType<typeof setInterval>|null>(null)
   const canvasAngleRef    = useRef(-Math.PI/2)  // current aim angle from canvas mouse
@@ -1105,6 +1111,8 @@ export default function HomePage() {
       }
       if (_stationState.turretControlMode)      actions["turret"]      = "PLAYER CONTROL"
       if (_stationState.engineeringControlMode) actions["engineering"] = "PLAYER CONTROL"
+      if (_stationState.salvageControlMode)     actions["salvage"]     = "PLAYER CONTROL"
+      if (_stationState.bridgeControlMode)      actions["bridge"]      = "PLAYER CONTROL"
       setRoomActionsSnap(actions)
       // Snapshot crew stats
       setCrewStatsSnap({ ...g.crewStats })
@@ -1290,6 +1298,8 @@ export default function HomePage() {
       if (e.key === "Escape") {
         if (_stationState.turretControlMode)      { e.preventDefault(); exitTurretControl(); return }
         if (_stationState.engineeringControlMode) { e.preventDefault(); exitEngineeringControl(); return }
+        if (_stationState.salvageControlMode)     { e.preventDefault(); exitSalvageControl(); return }
+        if (_stationState.bridgeControlMode)      { e.preventDefault(); exitBridgeControl(); return }
       }
 
       if (stationKeys[e.key]) {
@@ -1298,13 +1308,22 @@ export default function HomePage() {
         const inPlay = phaseRef.current === "playing"
         if (sid === "turret" && inPlay) {
           if (_stationState.turretControlMode) { exitTurretControl() }
-          else { if (_stationState.engineeringControlMode) exitEngineeringControl(); enterTurretControl() }
+          else { if (_stationState.engineeringControlMode) exitEngineeringControl(); if (_stationState.salvageControlMode) exitSalvageControl(); enterTurretControl() }
         } else if (sid === "engineering" && inPlay) {
           if (_stationState.engineeringControlMode) { exitEngineeringControl() }
-          else { if (_stationState.turretControlMode) exitTurretControl(); enterEngineeringControl() }
+          else { if (_stationState.turretControlMode) exitTurretControl(); if (_stationState.salvageControlMode) exitSalvageControl(); enterEngineeringControl() }
+        } else if (sid === "salvage" && inPlay) {
+          if (_stationState.salvageControlMode) { exitSalvageControl() }
+          else { if (_stationState.turretControlMode) exitTurretControl(); if (_stationState.engineeringControlMode) exitEngineeringControl(); if (_stationState.bridgeControlMode) exitBridgeControl(); enterSalvageControl() }
+        } else if (sid === "bridge" && inPlay) {
+          if (_stationState.bridgeControlMode) { exitBridgeControl() }
+          else { if (_stationState.turretControlMode) exitTurretControl(); if (_stationState.engineeringControlMode) exitEngineeringControl(); if (_stationState.salvageControlMode) exitSalvageControl(); enterBridgeControl() }
+        } else if (!inPlay) {
+          _stationState.active = sid; setActiveStation(sid)
         } else {
           if (_stationState.turretControlMode)      exitTurretControl()
           if (_stationState.engineeringControlMode) exitEngineeringControl()
+          if (_stationState.salvageControlMode)     exitSalvageControl()
           _stationState.active = sid; setActiveStation(sid)
         }
       }
@@ -1475,6 +1494,134 @@ export default function HomePage() {
         glyph: "SHIELD ACTIVATED", col: "#86efac", sz: 10, gravity: 0 })
       crewLogForce("ENGINEER", "Emergency shield activated", "action")
     }
+  }
+
+  // ── Salvage Control Mode ─────────────────────────────────────────────────
+  function enterSalvageControl() {
+    if (turretControlMode) exitTurretControl()
+    if (engineeringControlMode) exitEngineeringControl()
+    _stationState.active = "salvage"; setActiveStation("salvage")
+    _stationState.salvageControlMode = true
+    G.current.salvageControlMode = true
+    setSalvageControlMode(true)
+    crewLogForce("SALVAGER", "Salvage control transferred to player", "action")
+  }
+
+  function exitSalvageControl() {
+    _stationState.salvageControlMode = false
+    G.current.salvageControlMode = false
+    setSalvageControlMode(false)
+    crewLogForce("SALVAGER", "Salvage control returned to operator", "action")
+  }
+
+  // Salvage canvas click: click on a field item to grapple it directly
+  function handleSalvageCanvasClick(canvasX: number, canvasY: number) {
+    const g = G.current; const now = Date.now()
+    if ((g.roomDamage.salvage ?? 0) >= 3) return  // grapple offline
+
+    // Field item grid positions (computed in draw) — items shown as tiles
+    const crewA = (() => { try { const s = localStorage.getItem("sb_crew_assign"); return s ? JSON.parse(s) : {} } catch { return {} } })()
+    const isSalvager = crewA.salvage === "salvager_bot"
+
+    // Check each salvage item tile (8 items max, 2 rows of 4, starting at y=145)
+    const tileW = 110, tileH = 60, cols = 4, startX = (GW - cols * tileW) / 2, startY = 145
+    g.salvage.slice(0, 8).forEach((s, i) => {
+      const col = i % cols, row = Math.floor(i / cols)
+      const tx = startX + col * tileW, ty = startY + row * (tileH + 12)
+      if (canvasX >= tx && canvasX <= tx + tileW && canvasY >= ty && canvasY <= ty + tileH) {
+        // Collect this item
+        if (s.corrupted && !isSalvager) {
+          // Non-salvager can't identify corrupted — collect anyway with penalty
+          const penalty = s.type === "artifact" ? -200 : -75
+          g.score += penalty
+          g.particles.push({ x: GW/2, y: GH*0.45, vx:0, vy:-0.7, life:1.6,
+            glyph: `CORRUPTED DATA ${penalty}`, col:"#f87171", sz:9, gravity:0 })
+        } else if (!s.corrupted) {
+          const bonus = s.type === "artifact" ? 500 : s.type === "fragment" ? 150 : 50
+          const speedBonus = isSalvager ? Math.round(bonus * 0.25) : 0  // salvager bonus
+          g.score += bonus + speedBonus; g.salvageCollected++
+          if (s.type !== "scrap") g.fragmentsEarned++
+          const label = s.type === "artifact" ? `★ +${bonus+speedBonus}` : s.type === "fragment" ? `◈ +${bonus+speedBonus}` : `◆ +${bonus}`
+          g.particles.push({ x: GW/2, y: GH*0.45, vx:0, vy:-0.7, life:1.6,
+            glyph: label, col:"#4ade80", sz:10, gravity:0 })
+          if (s.type === "artifact") crewLogForce("SALVAGER", "Artifact recovered directly", "recover")
+        } else {
+          // Salvager identifies and discards corrupted
+          g.particles.push({ x:GW/2, y:GH*0.45, vx:0, vy:-0.7, life:1.4, glyph:"⊗ QUARANTINED", col:"#f87171", sz:9, gravity:0 })
+        }
+        g.salvage = g.salvage.filter(sv => sv.id !== s.id)
+      }
+    })
+  }
+
+  function handleSalvageCanvas(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (!salvageControlMode) return
+    const [cx, cy] = getCanvasCoords(e)
+    // Grapple All button: center of canvas, y: 285-311
+    const grappleY = 285
+    if (cy >= grappleY && cy <= grappleY + 26 && cx >= GW/2 - 90 && cx <= GW/2 + 90) {
+      onGrapple(); return
+    }
+    handleSalvageCanvasClick(cx, cy)
+  }
+
+  // ── Bridge Control Mode ──────────────────────────────────────────────────
+  function enterBridgeControl() {
+    if (turretControlMode)      exitTurretControl()
+    if (engineeringControlMode) exitEngineeringControl()
+    if (salvageControlMode)     exitSalvageControl()
+    _stationState.active = "bridge"; setActiveStation("bridge")
+    _stationState.bridgeControlMode = true
+    G.current.bridgeControlMode = true
+    setBridgeControlMode(true)
+    crewLogForce("CAPY", "Bridge control transferred to player", "action")
+  }
+
+  function exitBridgeControl() {
+    _stationState.bridgeControlMode = false
+    G.current.bridgeControlMode = false
+    setBridgeControlMode(false)
+    crewLogForce("CAPY", "Bridge control returned to Capy", "action")
+  }
+
+  // Bridge canvas click: click words on the radar to mark them
+  function handleBridgeCanvasClick(canvasX: number, canvasY: number) {
+    const g = G.current; const now = Date.now()
+    const crewA = (() => { try { const s = localStorage.getItem("sb_crew_assign"); return s ? JSON.parse(s) : {} } catch { return {} } })()
+    // Radar bounds in the bridge HUD (center panel)
+    // Radar is drawn at: x: 30-380, y: 95-280
+    const radarX = 30, radarY = 95, radarW = 350, radarH = 185
+    if (canvasX < radarX || canvasX > radarX + radarW || canvasY < radarY || canvasY > radarY + radarH) return
+    // Map canvas position to game field
+    const fieldX = ((canvasX - radarX) / radarW) * g.W
+    const fieldY = ((canvasY - radarY) / radarH) * GH
+    // Find closest word within 50px of click
+    const nearby = g.words.filter(w => !w.fragment && w.type !== "powerup")
+      .map(w => ({ w, dist: Math.hypot(w.x - fieldX, w.y - fieldY) }))
+      .filter(e => e.dist < 50)
+      .sort((a, b) => a.dist - b.dist)
+    if (nearby.length > 0) {
+      const target = nearby[0].w
+      const wasMarked = _stationState.markedTargetId === target.id
+      _stationState.markedTargetId = wasMarked ? null : target.id
+      if (!wasMarked) {
+        _stationState.markedAt = now
+        crewLogForce("CAPY", `Target locked: ${target.text.slice(0,10)}`, "mark")
+        crewStat(g, "capy_marks")
+      }
+    } else if (_stationState.markedTargetId !== null) {
+      _stationState.markedTargetId = null  // click empty space = clear mark
+    }
+  }
+
+  function handleBridgeCanvas(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (!bridgeControlMode) return
+    const [cx, cy] = getCanvasCoords(e)
+    // "Clear Mark" button: x: 30-210, y: 295-317
+    if (cx >= 30 && cx <= 210 && cy >= 295 && cy <= 317 && _stationState.markedTargetId !== null) {
+      _stationState.markedTargetId = null; return
+    }
+    handleBridgeCanvasClick(cx, cy)
   }
 
   function getCanvasCoords(e: React.MouseEvent<HTMLCanvasElement>): [number, number] {
@@ -2050,7 +2197,7 @@ export default function HomePage() {
       if (g.capyMsg && now > g.capyMsgEnd) g.capyMsg = ""
 
       // Movement: autopilot when player is at turret station, otherwise normal
-      if (g.turretControlMode || g.engineeringControlMode) {
+      if (g.turretControlMode || g.engineeringControlMode || g.salvageControlMode || g.bridgeControlMode) {
         // Autopilot: simple left-right patrol (5s per full cycle)
         const margin = 70
         const range  = g.W - margin * 2
@@ -2097,7 +2244,7 @@ export default function HomePage() {
       if (g.trail.length > 10) g.trail.shift()
 
       // thruster particles when ship is actually moving (not when keys are rotating the turret)
-      const moving = !g.turretControlMode && (
+      const moving = !g.turretControlMode && !g.engineeringControlMode && !g.salvageControlMode && !g.bridgeControlMode && (
         g.keys.has("ArrowLeft") || g.keys.has("a") || g.keys.has("ArrowRight") || g.keys.has("d")
         || (g.mouseX >= 0 && Math.abs(g.mouseX - g.px) > 8))
       if (moving && Math.random() < 0.45) {
@@ -4102,12 +4249,12 @@ export default function HomePage() {
 
           <canvas ref={canvasRef} height={GH}
             style={{ display:"block", width:"100%", height:GH,
-              cursor: turretControlMode ? "none" : engineeringControlMode ? "pointer" : "crosshair" }}
+              cursor: turretControlMode ? "none" : (engineeringControlMode || salvageControlMode) ? "pointer" : "crosshair" }}
             onMouseMove={handleCanvasMouseMove}
             onMouseDown={handleCanvasMouseDown}
             onMouseUp={handleCanvasMouseUp}
             onMouseLeave={handleCanvasMouseUp}
-            onClick={handleEngineCanvas}
+            onClick={(e) => { handleEngineCanvas(e); handleSalvageCanvas(e); handleBridgeCanvas(e) }}
           />
 
           {/* Command Mode Overlay */}
@@ -4132,16 +4279,26 @@ export default function HomePage() {
             activeStation={activeStation}
             onSelectStation={(sid) => {
               const inPlay = phaseRef.current === "playing"
-              if (sid === "turret" && inPlay) {
-                if (_stationState.turretControlMode) exitTurretControl()
-                else { if (_stationState.engineeringControlMode) exitEngineeringControl(); enterTurretControl() }
-              } else if (sid === "engineering" && inPlay) {
-                if (_stationState.engineeringControlMode) exitEngineeringControl()
-                else { if (_stationState.turretControlMode) exitTurretControl(); enterEngineeringControl() }
-              } else {
+              const exitAll = () => {
                 if (_stationState.turretControlMode)      exitTurretControl()
                 if (_stationState.engineeringControlMode) exitEngineeringControl()
-                _stationState.active = sid; setActiveStation(sid)
+                if (_stationState.salvageControlMode)     exitSalvageControl()
+                if (_stationState.bridgeControlMode)      exitBridgeControl()
+              }
+              if (sid === "turret" && inPlay) {
+                if (_stationState.turretControlMode) exitTurretControl()
+                else { exitAll(); enterTurretControl() }
+              } else if (sid === "engineering" && inPlay) {
+                if (_stationState.engineeringControlMode) exitEngineeringControl()
+                else { exitAll(); enterEngineeringControl() }
+              } else if (sid === "salvage" && inPlay) {
+                if (_stationState.salvageControlMode) exitSalvageControl()
+                else { exitAll(); enterSalvageControl() }
+              } else if (sid === "bridge" && inPlay) {
+                if (_stationState.bridgeControlMode) exitBridgeControl()
+                else { exitAll(); enterBridgeControl() }
+              } else {
+                exitAll(); _stationState.active = sid; setActiveStation(sid)
               }
             }}
             liveG={liveG}
@@ -5986,6 +6143,204 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       // target died or left field — clear mark
       _stationState.markedTargetId = null
     }
+  }
+
+  // ── Bridge Control Mode — tactical command interface ─────────────────────
+  if (!attractMode && g.bridgeControlMode) {
+    const crewA = (() => { try { const s = localStorage.getItem("sb_crew_assign"); return s ? JSON.parse(s) : {} } catch { return {} } })()
+    const isCapy = crewA.bridge === "capy"
+    ctx.save()
+    ctx.globalAlpha = 0.88; ctx.fillStyle = "rgba(4,4,18,0.88)"; ctx.fillRect(0,0,cw,GH)
+    ctx.globalAlpha = 1
+
+    // Corner brackets — blue for bridge
+    const bsz = 20; ctx.strokeStyle = "rgba(125,211,252,0.5)"; ctx.lineWidth = 1.8
+    for (const [bx, by] of [[0,0],[cw-bsz,0],[0,GH-bsz],[cw-bsz,GH-bsz]] as [number,number][]) {
+      ctx.beginPath(); ctx.moveTo(bx+bsz,by); ctx.lineTo(bx,by); ctx.lineTo(bx,by+bsz); ctx.stroke()
+    }
+
+    ctx.fillStyle = "rgba(125,211,252,0.4)"; ctx.font = "7px monospace"; ctx.textAlign = "center"
+    ctx.fillText("BRIDGE COMMAND", cw/2, 18)
+    ctx.fillStyle = "#7dd3fc"; ctx.font = "bold 11px monospace"
+    ctx.fillText("TACTICAL OVERVIEW", cw/2, 36)
+
+    // Large field radar (left panel)
+    const radarX = 30, radarY = 95, radarW = 350, radarH = 185
+    ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(radarX, radarY, radarW, radarH)
+    ctx.strokeStyle = "rgba(125,211,252,0.2)"; ctx.lineWidth = 1; ctx.strokeRect(radarX, radarY, radarW, radarH)
+    ctx.fillStyle = "rgba(125,211,252,0.1)"; ctx.font = "7px monospace"; ctx.textAlign = "left"
+    ctx.fillText("FIELD RADAR  ·  CLICK TO MARK TARGET", radarX + 4, radarY - 6)
+
+    // Grid lines
+    ctx.strokeStyle = "rgba(125,211,252,0.06)"; ctx.lineWidth = 0.5
+    for (let rx = radarX + radarW/4; rx < radarX + radarW; rx += radarW/4) {
+      ctx.beginPath(); ctx.moveTo(rx, radarY); ctx.lineTo(rx, radarY+radarH); ctx.stroke()
+    }
+    for (let ry = radarY + radarH/3; ry < radarY + radarH; ry += radarH/3) {
+      ctx.beginPath(); ctx.moveTo(radarX, ry); ctx.lineTo(radarX+radarW, ry); ctx.stroke()
+    }
+
+    // Plot words on radar
+    g.words.forEach(w => {
+      const rx = radarX + (w.x / g.W) * radarW
+      const ry = radarY + (w.y / GH) * radarH
+      if (ry < radarY || ry > radarY + radarH) return
+      const isMarked = w.id === _stationState.markedTargetId
+      const r = w.elite ? 5 : w.type === "bug" ? 3.5 : 2.5
+      ctx.fillStyle = isMarked ? "#f87171" : w.type === "bug" ? "#f97316" : w.elite ? "#facc15" : "rgba(125,211,252,0.6)"
+      ctx.beginPath(); ctx.arc(rx, ry, r, 0, Math.PI*2); ctx.fill()
+      if (isMarked) {
+        ctx.strokeStyle = "#f87171"; ctx.lineWidth = 1.2
+        ctx.beginPath(); ctx.arc(rx, ry, r+5, 0, Math.PI*2); ctx.stroke()
+      }
+    })
+    // Player dot
+    const pyR = radarX + (g.px / g.W) * radarW, pyY = radarY + radarH - 10
+    ctx.fillStyle = "#a78bfa"
+    ctx.beginPath(); ctx.arc(pyR, pyY, 4, 0, Math.PI*2); ctx.fill()
+
+    // Boss dot
+    if (g.boss) {
+      const bx2 = radarX + (g.boss.x / g.W) * radarW
+      const by2 = radarY + (g.boss.y / GH) * radarH
+      ctx.strokeStyle = "#f87171"; ctx.lineWidth = 1.5
+      ctx.beginPath(); ctx.arc(bx2, by2, 7, 0, Math.PI*2); ctx.stroke()
+      ctx.fillStyle = "#f87171"; ctx.beginPath(); ctx.arc(bx2, by2, 3, 0, Math.PI*2); ctx.fill()
+    }
+
+    // Right panel: live intelligence
+    const panX = 395, panY = 95, panW = 170
+    ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.font = "7px monospace"; ctx.textAlign = "left"
+    ctx.fillText("SIGNAL INTEL", panX, panY - 6)
+    const intel = [
+      ["THREATS", g.words.filter(w=>!w.fragment).length],
+      ["ELITES",  g.words.filter(w=>w.elite).length],
+      ["BUGS",    g.words.filter(w=>w.type==="bug").length],
+      ["SALVAGE", g.salvage.length],
+      ["COMBO",   `×${g.combo}`],
+    ] as [string, string|number][]
+    intel.forEach(([label, val], i) => {
+      const iy = panY + 14 + i * 22
+      ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.font = "7px monospace"
+      ctx.fillText(label, panX, iy)
+      const numVal = typeof val === "number" ? val : parseInt(val as string) || 0
+      ctx.fillStyle = numVal > 0 ? "#7dd3fc" : "rgba(255,255,255,0.35)"; ctx.font = "bold 9px monospace"
+      ctx.textAlign = "right"; ctx.fillText(String(val), panX + panW, iy)
+      ctx.textAlign = "left"
+    })
+
+    // Marked target info
+    if (_stationState.markedTargetId !== null) {
+      const mt = g.words.find(w => w.id === _stationState.markedTargetId)
+      if (mt) {
+        ctx.fillStyle = "rgba(248,113,113,0.15)"; ctx.fillRect(panX, panY + 130, panW, 55)
+        ctx.strokeStyle = "rgba(248,113,113,0.35)"; ctx.lineWidth = 1; ctx.strokeRect(panX, panY + 130, panW, 55)
+        ctx.fillStyle = "#f87171"; ctx.font = "7px monospace"; ctx.textAlign = "left"
+        ctx.fillText("TARGET LOCKED", panX + 5, panY + 144)
+        ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = "bold 8px monospace"
+        ctx.fillText(mt.text.slice(0, 14), panX + 5, panY + 158)
+        ctx.fillStyle = "rgba(255,255,255,0.3)"; ctx.font = "7px monospace"
+        ctx.fillText(`${mt.elite ? "ELITE · " : ""}${mt.type.toUpperCase()} · +50% bonus`, panX + 5, panY + 172)
+      }
+    }
+
+    // Action bar — clear mark
+    const abY = 295
+    ctx.fillStyle = _stationState.markedTargetId ? "rgba(248,113,113,0.12)" : "rgba(255,255,255,0.04)"
+    ctx.fillRect(30, abY, 180, 22)
+    ctx.strokeStyle = _stationState.markedTargetId ? "rgba(248,113,113,0.4)" : "rgba(255,255,255,0.1)"; ctx.lineWidth = 1
+    ctx.strokeRect(30, abY, 180, 22)
+    ctx.fillStyle = _stationState.markedTargetId ? "#f87171" : "rgba(255,255,255,0.25)"
+    ctx.font = "7.5px monospace"; ctx.textAlign = "center"
+    ctx.fillText(_stationState.markedTargetId ? "⊗ CLEAR MARK" : "No target locked", 120, abY + 15)
+
+    if (isCapy) { ctx.textAlign = "left"; ctx.fillStyle = "rgba(134,239,172,0.4)"; ctx.font = "7px monospace"; ctx.fillText("🦫 CAPY ACTIVE — auto-targeting enabled", 20, 330) }
+    ctx.textAlign = "center"; ctx.fillStyle = "rgba(255,255,255,0.18)"; ctx.font = "7px monospace"
+    ctx.fillText("CLICK RADAR to mark target · [1]/ESC exit", cw/2, 355)
+    ctx.restore()
+
+    // Handle the "clear mark" button click through the click handler
+  }
+
+  // ── Salvage Control Mode — recovery bay interface ────────────────────────
+  if (!attractMode && g.salvageControlMode) {
+    const crewA = (() => { try { const s = localStorage.getItem("sb_crew_assign"); return s ? JSON.parse(s) : {} } catch { return {} } })()
+    const isSalvager = crewA.salvage === "salvager_bot"
+    const grappleOffline = (g.roomDamage.salvage ?? 0) >= 3
+
+    ctx.save()
+    ctx.globalAlpha = 0.88; ctx.fillStyle = "rgba(4,4,18,0.88)"; ctx.fillRect(0,0,cw,GH)
+    ctx.globalAlpha = 1
+
+    // Corner brackets — purple for salvage
+    const bsz = 20
+    ctx.strokeStyle = "rgba(196,181,253,0.5)"; ctx.lineWidth = 1.8
+    for (const [bx, by] of [[0,0],[cw-bsz,0],[0,GH-bsz],[cw-bsz,GH-bsz]] as [number,number][]) {
+      ctx.beginPath(); ctx.moveTo(bx+bsz,by); ctx.lineTo(bx,by); ctx.lineTo(bx,by+bsz); ctx.stroke()
+    }
+
+    // Header
+    ctx.fillStyle = "rgba(196,181,253,0.4)"; ctx.font = "7px monospace"; ctx.textAlign = "center"
+    ctx.fillText("SALVAGE BAY", cw/2, 18)
+    ctx.fillStyle = "#c4b5fd"; ctx.font = "bold 11px monospace"
+    ctx.fillText("SIGNAL RECOVERY", cw/2, 36)
+
+    // Field item grid
+    const items = g.salvage.slice(0, 8)
+    const tileW = 110, tileH = 60, cols = 4
+    const startX = (cw - cols * tileW) / 2, startY = 90
+
+    if (items.length === 0) {
+      ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.font = "9px monospace"; ctx.textAlign = "center"
+      ctx.fillText("NO DEBRIS IN FIELD", cw/2, 200)
+      ctx.fillStyle = "rgba(255,255,255,0.1)"; ctx.font = "7px monospace"
+      ctx.fillText("Destroy enemies to generate salvageable debris", cw/2, 218)
+    } else {
+      ctx.fillStyle = "rgba(255,255,255,0.25)"; ctx.font = "7px monospace"; ctx.textAlign = "left"
+      ctx.fillText(`${items.length} item${items.length > 1 ? "s" : ""} in field — click to recover`, startX, 82)
+      items.forEach((s, i) => {
+        const col = i % cols, row = Math.floor(i / cols)
+        const tx = startX + col * tileW, ty = startY + row * (tileH + 12)
+        const typeCol = s.corrupted ? "#f87171" : s.type === "artifact" ? "#facc15" : s.type === "fragment" ? "#c4b5fd" : "#94a3b8"
+        const typeGlyph = s.corrupted ? "⊗" : s.type === "artifact" ? "★" : s.type === "fragment" ? "◈" : "◆"
+        const typeLabel = s.corrupted ? "CORRUPTED" : s.type.toUpperCase()
+        const value = s.type === "artifact" ? 500 : s.type === "fragment" ? 150 : 50
+        // Tile background
+        ctx.fillStyle = s.corrupted ? "rgba(30,8,8,0.9)" : "rgba(8,8,22,0.9)"
+        ctx.fillRect(tx, ty, tileW - 8, tileH)
+        ctx.strokeStyle = s.corrupted ? "#f8717155" : `${typeCol}55`; ctx.lineWidth = 1
+        ctx.strokeRect(tx, ty, tileW - 8, tileH)
+        // Glyph + label
+        ctx.fillStyle = typeCol; ctx.font = "bold 14px monospace"; ctx.textAlign = "center"
+        ctx.fillText(typeGlyph, tx + (tileW-8)/2, ty + 24)
+        ctx.font = "7px monospace"
+        ctx.fillText(typeLabel, tx + (tileW-8)/2, ty + 36)
+        ctx.fillStyle = "rgba(255,255,255,0.35)"; ctx.font = "7px monospace"
+        ctx.fillText(s.corrupted ? "???" : `+${value + (isSalvager ? Math.round(value*0.25) : 0)}`, tx + (tileW-8)/2, ty + 48)
+        if (s.corrupted && isSalvager) { ctx.fillStyle = "rgba(74,222,128,0.5)"; ctx.fillText("IDENTIFIED", tx + (tileW-8)/2, ty + 57) }
+      })
+    }
+
+    // Grapple All button
+    const grappleY = 285
+    ctx.fillStyle = grappleOffline ? "rgba(255,255,255,0.05)" : "rgba(74,222,128,0.1)"
+    ctx.fillRect(cw/2 - 90, grappleY, 180, 26)
+    ctx.strokeStyle = grappleOffline ? "rgba(255,255,255,0.12)" : "rgba(74,222,128,0.4)"; ctx.lineWidth = 1
+    ctx.strokeRect(cw/2 - 90, grappleY, 180, 26)
+    ctx.fillStyle = grappleOffline ? "rgba(255,255,255,0.25)" : "#4ade80"
+    ctx.font = "bold 8.5px monospace"; ctx.textAlign = "center"
+    ctx.fillText(grappleOffline ? "GRAPPLE OFFLINE" : "⬡ GRAPPLE ALL FIELD DEBRIS", cw/2, grappleY + 17)
+
+    // Session stats
+    ctx.textAlign = "left"; ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.font = "7px monospace"
+    ctx.fillText(`Collected: ${g.salvageCollected}  |  Fragments: ${g.fragmentsEarned}  |  Score: +${g.score > 0 ? g.score.toLocaleString() : 0}`, 20, 326)
+    if (isSalvager) { ctx.fillStyle = "rgba(196,181,253,0.4)"; ctx.fillText("◇ SALVAGER ACTIVE — +25% value, corrupted identified", 20, 340) }
+
+    // Exit hint
+    ctx.textAlign = "center"; ctx.fillStyle = "rgba(255,255,255,0.18)"; ctx.font = "7px monospace"
+    ctx.fillText("[3]/ESC exit", cw/2, 355)
+
+    ctx.restore()
   }
 
   // ── Engineering Control Mode — ship systems management HUD ───────────────
