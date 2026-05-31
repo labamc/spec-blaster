@@ -405,7 +405,14 @@ function saveSignal(s: PersistentSignal) {
 }
 
 function signalArchiveCompletion(s: PersistentSignal): number {
-  return Math.round((s.clearedBosses.length / TOTAL_ARCHIVE_NODES) * 100)
+  // Use archiveNodeState to count — clearedBosses also contains linear-mode boss names
+  // which would inflate the percentage past 100%
+  const completed = Object.values(s.archiveNodeState ?? {}).filter(v => v === "completed").length
+  return Math.min(100, Math.round((completed / TOTAL_ARCHIVE_NODES) * 100))
+}
+
+function signalCompletedNodes(s: PersistentSignal): number {
+  return Object.values(s.archiveNodeState ?? {}).filter(v => v === "completed").length
 }
 
 // Merge a completed run's data into the persistent Signal
@@ -1331,12 +1338,19 @@ export default function HomePage() {
   }
 
   function onRecoveryComplete() {
+    const g = G.current
+    // Capture and reset fragmentsEarned before it can be double-counted on death
+    const fragsThisExpedition = g.fragmentsEarned
+    g.fragmentsEarned = 0
+
     if (currentRecovery) {
       const { def } = currentRecovery
       setSignal(prev => {
-        const cur     = prev.humanArchive?.[def.category] ?? 0
+        const cur = prev.humanArchive?.[def.category] ?? 0
         const updated = {
           ...prev,
+          // Commit this expedition's Recovered Intent to the persistent Signal
+          recoveredIntent: prev.recoveredIntent + fragsThisExpedition,
           humanArchive: { ...prev.humanArchive, [def.category]: Math.min(100, cur + def.percentContrib) },
         }
         saveSignal(updated)
@@ -1344,19 +1358,18 @@ export default function HomePage() {
       })
       setCurrentRecovery(null)
     }
-    returnToArchive()
+    returnToArchive(fragsThisExpedition)
   }
 
-  function returnToArchive() {
+  function returnToArchive(fragmentsGainedThisExpedition = 0) {
     setArchiveSelectedNode(null)
     setArchiveCompletedThisRun([])
     const g = G.current
-    // Epoch 1 complete: RECURSION CORE was just cleared
     if (g.archiveEpochComplete) {
       g.archiveEpochComplete = false
       setEpochCompleteData({
-        fragmentsGained: g.fragmentsEarned,
-        newAge: signal.operationalAge + 1,  // +1 because run end hasn't merged yet
+        fragmentsGained: fragmentsGainedThisExpedition,
+        newAge: signal.operationalAge + 1,
       })
     }
     phaseRef.current = "archive"; setPhase("archive")
@@ -1478,7 +1491,12 @@ export default function HomePage() {
           setCurrentRecovery({ nodeId: nodeId!, def: recoveryDef })
           phaseRef.current = "recovery"; setPhase("recovery")
         } else {
-          returnToArchive()
+          // No recovery screen — commit fragments directly before returning
+          const frags = g.fragmentsEarned; g.fragmentsEarned = 0
+          if (frags > 0) {
+            setSignal(prev => { const u = { ...prev, recoveredIntent: prev.recoveredIntent + frags }; saveSignal(u); return u })
+          }
+          returnToArchive(frags)
         }
         return
       }
@@ -6785,7 +6803,7 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
               <div style={{ display:"flex", justifyContent:"space-between" }}>
                 <span style={{ color:"rgba(255,255,255,0.3)", fontSize:"0.56rem", fontFamily:"monospace" }}>Archive</span>
                 <span style={{ color:"rgba(255,255,255,0.45)", fontSize:"0.58rem", fontFamily:"monospace" }}>
-                  {signalArchiveCompletion(persistentSignal)}% · {persistentSignal.clearedBosses.length}/{TOTAL_ARCHIVE_NODES} systems
+                  {signalArchiveCompletion(persistentSignal)}% · {signalCompletedNodes(persistentSignal)}/{TOTAL_ARCHIVE_NODES} systems
                 </span>
               </div>
             </div>
@@ -8450,7 +8468,7 @@ function CMSignal({ signal, runScore }: { signal: PersistentSignal; runScore: nu
               {[
                 ["Operational Age",  `${signal.operationalAge} runs`],
                 ["Recovered Intent", signal.recoveredIntent.toLocaleString()],
-                ["Archive Completion", `${completion}% (${signal.clearedBosses.length}/${TOTAL_ARCHIVE_NODES} systems)`],
+                ["Archive Completion", `${completion}% (${signalCompletedNodes(signal)}/${TOTAL_ARCHIVE_NODES} systems)`],
                 ["Operators Active", signal.operatorsEver.length],
                 ["Signal Founded",   signal.foundedAt > 0 ? new Date(signal.foundedAt).toLocaleDateString() : "Unknown"],
               ].map(([label, val]) => (
@@ -8462,15 +8480,15 @@ function CMSignal({ signal, runScore }: { signal: PersistentSignal; runScore: nu
               ))}
             </div>
 
-            {/* Cleared bosses */}
-            {signal.clearedBosses.length > 0 && (
+            {/* Systems cleared — from archiveNodeState (not clearedBosses which may include linear mode) */}
+            {signalCompletedNodes(signal) > 0 && (
               <div>
                 <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.52rem", letterSpacing:"0.12em", margin:"0 0 0.3rem" }}>SYSTEMS CLEARED</p>
                 <div style={{ display:"flex", flexWrap:"wrap", gap:"0.25rem" }}>
-                  {signal.clearedBosses.map(b => (
-                    <span key={b} style={{ color:"rgba(74,222,128,0.7)", fontSize:"0.52rem", fontFamily:"monospace",
+                  {SIGNAL_ARCHIVE_E1.filter(n => (signal.archiveNodeState?.[n.id] ?? "unknown") === "completed").map(n => (
+                    <span key={n.id} style={{ color:"rgba(74,222,128,0.7)", fontSize:"0.52rem", fontFamily:"monospace",
                       background:"rgba(74,222,128,0.06)", border:"1px solid rgba(74,222,128,0.2)",
-                      borderRadius:"3px", padding:"0.1rem 0.35rem" }}>{b}</span>
+                      borderRadius:"3px", padding:"0.1rem 0.35rem" }}>{n.name}</span>
                   ))}
                 </div>
               </div>
@@ -8923,7 +8941,7 @@ function ArchiveScreen({ signal, lastCompletedNodeId, onSelectNode, onResetEpoch
           <div style={{ textAlign:"right" }}>
             <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", margin:"0 0 0.1rem" }}>ARCHIVE COMPLETION</p>
             <p style={{ color:"rgba(74,222,128,0.7)", fontSize:"0.72rem", fontWeight:700, margin:0 }}>
-              {signalArchiveCompletion(signal)}% · {signal.clearedBosses.length}/{TOTAL_ARCHIVE_NODES}
+              {signalArchiveCompletion(signal)}% · {signalCompletedNodes(signal)}/{TOTAL_ARCHIVE_NODES}
             </p>
           </div>
         </div>
@@ -9019,7 +9037,7 @@ function ArchiveScreen({ signal, lastCompletedNodeId, onSelectNode, onResetEpoch
               )
             })}
             {/* Epoch 2 teaser node — visible but locked when any Epoch 1 nodes are completed */}
-            {signal.clearedBosses.length > 0 && (() => {
+            {signalCompletedNodes(signal) > 0 && (() => {
               const ep2x = 0.5 * W, ep2y = (H - 40) + 24 + 26
               return (
                 <g>
@@ -9246,7 +9264,14 @@ function EpochCompleteScreen({ signal, fragmentsGained, newAge, onContinue }: {
   newAge: number
   onContinue: () => void
 }) {
-  const completion = signalArchiveCompletion(signal)
+  const completion    = signalArchiveCompletion(signal)
+  const completedNodes= signalCompletedNodes(signal)
+  // Human Archive — what was recovered across all Epoch 1 expeditions
+  const archive       = signal.humanArchive ?? {}
+  const recoveredCats = HUMAN_ARCHIVE_CATEGORIES.filter(c => (archive[c] ?? 0) > 0)
+  const totalArchivePct = recoveredCats.length > 0
+    ? Math.round(recoveredCats.reduce((sum, c) => sum + (archive[c] ?? 0), 0) / recoveredCats.length)
+    : 0
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") onContinue() }
@@ -9256,62 +9281,101 @@ function EpochCompleteScreen({ signal, fragmentsGained, newAge, onContinue }: {
 
   return (
     <div style={{ position:"absolute", inset:0, background:"rgba(4,4,10,0.98)", zIndex:20,
-      display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"monospace" }}>
-      <div style={{ maxWidth:"420px", width:"calc(100% - 2rem)", textAlign:"center", padding:"2rem" }}>
+      display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"monospace",
+      overflowY:"auto" }}>
+      <div style={{ maxWidth:"500px", width:"calc(100% - 2rem)", padding:"2rem" }}>
 
         {/* Epoch marker */}
         <p style={{ color:"rgba(150,107,236,0.4)", fontSize:"0.5rem", letterSpacing:"0.3em",
-          margin:"0 0 0.6rem" }}>EPOCH 1 · STRUCTURED SYSTEMS</p>
+          margin:"0 0 0.5rem", textAlign:"center" }}>EPOCH 1 · STRUCTURED SYSTEMS</p>
 
         {/* Primary headline */}
         <p style={{ color:"#4ade80", fontSize:"1.4rem", fontWeight:700, letterSpacing:"0.15em",
-          margin:"0 0 0.2rem", textShadow:"0 0 30px rgba(74,222,128,0.4)" }}>
+          margin:"0 0 0.15rem", textShadow:"0 0 30px rgba(74,222,128,0.4)", textAlign:"center" }}>
           NETWORK SEVERED
         </p>
-        <p style={{ color:"rgba(255,255,255,0.4)", fontSize:"0.65rem", margin:"0 0 1.6rem",
-          lineHeight:1.6 }}>
+        <p style={{ color:"rgba(255,255,255,0.35)", fontSize:"0.62rem", margin:"0 0 1.4rem",
+          lineHeight:1.6, textAlign:"center" }}>
           The Signal has severed the Recursion Core.<br/>
-          All structured systems are offline.
+          {completedNodes} of {TOTAL_ARCHIVE_NODES} structured systems are offline.
         </p>
 
-        {/* Stats */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.5rem", marginBottom:"1.8rem" }}>
+        {/* Signal stats */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.45rem", marginBottom:"1.2rem" }}>
           {[
             ["ARCHIVE COMPLETION", `${completion}%`],
+            ["SYSTEMS SEVERED",    `${completedNodes}/${TOTAL_ARCHIVE_NODES}`],
             ["OPERATIONAL AGE",    `${newAge} runs`],
-            ["RECOVERED INTENT",   fragmentsGained > 0 ? `+${fragmentsGained} this run` : signal.recoveredIntent.toLocaleString()],
-            ["SYSTEMS SEVERED",    `${signal.clearedBosses.length}/${TOTAL_ARCHIVE_NODES}`],
+            ["RECOVERED INTENT",   `${signal.recoveredIntent.toLocaleString()}`],
           ].map(([label, val]) => (
             <div key={label} style={{ background:"rgba(74,222,128,0.04)",
-              border:"1px solid rgba(74,222,128,0.12)", borderRadius:"5px", padding:"0.55rem 0.6rem" }}>
-              <p style={{ color:"rgba(74,222,128,0.7)", fontSize:"0.75rem", fontWeight:700,
-                margin:"0 0 0.12rem" }}>{val}</p>
-              <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.48rem", letterSpacing:"0.1em",
+              border:"1px solid rgba(74,222,128,0.12)", borderRadius:"5px", padding:"0.5rem 0.6rem" }}>
+              <p style={{ color:"rgba(74,222,128,0.8)", fontSize:"0.72rem", fontWeight:700,
+                margin:"0 0 0.1rem" }}>{val}</p>
+              <p style={{ color:"rgba(255,255,255,0.22)", fontSize:"0.46rem", letterSpacing:"0.1em",
                 margin:0 }}>{label}</p>
             </div>
           ))}
         </div>
 
+        {/* Human Archive — what was restored */}
+        {recoveredCats.length > 0 && (
+          <div style={{ background:"rgba(196,181,253,0.04)", border:"1px solid rgba(196,181,253,0.15)",
+            borderRadius:"6px", padding:"0.8rem 0.9rem", marginBottom:"1.2rem" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.55rem" }}>
+              <p style={{ color:"rgba(196,181,253,0.45)", fontSize:"0.5rem", letterSpacing:"0.2em",
+                margin:0, textTransform:"uppercase" }}>
+                HUMAN ARCHIVE RECOVERED
+              </p>
+              <span style={{ color:"rgba(196,181,253,0.6)", fontSize:"0.52rem" }}>
+                {recoveredCats.length} categories
+              </span>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:"0.28rem" }}>
+              {recoveredCats.map(cat => {
+                const pct = archive[cat] ?? 0
+                const def = Object.values(RECOVERY_DEFS).find(d => d.category === cat)
+                return (
+                  <div key={cat}>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.12rem" }}>
+                      <span style={{ color:"rgba(196,181,253,0.75)", fontSize:"0.56rem" }}>{cat}</span>
+                      <span style={{ color:"rgba(196,181,253,0.6)", fontSize:"0.54rem",
+                        fontWeight:700 }}>{pct}%</span>
+                    </div>
+                    <div style={{ height:"3px", background:"rgba(255,255,255,0.05)", borderRadius:"2px" }}>
+                      <div style={{ height:"100%", width:`${pct}%`,
+                        background:"rgba(196,181,253,0.55)", borderRadius:"2px" }} />
+                    </div>
+                    {def && (
+                      <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.48rem",
+                        margin:"0.08rem 0 0", fontStyle:"italic" }}>
+                        {def.fragmentName}
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Epoch 2 teaser */}
-        <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.07)",
-          borderRadius:"5px", padding:"0.6rem 0.8rem", marginBottom:"1.4rem" }}>
-          <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.5rem", letterSpacing:"0.14em",
-            margin:"0 0 0.2rem" }}>NEXT EPOCH</p>
-          <p style={{ color:"rgba(255,255,255,0.35)", fontSize:"0.65rem", fontWeight:700,
+        <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.06)",
+          borderRadius:"5px", padding:"0.5rem 0.75rem", marginBottom:"1.2rem", textAlign:"center" }}>
+          <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.5rem", letterSpacing:"0.14em",
+            margin:"0 0 0.15rem" }}>NEXT EPOCH</p>
+          <p style={{ color:"rgba(255,255,255,0.3)", fontSize:"0.6rem", fontWeight:700,
             margin:"0 0 0.1rem" }}>EPOCH 2: PLATFORM SPRAWL</p>
-          <p style={{ color:"rgba(255,255,255,0.18)", fontSize:"0.55rem", fontStyle:"italic", margin:0 }}>
-            SaaS · Integrations · ETL · Workflows · Microservices
-          </p>
-          <p style={{ color:"rgba(150,107,236,0.35)", fontSize:"0.5rem", margin:"0.3rem 0 0" }}>
+          <p style={{ color:"rgba(255,255,255,0.12)", fontSize:"0.52rem", fontStyle:"italic", margin:0 }}>
             Coming in a future update
           </p>
         </div>
 
         {/* Continue */}
         <button onClick={onContinue} style={{ width:"100%",
-          background:"linear-gradient(135deg,rgba(74,222,128,0.2),rgba(74,222,128,0.1))",
-          border:"1px solid rgba(74,222,128,0.35)", borderRadius:"6px", padding:"0.75rem",
-          color:"rgba(74,222,128,0.9)", cursor:"pointer", fontSize:"0.75rem", fontWeight:700,
+          background:"linear-gradient(135deg,rgba(74,222,128,0.15),rgba(74,222,128,0.08))",
+          border:"1px solid rgba(74,222,128,0.35)", borderRadius:"6px", padding:"0.72rem",
+          color:"rgba(74,222,128,0.9)", cursor:"pointer", fontSize:"0.72rem", fontWeight:700,
           fontFamily:"monospace", letterSpacing:"0.12em" }}>
           RETURN TO THE SIGNAL  [ENTER]
         </button>
