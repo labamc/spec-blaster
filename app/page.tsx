@@ -3706,6 +3706,17 @@ export default function HomePage() {
                 setArchiveSelectedNode(nodeId)
                 phaseRef.current = "briefing"; setPhase("briefing")
               }}
+              onResetEpoch={() => {
+                // Reset archiveNodeState so the player can run Epoch 1 again
+                // Human Archive and Recovered Intent are preserved
+                setSignal(prev => {
+                  const updated = { ...prev, archiveNodeState: initialArchiveNodeState() }
+                  saveSignal(updated)
+                  return updated
+                })
+                setLastCompletedNodeId(null)
+                console.log("[ARCHIVE] Epoch reset — AUTH SERVICE now available")
+              }}
             />
           )}
 
@@ -8871,10 +8882,11 @@ function buildArchiveSummary(completedId: string, nodeState: Record<string, Node
   return `${node.name} severed — ${names} ${unlocked.length > 1 ? "are" : "is"} now accessible.`
 }
 
-function ArchiveScreen({ signal, lastCompletedNodeId, onSelectNode }: {
+function ArchiveScreen({ signal, lastCompletedNodeId, onSelectNode, onResetEpoch }: {
   signal: PersistentSignal
   lastCompletedNodeId: string | null
   onSelectNode: (nodeId: string) => void
+  onResetEpoch: () => void
 }) {
   const [hoveredNode, setHoveredNode] = useState<string | null>(null)
   const nodeState = signal.archiveNodeState ?? initialArchiveNodeState()
@@ -8891,6 +8903,11 @@ function ArchiveScreen({ signal, lastCompletedNodeId, onSelectNode }: {
   // Newly unlocked nodes — pulse/glow to show they're freshly accessible
   const newlyUnlocked = lastCompletedNodeId ? getNewlyUnlocked(lastCompletedNodeId, nodeState) : []
   const summaryLine   = lastCompletedNodeId ? buildArchiveSummary(lastCompletedNodeId, nodeState) : null
+
+  // Detect fully-completed archive: all nodes done, none available
+  const availableCount = SIGNAL_ARCHIVE_E1.filter(n => (nodeState[n.id] ?? "unknown") === "available").length
+  const completedCount = SIGNAL_ARCHIVE_E1.filter(n => (nodeState[n.id] ?? "unknown") === "completed").length
+  const epochCleared   = completedCount === SIGNAL_ARCHIVE_E1.length && availableCount === 0
 
   return (
     <div style={{ position:"absolute", inset:0, background:"rgba(4,4,10,0.97)", zIndex:10,
@@ -9071,11 +9088,41 @@ function ArchiveScreen({ signal, lastCompletedNodeId, onSelectNode }: {
         </div>
       </div>
 
+      {/* Epoch cleared overlay — shown when all 9 nodes are completed */}
+      {epochCleared && (
+        <div style={{ position:"absolute", inset:0, background:"rgba(4,4,10,0.92)", zIndex:5,
+          display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column",
+          gap:"0.8rem", fontFamily:"monospace", padding:"2rem" }}>
+          <p style={{ color:"rgba(74,222,128,0.5)", fontSize:"0.5rem", letterSpacing:"0.25em", margin:0 }}>
+            EPOCH 1 · STRUCTURED SYSTEMS
+          </p>
+          <p style={{ color:"#4ade80", fontSize:"1.1rem", fontWeight:700, margin:0,
+            textShadow:"0 0 20px rgba(74,222,128,0.4)", letterSpacing:"0.12em" }}>
+            NETWORK SEVERED
+          </p>
+          <p style={{ color:"rgba(255,255,255,0.4)", fontSize:"0.6rem", margin:"0.3rem 0 0.8rem",
+            textAlign:"center", lineHeight:1.6 }}>
+            All {SIGNAL_ARCHIVE_E1.length} Epoch 1 systems have been severed.<br/>
+            The Signal may run another expedition through the same infrastructure.
+          </p>
+          <button onClick={onResetEpoch}
+            style={{ background:"rgba(74,222,128,0.1)", border:"1px solid rgba(74,222,128,0.4)",
+              borderRadius:"6px", padding:"0.7rem 1.5rem", color:"rgba(74,222,128,0.9)",
+              cursor:"pointer", fontSize:"0.72rem", fontWeight:700, fontFamily:"monospace",
+              letterSpacing:"0.1em" }}>
+            BEGIN NEW EPOCH 1 RUN
+          </button>
+          <p style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.5rem", margin:0 }}>
+            Human Archive progress and Recovered Intent are preserved
+          </p>
+        </div>
+      )}
+
       {/* Footer */}
       <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", padding:"0.45rem 1.2rem",
         display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <span style={{ color:"rgba(255,255,255,0.15)", fontSize:"0.5rem" }}>
-          hover = intel · click available = briefing
+          {epochCleared ? "epoch complete" : "hover = intel · click available = briefing"}
         </span>
         <span style={{ color:"rgba(150,107,236,0.4)", fontSize:"0.5rem" }}>
           SIGNAL AGE: {signal.operationalAge} runs · INTENT: {signal.recoveredIntent.toLocaleString()}
