@@ -2198,14 +2198,53 @@ export default function HomePage() {
 
       // Movement: autopilot when player is at turret station, otherwise normal
       if (g.turretControlMode || g.engineeringControlMode || g.salvageControlMode || g.bridgeControlMode) {
-        // Autopilot: simple left-right patrol (5s per full cycle)
-        const margin = 70
-        const range  = g.W - margin * 2
-        const phase  = (now % 5000) / 5000
-        const tri    = phase < 0.5 ? phase * 2 : 2 - phase * 2
-        const autoTarget = margin + tri * range
-        g.px = Math.max(20, Math.min(g.W - 20, g.px + (autoTarget - g.px) * 0.025))
-        g.py = PLAYER_Y
+        // ── Smart autopilot — competent operator behavior ────────────────────
+        // Priority 1 (emergency): dodge incoming bullets that are close and on-target
+        const incomingBullets = g.bullets.filter(b =>
+          b.enemy && b.y > g.py - 110 && b.y < g.py && Math.abs(b.x - g.px) < 65
+        )
+        let autoTarget = g.px  // default: hold position
+        let urgency = 0.025    // base lerp speed
+
+        if (incomingBullets.length > 0) {
+          // Dodge away from the center of incoming fire
+          const avgBulletX = incomingBullets.reduce((s, b) => s + b.x, 0) / incomingBullets.length
+          const dodgeDx = g.px - avgBulletX
+          // Dodge in the direction away from bullets, proportional to threat density
+          autoTarget = g.px + Math.sign(dodgeDx || (Math.random() > 0.5 ? 1 : -1)) * 75
+          urgency = 0.055 + incomingBullets.length * 0.015  // more urgency with more bullets
+        } else if (g.boss) {
+          // Priority 2 (tactical): stay mobile under the boss but not directly below
+          const bossDx = g.px - g.boss.x
+          // Orbit the boss with a rhythmic offset — gives turrets good angles
+          const orbitOff = Math.sin(now / 1800) * 90
+          autoTarget = Math.max(60, Math.min(g.W - 60, g.boss.x + orbitOff))
+          // But dodge out from directly under boss (boss bullets often fire straight down)
+          if (Math.abs(bossDx) < 30) autoTarget += 70 * Math.sign(orbitOff || 1)
+          urgency = 0.035
+        } else {
+          // Priority 3 (positioning): track toward center of threat mass
+          const threats = g.words.filter(w => !w.fragment && w.type !== "powerup" && w.y > 0 && w.y < g.py - 30)
+          if (threats.length > 0) {
+            // Weight toward the densest threat cluster
+            const avgX = threats.reduce((s, w) => s + w.x, 0) / threats.length
+            // Blend between threat center and field center (avoid always tracking to one side)
+            autoTarget = avgX * 0.55 + g.W * 0.5 * 0.45
+            // Add slow rhythmic drift for visual interest and unpredictability
+            autoTarget += Math.sin(now / 2800) * 35
+            urgency = 0.028
+          } else {
+            // No threats: drift gently toward center with slow oscillation
+            autoTarget = g.W * 0.5 + Math.sin(now / 2200) * 55
+            urgency = 0.022
+          }
+        }
+
+        // Hard clamp from walls, then smooth interpolate
+        autoTarget = Math.max(55, Math.min(g.W - 55, autoTarget))
+        g.px = Math.max(22, Math.min(g.W - 22, g.px + (autoTarget - g.px) * urgency))
+        // Subtle vertical breathing — more pronounced during emergencies
+        g.py = PLAYER_Y + Math.sin(now / 2600) * (incomingBullets.length > 0 ? 4 : 7)
 
         // Keyboard barrel rotation — A/Left = CCW, D/Right = CW
         const rotSpeed = 0.045
@@ -3233,10 +3272,18 @@ export default function HomePage() {
                 }
               }
             }
-            // Track crew kills by bullet color signature
+            // Track crew kills + hit confirmation feedback
             if (b.col === "#fbbf24") {
               crewStat(g, "veteran_kills"); if (w.elite) crewStat(g, "veteran_eliteKills")
               if (w.elite) crewLogForce("VETERAN", `Elite Eliminated: ${w.text.slice(0,8)}`, "kill")
+            }
+            // Player turret hit confirmation — impact ring at contact point
+            if (b.kind === "turret" && (g.turretControlMode || g.engineeringControlMode)) {
+              const hitCol = w.elite ? "#facc15" : w.type === "bug" ? "#f97316" : "#a78bfa"
+              g.particles.push({ x: w.x, y: w.y, vx:0, vy:0, life:0.32, initLife:0.32, glyph:"", col:hitCol, ring:true })
+              if (w.elite) {
+                g.particles.push({ x: w.x, y: w.y-14, vx:0, vy:-1.1, life:1.2, glyph:"ELITE KILL", col:"#facc15", sz:9, gravity:0 })
+              }
             }
             if (b.col === "#86efac") { crewStat(g, "capy_assists") }
             applyArtifactOnKill(g, w, now)
@@ -6180,18 +6227,43 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       ctx.beginPath(); ctx.moveTo(radarX, ry); ctx.lineTo(radarX+radarW, ry); ctx.stroke()
     }
 
-    // Plot words on radar
-    g.words.forEach(w => {
+    // Score all threats for Capy recommendation
+    const threatsScoredB = g.words.filter(w => !w.fragment && w.type !== "powerup")
+      .map(w => ({
+        w, score: (w.elite ? 50 : 0) + (w.type === "bug" ? 25 : 0)
+               + Math.max(0, 30 - w.y / 12)  // proximity to player Y bonus
+               + (w.id === _stationState.markedTargetId ? 10 : 0)
+      })).sort((a, b) => b.score - a.score)
+    const topThreat = threatsScoredB[0]?.w ?? null
+
+    // Plot words on radar with priority scores
+    threatsScoredB.forEach(({ w, score }, rank) => {
       const rx = radarX + (w.x / g.W) * radarW
       const ry = radarY + (w.y / GH) * radarH
       if (ry < radarY || ry > radarY + radarH) return
-      const isMarked = w.id === _stationState.markedTargetId
-      const r = w.elite ? 5 : w.type === "bug" ? 3.5 : 2.5
-      ctx.fillStyle = isMarked ? "#f87171" : w.type === "bug" ? "#f97316" : w.elite ? "#facc15" : "rgba(125,211,252,0.6)"
+      const isMarked  = w.id === _stationState.markedTargetId
+      const isCapyRec = w === topThreat && isCapy
+      const r = w.elite ? 5.5 : w.type === "bug" ? 3.5 : 2.5
+      ctx.fillStyle = isMarked ? "#f87171" : isCapyRec ? "#86efac"
+        : w.type === "bug" ? "#f97316" : w.elite ? "#facc15" : "rgba(125,211,252,0.55)"
       ctx.beginPath(); ctx.arc(rx, ry, r, 0, Math.PI*2); ctx.fill()
       if (isMarked) {
-        ctx.strokeStyle = "#f87171"; ctx.lineWidth = 1.2
+        ctx.strokeStyle = "#f87171"; ctx.lineWidth = 1.5
         ctx.beginPath(); ctx.arc(rx, ry, r+5, 0, Math.PI*2); ctx.stroke()
+      }
+      if (isCapyRec && !isMarked) {
+        // Capy's recommendation — pulsing green ring
+        ctx.strokeStyle = "#86efac"; ctx.lineWidth = 1
+        ctx.globalAlpha = 0.5 + 0.3 * Math.abs(Math.sin(now / 350))
+        ctx.beginPath(); ctx.arc(rx, ry, r+6, 0, Math.PI*2); ctx.stroke()
+        ctx.globalAlpha = 1
+        ctx.fillStyle = "#86efac"; ctx.font = "5px monospace"; ctx.textAlign = "center"
+        ctx.fillText("🦫", rx, ry - r - 4)
+      }
+      // Priority number (top 3)
+      if (rank < 3 && !isMarked) {
+        ctx.fillStyle = "rgba(255,255,255,0.35)"; ctx.font = "5.5px monospace"; ctx.textAlign = "center"
+        ctx.fillText(String(rank+1), rx, ry - r - 3)
       }
     })
     // Player dot
@@ -6286,18 +6358,38 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.fillText("SIGNAL RECOVERY", cw/2, 36)
 
     // Field item grid
+    const now3 = Date.now()
     const items = g.salvage.slice(0, 8)
     const tileW = 110, tileH = 60, cols = 4
-    const startX = (cw - cols * tileW) / 2, startY = 90
+    const startX = (cw - cols * tileW) / 2, startY = 95
+
+    // Total value at stake (what the player loses if they don't collect)
+    const totalValue = items.reduce((sum, s) => {
+      if (s.corrupted) return sum
+      const base = s.type === "artifact" ? 500 : s.type === "fragment" ? 150 : 50
+      return sum + base + (isSalvager ? Math.round(base * 0.25) : 0)
+    }, 0)
+    const artifactCount = items.filter(s => s.type === "artifact" && !s.corrupted).length
+    const corruptedCount = items.filter(s => s.corrupted).length
 
     if (items.length === 0) {
       ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.font = "9px monospace"; ctx.textAlign = "center"
-      ctx.fillText("NO DEBRIS IN FIELD", cw/2, 200)
+      ctx.fillText("NO DEBRIS IN FIELD", cw/2, 190)
       ctx.fillStyle = "rgba(255,255,255,0.1)"; ctx.font = "7px monospace"
-      ctx.fillText("Destroy enemies to generate salvageable debris", cw/2, 218)
+      ctx.fillText("Destroy enemies to generate salvageable debris", cw/2, 208)
     } else {
-      ctx.fillStyle = "rgba(255,255,255,0.25)"; ctx.font = "7px monospace"; ctx.textAlign = "left"
-      ctx.fillText(`${items.length} item${items.length > 1 ? "s" : ""} in field — click to recover`, startX, 82)
+      // Value header — the core question: "what am I losing?"
+      ctx.textAlign = "center"
+      ctx.fillStyle = artifactCount > 0 ? "#facc15" : "rgba(196,181,253,0.7)"; ctx.font = "bold 9px monospace"
+      ctx.fillText(`${items.length} item${items.length > 1 ? "s" : ""} · ${totalValue > 0 ? `+${totalValue} if collected` : "corrupted only"}`, cw/2, 82)
+      if (artifactCount > 0) {
+        ctx.fillStyle = "#facc15"; ctx.font = "7px monospace"
+        ctx.fillText(`★ ${artifactCount} ARTIFACT${artifactCount > 1 ? "S" : ""} IN FIELD`, cw/2, 92)
+      }
+      if (corruptedCount > 0 && isSalvager) {
+        ctx.fillStyle = "rgba(74,222,128,0.6)"; ctx.font = "6.5px monospace"
+        ctx.fillText(`⊗ ${corruptedCount} corrupted identified — avoid`, cw/2, 102)
+      }
       items.forEach((s, i) => {
         const col = i % cols, row = Math.floor(i / cols)
         const tx = startX + col * tileW, ty = startY + row * (tileH + 12)
@@ -6318,6 +6410,13 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
         ctx.fillStyle = "rgba(255,255,255,0.35)"; ctx.font = "7px monospace"
         ctx.fillText(s.corrupted ? "???" : `+${value + (isSalvager ? Math.round(value*0.25) : 0)}`, tx + (tileW-8)/2, ty + 48)
         if (s.corrupted && isSalvager) { ctx.fillStyle = "rgba(74,222,128,0.5)"; ctx.fillText("IDENTIFIED", tx + (tileW-8)/2, ty + 57) }
+        // Urgency: time remaining bar (items despawn after 9s)
+        const age = now3 - s.spawnTime; const lifeLeft = Math.max(0, 1 - age / s.life)
+        if (lifeLeft < 0.4 && !s.corrupted) {
+          const urgencyCol = lifeLeft < 0.15 ? "#f87171" : "#fdba74"
+          ctx.fillStyle = "rgba(0,0,0,0.4)"; ctx.fillRect(tx, ty + tileH - 4, tileW - 8, 4)
+          ctx.fillStyle = urgencyCol; ctx.fillRect(tx, ty + tileH - 4, (tileW - 8) * lifeLeft, 4)
+        }
       })
     }
 
@@ -6530,17 +6629,50 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.stroke()
     ctx.shadowBlur = 0
 
-    // Target acquisition — ring nearest words
-    const targets = g.words.filter(w => !w.fragment && w.type !== "powerup").slice(0, 5)
-    targets.forEach(w => {
-      const dist = Math.hypot(w.x - px, w.y - py)
-      const isMarked = w.id === _stationState.markedTargetId
-      const tPulse = 0.4 + 0.25 * Math.abs(Math.sin(now / 300 + w.id))
-      ctx.globalAlpha = tPulse * (isMarked ? 0.9 : 0.35)
-      ctx.strokeStyle = isMarked ? "#f87171" : (w.elite ? "#facc15" : wCol)
-      ctx.lineWidth = isMarked ? 1.5 : 0.8
-      ctx.beginPath(); ctx.arc(w.x, w.y, (isMarked ? 14 : 11) + 2 * Math.sin(now/180 + w.id), 0, Math.PI*2); ctx.stroke()
+    // Target acquisition — priority-ranked threat indicators
+    // Score: marked=100, elite=40, bug=20, closest bonus
+    const allTargets = g.words.filter(w => !w.fragment && w.type !== "powerup")
+    const scored = allTargets.map(w => ({
+      w,
+      score: (w.id === _stationState.markedTargetId ? 100 : 0)
+           + (w.elite ? 40 : 0) + (w.type === "bug" ? 20 : 0)
+           + Math.max(0, 20 - Math.hypot(w.x-px, w.y-py) / 15),
+    })).sort((a, b) => b.score - a.score).slice(0, 6)
+
+    scored.forEach(({ w, score }, rank) => {
+      const isMarked  = w.id === _stationState.markedTargetId
+      const isTop     = rank === 0 && !isMarked
+      const tPulse    = 0.5 + 0.3 * Math.abs(Math.sin(now / 280 + w.id))
+      const ringR     = isMarked ? 15 : w.elite ? 13 : 10
+      const ringCol   = isMarked ? "#f87171" : w.elite ? "#facc15" : w.type === "bug" ? "#f97316" : wCol
+      // Draw acquisition ring
+      ctx.globalAlpha = tPulse * (isMarked ? 1.0 : isTop ? 0.65 : 0.3)
+      ctx.strokeStyle = ringCol; ctx.lineWidth = isMarked ? 2 : isTop ? 1.4 : 0.7
+      ctx.shadowColor = ringCol; ctx.shadowBlur = isMarked ? 8 : 0
+      ctx.beginPath(); ctx.arc(w.x, w.y, ringR + Math.sin(now/200 + w.id * 1.3) * 1.5, 0, Math.PI*2); ctx.stroke()
+      ctx.shadowBlur = 0
+      // Priority number label
+      ctx.globalAlpha = tPulse * (isMarked ? 0.9 : 0.45)
+      ctx.fillStyle = ringCol; ctx.font = "bold 8px monospace"; ctx.textAlign = "center"
+      ctx.fillText(isMarked ? "◎" : `${rank+1}`, w.x, w.y - ringR - 3)
+      // Elite badge
+      if (w.elite) {
+        ctx.globalAlpha = 0.8; ctx.fillStyle = "#facc15"; ctx.font = "6px monospace"
+        ctx.fillText("ELITE", w.x, w.y + ringR + 9)
+      }
     })
+
+    // Barrel aim line to highest-priority target (if within 45° of current angle)
+    if (scored.length > 0) {
+      const top = scored[0].w
+      const toTop = Math.atan2(top.y - py, top.x - px)
+      let da = toTop - ta; while (da > Math.PI) da -= 2*Math.PI; while (da < -Math.PI) da += 2*Math.PI
+      if (Math.abs(da) < Math.PI / 4) {
+        ctx.globalAlpha = 0.2; ctx.strokeStyle = "#facc15"; ctx.lineWidth = 0.8; ctx.setLineDash([3,4])
+        ctx.beginPath(); ctx.moveTo(bx2, by2); ctx.lineTo(top.x, top.y); ctx.stroke()
+        ctx.setLineDash([])
+      }
+    }
 
     // Weapon mode badge — top left of viewport
     ctx.globalAlpha = 0.85
@@ -6607,20 +6739,51 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ctx.restore()
   }
 
-  // ── Active station corner badge ─────────────────────────────────────────
-  // Shows current station in canvas top-right when not on Bridge
-  if (!attractMode && _stationState.active !== "bridge") {
-    const stationLabels: Record<StationId, string> = {
-      bridge: "BRIDGE", turret: "TURRET", salvage: "SALVAGE", engineering: "ENGINEERING",
-    }
-    const badge = stationLabels[_stationState.active]
+  // ── Ambient signal feedback — ship status strip ──────────────────────────
+  // Always visible during play; shows active stations and live system state
+  if (!attractMode && !g.turretControlMode && !g.engineeringControlMode && !g.salvageControlMode && !g.bridgeControlMode) {
     ctx.save()
-    ctx.globalAlpha = 0.5; ctx.fillStyle = "#0c0c16"
-    ctx.font = "7px monospace"; ctx.textAlign = "right"
-    const bw = ctx.measureText(badge).width + 10
-    ctx.fillRect(cw - bw - 2, 4, bw, 13)
-    ctx.globalAlpha = 0.55; ctx.fillStyle = "#a78bfa"
-    ctx.fillText(badge, cw - 7, 13)
+    const statusItems: Array<{ label: string; col: string; urgent?: boolean }> = []
+
+    // Room damage warnings
+    const damagedRooms = Object.entries(g.roomDamage).filter(([, v]) => (v ?? 0) >= 2) as [StationId, number][]
+    if (damagedRooms.length > 0) {
+      const [room, dmg] = damagedRooms[0]
+      statusItems.push({ label: `⚠ ${room.toUpperCase()} ${DAMAGE_LABELS[dmg]}`, col: "#f87171", urgent: dmg >= 3 })
+    }
+    // Salvage opportunities
+    if (g.salvage.length > 0) {
+      const hasArtifact = g.salvage.some(s => s.type === "artifact" && !s.corrupted)
+      statusItems.push({ label: `⬡ ${g.salvage.length} DEBRIS`, col: hasArtifact ? "#facc15" : "#94a3b8", urgent: hasArtifact })
+    }
+    // Boss phase
+    if (g.boss?.raged) statusItems.push({ label: "◈ BOSS ENRAGED", col: "#f87171" })
+
+    if (statusItems.length > 0) {
+      let sx = 8
+      ctx.globalAlpha = 0.7; ctx.font = "6.5px monospace"; ctx.textAlign = "left"
+      statusItems.forEach(item => {
+        const urgentPulse = item.urgent ? 0.6 + 0.4 * Math.abs(Math.sin(now / 400)) : 1
+        ctx.globalAlpha = 0.65 * urgentPulse
+        ctx.fillStyle = "rgba(8,8,18,0.7)"; ctx.fillRect(sx - 2, 3, ctx.measureText(item.label).width + 8, 13)
+        ctx.fillStyle = item.col; ctx.fillText(item.label, sx + 2, 13)
+        sx += ctx.measureText(item.label).width + 14
+      })
+    }
+
+    // Active station tab indicator (top right)
+    if (_stationState.active !== "bridge") {
+      const stationLabels: Record<StationId, string> = {
+        bridge:"BRIDGE", turret:"TURRET", salvage:"SALVAGE", engineering:"ENGINEERING",
+      }
+      const badge = stationLabels[_stationState.active]
+      ctx.globalAlpha = 0.5; ctx.fillStyle = "#0c0c16"
+      ctx.font = "7px monospace"; ctx.textAlign = "right"
+      const bw = ctx.measureText(badge).width + 10
+      ctx.fillRect(cw - bw - 2, 4, bw, 13)
+      ctx.globalAlpha = 0.55; ctx.fillStyle = "#a78bfa"
+      ctx.fillText(badge, cw - 7, 13)
+    }
     ctx.restore()
   }
 
