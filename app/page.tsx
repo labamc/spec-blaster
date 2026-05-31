@@ -192,6 +192,103 @@ const SIGNAL_ARCHIVE_E1: SignalNode[] = [
     connections: [], x: 0.5, y: 1.0 },
 ]
 
+// ── Persistent Signal ──────────────────────────────────────────────────────
+// The Signal is the player's true character — persists across all runs.
+
+interface OperatorHistory {
+  runsServed: number
+  [stat: string]: number   // flexible: capy_marks, veteran_kills, etc.
+}
+
+interface PersistentSignal {
+  foundedAt:        number            // ms timestamp of Signal's first run
+  operationalAge:   number            // total run count (including failures)
+  recoveredIntent:  number            // total signal fragments accumulated
+  clearedBosses:    string[]          // unique boss names defeated at least once
+  operatorsEver:    string[]          // unique operator IDs that have served
+  operatorHistory:  Record<string, OperatorHistory>
+}
+
+const SIGNAL_KEY = "sb_signal"
+const TOTAL_ARCHIVE_NODES = 9  // Epoch 1 has 9 systems
+
+function loadSignal(): PersistentSignal {
+  try {
+    const raw = localStorage.getItem(SIGNAL_KEY)
+    if (raw) {
+      const s = JSON.parse(raw) as PersistentSignal
+      // Migrate old sb_fragments if present
+      const oldFrag = parseInt(localStorage.getItem("sb_fragments") || "0")
+      if (oldFrag > 0 && s.recoveredIntent === 0) {
+        s.recoveredIntent = oldFrag
+        saveSignal(s)
+        localStorage.removeItem("sb_fragments")
+      }
+      return s
+    }
+  } catch {}
+  return {
+    foundedAt:       0,
+    operationalAge:  0,
+    recoveredIntent: 0,
+    clearedBosses:   [],
+    operatorsEver:   [],
+    operatorHistory: {},
+  }
+}
+
+function saveSignal(s: PersistentSignal) {
+  try { localStorage.setItem(SIGNAL_KEY, JSON.stringify(s)) } catch {}
+}
+
+function signalArchiveCompletion(s: PersistentSignal): number {
+  return Math.round((s.clearedBosses.length / TOTAL_ARCHIVE_NODES) * 100)
+}
+
+// Merge a completed run's data into the persistent Signal
+function mergeRunIntoSignal(
+  prev: PersistentSignal,
+  run: {
+    fragmentsEarned: number
+    defeatedBosses: string[]
+    crewStats: Partial<Record<string, number>>
+    crewAssign: Partial<Record<string, string | null>>
+  }
+): PersistentSignal {
+  const next: PersistentSignal = {
+    ...prev,
+    foundedAt:       prev.foundedAt || Date.now(),
+    operationalAge:  prev.operationalAge + 1,
+    recoveredIntent: prev.recoveredIntent + run.fragmentsEarned,
+    clearedBosses:   [...new Set([...prev.clearedBosses, ...run.defeatedBosses])],
+    operatorsEver:   [...prev.operatorsEver],
+    operatorHistory: { ...prev.operatorHistory },
+  }
+  // Update operator lifetime history for each crew who served this run
+  const servedIds = Object.values(run.crewAssign).filter(Boolean) as string[]
+  for (const crewId of servedIds) {
+    if (!next.operatorsEver.includes(crewId)) next.operatorsEver.push(crewId)
+    const hist: OperatorHistory = { ...(next.operatorHistory[crewId] ?? { runsServed: 0 }) }
+    hist.runsServed = (hist.runsServed ?? 0) + 1
+    // Merge crew-specific stats (keyed by operator prefix in crewStats)
+    // CAPY stats start with "capy_", VETERAN with "veteran_", etc.
+    const PREFIX_MAP: Record<string, string> = {
+      capy: "capy", veteran_gunner: "veteran", engineer_bot: "engineer",
+      salvager_bot: "salvager", scout_drone: "scout",
+    }
+    const prefix = PREFIX_MAP[crewId]
+    if (prefix) {
+      for (const [key, val] of Object.entries(run.crewStats)) {
+        if (key.startsWith(prefix + "_") && typeof val === "number") {
+          hist[key] = (hist[key] ?? 0) + val
+        }
+      }
+    }
+    next.operatorHistory[crewId] = hist
+  }
+  return next
+}
+
 const BUG_WORDS = [
   "seamlessly","real-time","automatically","zero latency","scalable","robust",
   "synergy","leverage","intuitive","paradigm shift","world-class","cutting-edge",
@@ -652,8 +749,9 @@ interface GState {
   artifacts: string[]
   _hardenedUsed: boolean; _powerSurgeKills: number; _battleHardenedStacks: number
   engineeringPoolBonus: number
-  // Phase 4: crew stats (accumulated across sectors)
   crewStats: Partial<Record<string, number>>
+  // Persistent Signal: bosses defeated this run
+  defeatedBosses: string[]
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -694,7 +792,7 @@ function initState(W: number): GState {
     salvage: [], nextSalvageId: 1, salvageCollected: 0, fragmentsEarned: 0,
     roomDamage: {},
     artifacts: [], _hardenedUsed: false, _powerSurgeKills: 0, _battleHardenedStacks: 0,
-    engineeringPoolBonus: 0, crewStats: {},
+    engineeringPoolBonus: 0, crewStats: {}, defeatedBosses: [],
   }
 }
 
@@ -722,8 +820,11 @@ export default function HomePage() {
   const [topEntry, setTopEntry]             = useState<{handle: string; score: number} | null>(null)
   const [personalBest, setPersonalBest]           = useState(0)
   const [personalDepthBest, setPersonalDepthBest] = useState(0)
-  const [fragmentBank, setFragmentBank]           = useState(0)  // persistent signal fragments
   const [personalSectorBest, setPersonalSectorBest] = useState(0)
+  // THE SIGNAL — persistent player character across all runs
+  const [signal, setSignal] = useState<PersistentSignal>(() => loadSignal())
+  const updateSignalRef = useRef<(run: { fragmentsEarned: number; defeatedBosses: string[]; crewStats: Partial<Record<string,number>>; crewAssign: Partial<Record<string,string|null>> }) => void>(() => {})
+  const fragmentBank = signal.recoveredIntent  // derived alias — all existing UI reads this
   const [isTouchDevice, setIsTouchDevice]         = useState(false)
   const [unlockedAgents, setUnlockedAgents] = useState<string[]>([])
   const [selectedAgents, setSelectedAgents] = useState<string[]>([])
@@ -969,7 +1070,8 @@ export default function HomePage() {
     try { setPersonalBest(parseInt(localStorage.getItem("sb_pb") || "0")) } catch {}
     try { setPersonalDepthBest(parseInt(localStorage.getItem("sb_depth_pb") || "0")) } catch {}
     try { setPersonalSectorBest(parseInt(localStorage.getItem("sb_sector_pb") || "0")) } catch {}
-    try { setFragmentBank(parseInt(localStorage.getItem("sb_fragments") || "0")) } catch {}
+    // Signal is loaded via useState initializer; migrate old fragment bank if needed
+    setSignal(s => { const migrated = loadSignal(); saveSignal(migrated); return migrated })
     try {
       const saved = localStorage.getItem("sb_agents")
       if (saved) {
@@ -1011,6 +1113,15 @@ export default function HomePage() {
   }
 
   upgradePickRef.current = onUpgradePick
+
+  // Keep updateSignalRef current so death handler always uses latest state setter
+  updateSignalRef.current = (run) => {
+    setSignal(prev => {
+      const next = mergeRunIntoSignal(prev, run)
+      saveSignal(next)
+      return next
+    })
+  }
 
   unlockAgentRef.current = (id: string) => {
     setUnlockedAgents(prev => {
@@ -2617,6 +2728,8 @@ export default function HomePage() {
             rot: Math.random() * Math.PI * 2, rotV: (Math.random()-0.5) * 0.12,
             gravity: 0.025, friction: 0.96 })
         }
+        // Record boss defeat for persistent Signal
+        if (!g.defeatedBosses.includes(bx.name)) g.defeatedBosses.push(bx.name)
         g.boss = null; g.mines = [] // clear mines on boss death
         if (g.endless) {
           sfx.miniBoss()
@@ -2975,15 +3088,13 @@ export default function HomePage() {
           glyph: "SIGNAL LOST", col: "#f87171", sz: 16, gravity: 0 })
         g.running = false; g.deathFadeAt = now + 1400; stopDrone()
         setScore(g.score); setLevel(g.level)
-        // Save earned fragments to persistent bank
-        if (g.fragmentsEarned > 0) {
-          try {
-            const cur = parseInt(localStorage.getItem("sb_fragments") || "0")
-            const next = cur + g.fragmentsEarned
-            localStorage.setItem("sb_fragments", String(next))
-            setFragmentBank(next)
-          } catch {}
-        }
+        // Merge this run into the persistent Signal
+        updateSignalRef.current({
+          fragmentsEarned: g.fragmentsEarned,
+          defeatedBosses:  g.defeatedBosses,
+          crewStats:       { ...g.crewStats },
+          crewAssign:      getCrewAssignments(),
+        })
         try {
           const pb = parseInt(localStorage.getItem("sb_pb") || "0")
           if (g.score > pb) { localStorage.setItem("sb_pb", String(g.score)); setPersonalBest(g.score) }
@@ -3021,7 +3132,7 @@ export default function HomePage() {
     <main style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", padding:"0.5rem", background:"#0d0d14" }}>
       <div style={{ width:"100%", maxWidth:"800px" }}>
         <div style={{ marginBottom:"0.5rem", textAlign:"center" }}>
-          <h1 style={{ fontSize:"1.4rem", fontWeight:"bold", color:"#966bec", letterSpacing:"0.15em", fontFamily:"monospace", margin:0 }}>SPEC BLASTER</h1>
+          <h1 style={{ fontSize:"1.4rem", fontWeight:"bold", color:"#966bec", letterSpacing:"0.15em", fontFamily:"monospace", margin:0 }}>THE SIGNAL</h1>
         </div>
         <div ref={wrapRef} style={{ position:"relative", width:"100%", borderRadius:"6px", overflow:"hidden", border:"1px solid rgba(255,255,255,0.08)" }}>
 
@@ -3035,30 +3146,46 @@ export default function HomePage() {
                 display:"flex", flexDirection:"column", gap:"0",
               }}>
 
-                {/* ── Title ── */}
-                <div style={{ textAlign:"center", marginBottom:"1.1rem" }}>
-                  <p style={{ color:"#c4b5fd", fontSize:"1.3rem", fontWeight:700, letterSpacing:"0.2em", margin:"0 0 0.2rem", fontFamily:"monospace" }}>SPEC BLASTER</p>
-                  <p style={{ color:"rgba(196,181,253,0.4)", fontSize:"0.58rem", margin:0, fontFamily:"monospace", letterSpacing:"0.06em" }}>SIGNAL EXPEDITION · CLASS 4 INCURSION</p>
-                </div>
-
-                {/* ── Pre-mission transmission ── */}
-                <div style={{ background:"rgba(150,107,236,0.06)", border:"1px solid rgba(150,107,236,0.15)", borderRadius:"5px", padding:"0.65rem 0.75rem", marginBottom:"1.1rem" }}>
-                  <p style={{ color:"rgba(196,181,253,0.5)", fontSize:"0.56rem", fontFamily:"monospace", margin:"0 0 0.4rem", letterSpacing:"0.1em" }}>🦫 LAST TRANSMISSION</p>
-                  <p style={{ color:"rgba(212,211,215,0.78)", fontSize:"0.62rem", fontFamily:"monospace", margin:0, lineHeight:1.65 }}>
-                    {"Four sectors deep. Language is collapsing.\nClear the patterns. Protect The Signal.\nDo not let the noise reach critical mass."}
+                {/* ── Signal identity — primary ── */}
+                <div style={{ textAlign:"center", marginBottom:"1rem" }}>
+                  <p style={{ color:"rgba(196,181,253,0.35)", fontSize:"0.5rem", margin:"0 0 0.25rem", fontFamily:"monospace", letterSpacing:"0.25em" }}>
+                    CARRYING THE SIGNAL
                   </p>
+                  <p style={{ color:"#c4b5fd", fontSize:"1.4rem", fontWeight:700, letterSpacing:"0.18em", margin:"0 0 0.5rem", fontFamily:"monospace" }}>
+                    THE SIGNAL
+                  </p>
+                  {/* Signal stats — show if Signal has history, placeholder if new */}
+                  {signal.operationalAge > 0 ? (
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem", marginBottom:"0.15rem" }}>
+                      {[
+                        ["OPERATIONAL AGE", `${signal.operationalAge} runs`],
+                        ["RECOVERED INTENT", signal.recoveredIntent.toLocaleString()],
+                        ["ARCHIVE", `${signalArchiveCompletion(signal)}%`],
+                        ["OPERATORS", signal.operatorsEver.length],
+                      ].map(([label, val]) => (
+                        <div key={label as string} style={{ background:"rgba(150,107,236,0.05)", borderRadius:"3px", padding:"0.28rem 0.4rem" }}>
+                          <p style={{ color:"rgba(255,255,255,0.6)", fontSize:"0.7rem", fontWeight:600, margin:"0 0 0.06rem", fontFamily:"monospace" }}>{val}</p>
+                          <p style={{ color:"rgba(196,181,253,0.35)", fontSize:"0.46rem", margin:0, fontFamily:"monospace", letterSpacing:"0.08em" }}>{label}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.56rem", fontFamily:"monospace", fontStyle:"italic", margin:0 }}>
+                      Signal not yet initialized
+                    </p>
+                  )}
                 </div>
 
-                {/* ── PLAY button ── */}
+                {/* ── Launch button ── */}
                 <button onClick={startGame} style={{
                   width:"100%", background:"linear-gradient(135deg,#7c3aed,#6d28d9)",
                   color:"#fff", border:"none", borderRadius:"7px",
                   padding:"0.85rem", fontSize:"0.9rem", fontWeight:700,
                   letterSpacing:"0.13em", cursor:"pointer", fontFamily:"monospace",
-                  marginBottom:"1.1rem",
+                  marginBottom:"1rem",
                   boxShadow:"0 0 28px rgba(124,58,237,0.5)",
                 }}>
-                  LAUNCH MISSION
+                  LAUNCH EXPEDITION
                 </button>
 
                 {/* ── Crew ── */}
@@ -3223,7 +3350,7 @@ export default function HomePage() {
             }}
           />}
 
-          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} isNewSectorPB={!G.current.endless && level >= personalSectorBest} onRestart={startGame} unlockedAgents={unlockedAgents} onShowStack={() => setShowAgentModule(true)} endless={G.current.endless} endlessDepth={G.current.endlessWave} prevDepthBest={personalDepthBest} upgrades={G.current.upgrades} />}
+          {phase === "over" && <GameOver score={score} level={level} kills={G.current.kills} maxCombo={G.current.maxCombo} upgradeCount={Object.keys(G.current.upgrades).length} shotsFired={G.current.shotsFired} isNewPB={score > 0 && score >= personalBest} isNewSectorPB={!G.current.endless && level >= personalSectorBest} onRestart={startGame} unlockedAgents={unlockedAgents} onShowStack={() => setShowAgentModule(true)} endless={G.current.endless} endlessDepth={G.current.endlessWave} prevDepthBest={personalDepthBest} upgrades={G.current.upgrades} persistentSignal={signal} fragmentsEarned={G.current.fragmentsEarned} />}
 
           {showAgentModule && (
             <AgentModule unlocked={unlockedAgents} selected={selectedAgents}
@@ -3248,6 +3375,7 @@ export default function HomePage() {
               lives={lives}
               liveG={liveG}
               crewStats={crewStatsSnap}
+              persistentSignal={signal}
               onResume={() => { setCommandMode(false); G.current.paused = false }}
             />
           )}
@@ -4937,7 +5065,7 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
     ]
     const sectorTagline = g.endless
       ? "recursion has no floor"
-      : sectorTaglines[Math.min(g.level - 1, 3)] ?? "SPEC BLASTER"
+      : sectorTaglines[Math.min(g.level - 1, 3)] ?? "carrying the signal"
     ctx.font = "7px monospace"; ctx.globalAlpha = alpha * 0.35
     ctx.fillStyle = annCol; ctx.textAlign = "center"
     ctx.fillText(sectorTagline, cw/2, GH/2 + 28)
@@ -6009,7 +6137,7 @@ function CapyScreen({ text, lineNum, totalLines, level, onAdvance }: {
   )
 }
 
-function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isNewPB, isNewSectorPB, onRestart, unlockedAgents, onShowStack, endless, endlessDepth, prevDepthBest, upgrades }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; shotsFired: number; isNewPB: boolean; isNewSectorPB: boolean; onRestart: () => void; unlockedAgents: string[]; onShowStack: () => void; endless?: boolean; endlessDepth?: number; prevDepthBest?: number; upgrades?: Record<string, number> }) {
+function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isNewPB, isNewSectorPB, onRestart, unlockedAgents, onShowStack, endless, endlessDepth, prevDepthBest, upgrades, persistentSignal, fragmentsEarned }: { score: number; level: number; kills: number; maxCombo: number; upgradeCount: number; shotsFired: number; isNewPB: boolean; isNewSectorPB: boolean; onRestart: () => void; unlockedAgents: string[]; onShowStack: () => void; endless?: boolean; endlessDepth?: number; prevDepthBest?: number; upgrades?: Record<string, number>; persistentSignal?: PersistentSignal; fragmentsEarned?: number }) {
   const [handle, setHandle] = useState(() => {
     try { return localStorage.getItem("sb_handle") ?? "" } catch { return "" }
   })
@@ -6100,6 +6228,9 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
       <div style={{ background:"#13131c", border:`1px solid rgba(${deathBossRgb},0.25)`, borderRadius:"10px", padding:"1.6rem 1.4rem", maxWidth:"310px", width:"calc(100% - 2rem)", textAlign:"center" }}>
 
         {/* Status */}
+        <p style={{ color:"rgba(150,107,236,0.45)", fontSize:"0.5rem", margin:"0 0 0.12rem", fontFamily:"monospace", letterSpacing:"0.2em" }}>
+          EXPEDITION ENDED
+        </p>
         <p style={{ color:"#f87171", fontWeight:700, fontSize:"0.62rem", margin:"0 0 0.35rem", fontFamily:"monospace", letterSpacing:"0.18em" }}>
           SIGNAL LOST
         </p>
@@ -6141,11 +6272,42 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
         </div>
 
         {/* Expedition hint */}
-        <div style={{ background:"rgba(150,107,236,0.07)", border:"1px solid rgba(150,107,236,0.13)", borderRadius:"5px", padding:"0.5rem 0.75rem", marginBottom:"1.1rem" }}>
+        <div style={{ background:"rgba(150,107,236,0.07)", border:"1px solid rgba(150,107,236,0.13)", borderRadius:"5px", padding:"0.5rem 0.75rem", marginBottom:"0.7rem" }}>
           <p style={{ color:"rgba(196,181,253,0.75)", fontSize:"0.65rem", margin:0, fontFamily:"monospace", lineHeight:1.6 }}>
             {nextHint}
           </p>
         </div>
+
+        {/* The Signal persists — expedition contribution summary */}
+        {persistentSignal && persistentSignal.operationalAge > 0 && (
+          <div style={{ background:"rgba(150,107,236,0.04)", border:"1px solid rgba(150,107,236,0.12)",
+            borderRadius:"5px", padding:"0.5rem 0.75rem", marginBottom:"0.9rem" }}>
+            <p style={{ color:"rgba(150,107,236,0.5)", fontSize:"0.5rem", fontFamily:"monospace",
+              letterSpacing:"0.18em", margin:"0 0 0.3rem" }}>THE SIGNAL PERSISTS</p>
+            <div style={{ display:"flex", flexDirection:"column", gap:"0.12rem" }}>
+              <div style={{ display:"flex", justifyContent:"space-between" }}>
+                <span style={{ color:"rgba(255,255,255,0.3)", fontSize:"0.56rem", fontFamily:"monospace" }}>Operational Age</span>
+                <span style={{ color:"rgba(255,255,255,0.55)", fontSize:"0.58rem", fontFamily:"monospace", fontWeight:600 }}>
+                  {persistentSignal.operationalAge} runs
+                </span>
+              </div>
+              {(fragmentsEarned ?? 0) > 0 && (
+                <div style={{ display:"flex", justifyContent:"space-between" }}>
+                  <span style={{ color:"rgba(255,255,255,0.3)", fontSize:"0.56rem", fontFamily:"monospace" }}>Recovered Intent</span>
+                  <span style={{ color:"#c4b5fd", fontSize:"0.58rem", fontFamily:"monospace", fontWeight:600 }}>
+                    +{fragmentsEarned} → {persistentSignal.recoveredIntent.toLocaleString()} total
+                  </span>
+                </div>
+              )}
+              <div style={{ display:"flex", justifyContent:"space-between" }}>
+                <span style={{ color:"rgba(255,255,255,0.3)", fontSize:"0.56rem", fontFamily:"monospace" }}>Archive</span>
+                <span style={{ color:"rgba(255,255,255,0.45)", fontSize:"0.58rem", fontFamily:"monospace" }}>
+                  {signalArchiveCompletion(persistentSignal)}% · {persistentSignal.clearedBosses.length}/{TOTAL_ARCHIVE_NODES} systems
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Carried upgrades — what you had when you fell */}
         {upgrades && Object.keys(upgrades).some(k => upgrades[k] > 0) && (() => {
@@ -6174,7 +6336,7 @@ function GameOver({ score, level, kills, maxCombo, upgradeCount, shotsFired, isN
         {/* Primary CTA — "push deeper" framing */}
         <button onClick={onRestart}
           style={{ display:"block", width:"100%", background:"linear-gradient(135deg,#7c3aed,#6d28d9)", border:"none", borderRadius:"6px", padding:"0.78rem", color:"#fff", fontSize:"0.85rem", fontWeight:700, cursor:"pointer", marginBottom:"0.5rem", letterSpacing:"0.1em", fontFamily:"monospace", boxShadow:"0 0 20px rgba(124,58,237,0.4)" }}>
-          PUSH DEEPER <span style={{ opacity:0.45, fontSize:"0.6rem" }}>ENTER</span>
+          NEXT EXPEDITION <span style={{ opacity:0.45, fontSize:"0.6rem" }}>ENTER</span>
         </button>
 
         {/* THE SIGNAL crew */}
@@ -7626,15 +7788,16 @@ function OperationsFeed({ entries, operatorStatus, crewAssign }: {
 
 // ── Command Mode Overlay ───────────────────────────────────────────────────
 // TAB to open. Game freezes. Full mission control.
-type CMTab = "blueprint" | "crew" | "artifacts" | "archive" | "stats"
+type CMTab = "signal" | "blueprint" | "crew" | "artifacts" | "archive" | "stats"
 
-function CommandModeOverlay({ g, level, score, lives, liveG, crewStats, onResume }: {
+function CommandModeOverlay({ g, level, score, lives, liveG, crewStats, onResume, persistentSignal }: {
   g: GState; level: number; score: number; lives: number
   liveG: LiveGSnapshot; crewStats: Partial<Record<string, number>>
-  onResume: () => void
+  onResume: () => void; persistentSignal: PersistentSignal
 }) {
-  const [tab, setTab] = useState<CMTab>("blueprint")
+  const [tab, setTab] = useState<CMTab>("signal")
   const tabs: Array<{ id: CMTab; label: string }> = [
+    { id: "signal",    label: "THE SIGNAL" },
     { id: "blueprint", label: "SHIP" },
     { id: "crew",      label: "CREW" },
     { id: "artifacts", label: "ARTIFACTS" },
@@ -7685,12 +7848,111 @@ function CommandModeOverlay({ g, level, score, lives, liveG, crewStats, onResume
 
       {/* Content */}
       <div style={{ flex:1, overflowY:"auto", padding:"1rem 1.2rem" }}>
+        {tab === "signal"    && <CMSignal signal={persistentSignal} runScore={score} />}
         {tab === "blueprint" && <CMBlueprint g={g} lives={lives} liveG={liveG} />}
         {tab === "crew"      && <CMCrew crewStats={crewStats} />}
         {tab === "artifacts" && <CMArtifacts artifacts={g.artifacts} />}
         {tab === "archive"   && <CMSignalArchive />}
         {tab === "stats"     && <CMStats g={g} score={score} />}
       </div>
+    </div>
+  )
+}
+
+// ── CM: The Signal ─────────────────────────────────────────────────────────
+const OPERATOR_DISPLAY: Record<string, { label: string; col: string; stats: Array<[string, string]> }> = {
+  capy:           { label: "CAPY · Signal Analysis",    col: "#86efac", stats: [["capy_marks","Targets Marked"],["capy_assists","Assists"],["capy_eliteMarks","Elite Marks"],["capy_shots","Shots Fired"]] },
+  veteran_gunner: { label: "VETERAN · Response Automation", col: "#fbbf24", stats: [["veteran_kills","Kills"],["veteran_eliteKills","Elite Kills"],["veteran_shots","Shots Fired"]] },
+  engineer_bot:   { label: "ENGINEER · Reliability",    col: "#4ade80", stats: [["engineer_repairs","Repairs Completed"]] },
+  salvager_bot:   { label: "SALVAGER · Knowledge Recovery", col: "#c4b5fd", stats: [["salvager_fragment","Fragments"],["salvager_artifact","Artifacts"],["salvager_scrap","Scrap"]] },
+  scout_drone:    { label: "SCOUT · Observability",     col: "#7dd3fc", stats: [["scout_threats","Threats Detected"],["scout_artifacts","Artifacts Detected"]] },
+}
+
+function CMSignal({ signal, runScore }: { signal: PersistentSignal; runScore: number }) {
+  const completion = signalArchiveCompletion(signal)
+  const isNew      = signal.operationalAge === 0
+
+  return (
+    <div style={{ display:"flex", gap:"1.5rem", flexWrap:"wrap" }}>
+      {/* Signal identity block */}
+      <div style={{ minWidth:"200px" }}>
+        <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.54rem", letterSpacing:"0.14em", margin:"0 0 0.6rem" }}>SIGNAL IDENTITY</p>
+
+        {isNew ? (
+          <div style={{ color:"rgba(255,255,255,0.3)", fontSize:"0.62rem", fontStyle:"italic" }}>
+            <p>Signal not yet initialized.</p>
+            <p style={{ color:"rgba(150,107,236,0.5)", fontSize:"0.56rem" }}>Complete an expedition to establish the Signal.</p>
+          </div>
+        ) : (
+          <>
+            <div style={{ display:"grid", gap:"0.35rem", marginBottom:"1rem" }}>
+              {[
+                ["Operational Age",  `${signal.operationalAge} runs`],
+                ["Recovered Intent", signal.recoveredIntent.toLocaleString()],
+                ["Archive Completion", `${completion}% (${signal.clearedBosses.length}/${TOTAL_ARCHIVE_NODES} systems)`],
+                ["Operators Active", signal.operatorsEver.length],
+                ["Signal Founded",   signal.foundedAt > 0 ? new Date(signal.foundedAt).toLocaleDateString() : "Unknown"],
+              ].map(([label, val]) => (
+                <div key={label} style={{ display:"flex", justifyContent:"space-between", padding:"0.22rem 0",
+                  borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                  <span style={{ color:"rgba(255,255,255,0.35)", fontSize:"0.58rem" }}>{label}</span>
+                  <span style={{ color:"rgba(255,255,255,0.7)", fontSize:"0.6rem", fontWeight:600 }}>{val}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Cleared bosses */}
+            {signal.clearedBosses.length > 0 && (
+              <div>
+                <p style={{ color:"rgba(255,255,255,0.2)", fontSize:"0.52rem", letterSpacing:"0.12em", margin:"0 0 0.3rem" }}>SYSTEMS CLEARED</p>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:"0.25rem" }}>
+                  {signal.clearedBosses.map(b => (
+                    <span key={b} style={{ color:"rgba(74,222,128,0.7)", fontSize:"0.52rem", fontFamily:"monospace",
+                      background:"rgba(74,222,128,0.06)", border:"1px solid rgba(74,222,128,0.2)",
+                      borderRadius:"3px", padding:"0.1rem 0.35rem" }}>{b}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Operator lifetime history */}
+      {signal.operatorsEver.length > 0 && (
+        <div style={{ flex:1, minWidth:"220px" }}>
+          <p style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.54rem", letterSpacing:"0.14em", margin:"0 0 0.6rem" }}>OPERATOR LIFETIME HISTORY</p>
+          <div style={{ display:"flex", flexDirection:"column", gap:"0.55rem" }}>
+            {signal.operatorsEver.map(id => {
+              const def    = OPERATOR_DISPLAY[id]; if (!def) return null
+              const hist   = signal.operatorHistory[id] ?? { runsServed: 0 }
+              const hasAny = Object.keys(hist).some(k => k !== "runsServed" && (hist[k] ?? 0) > 0)
+              return (
+                <div key={id} style={{ background:"rgba(255,255,255,0.02)", border:`1px solid ${def.col}22`,
+                  borderRadius:"4px", padding:"0.4rem 0.6rem" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.18rem" }}>
+                    <span style={{ color:def.col, fontSize:"0.58rem", fontWeight:700 }}>{def.label}</span>
+                    <span style={{ color:"rgba(255,255,255,0.25)", fontSize:"0.52rem" }}>{hist.runsServed} runs</span>
+                  </div>
+                  {hasAny && (
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:"0.4rem" }}>
+                      {def.stats.map(([key, label]) => {
+                        const val = hist[key] ?? 0; if (!val) return null
+                        return (
+                          <div key={key} style={{ fontSize:"0.5rem" }}>
+                            <span style={{ color:"rgba(255,255,255,0.25)" }}>{label} </span>
+                            <span style={{ color:"rgba(255,255,255,0.6)", fontWeight:600 }}>{val.toLocaleString()}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
