@@ -991,6 +991,10 @@ export default function HomePage() {
   const G         = useRef<GState>(initState(GW))
 
   const [phase, setPhase]           = useState<"attract"|"archive"|"briefing"|"playing"|"capy"|"recovery"|"reward"|"upgrade"|"over">("attract")
+  // Client-only guard — prevents any localStorage-dependent UI from SSR.
+  // All game state lives in localStorage; SSR produces nothing useful here.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
   const [currentRecovery, setCurrentRecovery] = useState<{ nodeId: string; def: RecoveryDef } | null>(null)
   const [archiveSelectedNode, setArchiveSelectedNode] = useState<string | null>(null)
   const [archiveCompletedThisRun, setArchiveCompletedThisRun] = useState<string[]>([])
@@ -1278,7 +1282,14 @@ export default function HomePage() {
     try { setPersonalDepthBest(parseInt(localStorage.getItem("sb_depth_pb") || "0")) } catch {}
     try { setPersonalSectorBest(parseInt(localStorage.getItem("sb_sector_pb") || "0")) } catch {}
     // Signal is loaded via useState initializer; migrate old fragment bank if needed
-    setSignal(s => { const migrated = loadSignal(); saveSignal(migrated); return migrated })
+    setSignal(s => {
+      const migrated = loadSignal(); saveSignal(migrated)
+      // DIAGNOSTIC — log node states so we can see what's in localStorage
+      console.log("[SIGNAL ARCHIVE] Node states on load:", migrated.archiveNodeState)
+      console.log("[SIGNAL ARCHIVE] Available nodes:", Object.entries(migrated.archiveNodeState ?? {}).filter(([,v]) => v === "available").map(([k]) => k))
+      console.log("[SIGNAL ARCHIVE] Completed nodes:", Object.entries(migrated.archiveNodeState ?? {}).filter(([,v]) => v === "completed").map(([k]) => k))
+      return migrated
+    })
     try {
       const saved = localStorage.getItem("sb_agents")
       if (saved) {
@@ -3531,7 +3542,8 @@ export default function HomePage() {
         </div>
         <div ref={wrapRef} style={{ position:"relative", width:"100%", borderRadius:"6px", overflow:"hidden", border:"1px solid rgba(255,255,255,0.08)" }}>
 
-          {phase === "attract" && (
+          {/* All overlays and UI are client-only — suppress until mounted to prevent hydration mismatch */}
+          {mounted && phase === "attract" && (
             <Overlay onClick={() => { phaseRef.current = "archive"; setPhase("archive") }} dim={0.92}>
               <div style={{
                 background:"#0c0c16", border:"1px solid rgba(150,107,236,0.28)",
@@ -3684,19 +3696,20 @@ export default function HomePage() {
             </Overlay>
           )}
 
-          {phase === "archive" && !epochCompleteData && (
+          {mounted && phase === "archive" && !epochCompleteData && (
             <ArchiveScreen
               signal={signal}
               lastCompletedNodeId={lastCompletedNodeId}
               onSelectNode={(nodeId) => {
-                setLastCompletedNodeId(null)  // clear after player acts on the context
+                console.log("[ARCHIVE] Node selected:", nodeId, "→ transitioning to briefing")
+                setLastCompletedNodeId(null)
                 setArchiveSelectedNode(nodeId)
                 phaseRef.current = "briefing"; setPhase("briefing")
               }}
             />
           )}
 
-          {phase === "archive" && epochCompleteData && (
+          {mounted && phase === "archive" && epochCompleteData && (
             <EpochCompleteScreen
               signal={signal}
               fragmentsGained={epochCompleteData.fragmentsGained}
@@ -3709,7 +3722,7 @@ export default function HomePage() {
             />
           )}
 
-          {phase === "briefing" && archiveSelectedNode && (
+          {mounted && phase === "briefing" && archiveSelectedNode && (
             <BriefingScreen
               nodeId={archiveSelectedNode}
               signal={signal}
@@ -3718,7 +3731,7 @@ export default function HomePage() {
             />
           )}
 
-          {phase === "reward" && (
+          {mounted && phase === "reward" && (
             <RewardScreen
               options={rewardOptions}
               level={level}
@@ -3727,7 +3740,7 @@ export default function HomePage() {
             />
           )}
 
-          {phase === "recovery" && currentRecovery && (
+          {mounted && phase === "recovery" && currentRecovery && (
             <RecoveryScreen
               def={currentRecovery.def}
               signal={signal}
@@ -3735,7 +3748,7 @@ export default function HomePage() {
             />
           )}
 
-          {phase === "capy" && (
+          {mounted && phase === "capy" && (
             <CapyScreen
               text={capyLines[capyIdx] ?? ""}
               lineNum={capyIdx}
@@ -3745,7 +3758,7 @@ export default function HomePage() {
             />
           )}
 
-          {phase === "upgrade" && <CLIScreen
+          {mounted && phase === "upgrade" && <CLIScreen
             options={upgradeOptions}
             onPick={onUpgradePick}
             score={score}
@@ -3844,7 +3857,6 @@ export default function HomePage() {
           <OperationsFeed
             entries={opsFeed}
             operatorStatus={liveG.operatorStatus}
-            crewAssign={(() => { try { const s = localStorage.getItem("sb_crew_assign"); return s ? JSON.parse(s) : {} } catch { return {} } })()}
           />
         </div>
 
@@ -6979,18 +6991,19 @@ function ShipStatusPanel({ hull, stations: initialStations, activeStation, onSel
   // Dynamic crew roster: capy + player + unlocked agents + empty
   const crewRoster: CrewOption[] = ["capy", "player", ...unlockedAgents, null]
 
-  // Local crew assignment state — persisted to localStorage
+  // SSR-safe crew assignment state — always init with STATION_DEFS defaults,
+  // load real localStorage data in useEffect after hydration
   const [crewAssign, setCrewAssign] = useState<Record<StationId, CrewOption>>(() => {
-    // Try to restore saved crew assignments
-    try {
-      const saved = localStorage.getItem("sb_crew_assign")
-      if (saved) return JSON.parse(saved) as Record<StationId, CrewOption>
-    } catch {}
-    // Default: use STATION_DEFS defaults
     const m: Record<string, CrewOption> = {}
     initialStations.forEach(s => { m[s.id] = s.assignedCrew ?? null })
     return m as Record<StationId, CrewOption>
   })
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("sb_crew_assign")
+      if (saved) setCrewAssign(JSON.parse(saved) as Record<StationId, CrewOption>)
+    } catch {}
+  }, [])
   function cycleCrew(stationId: StationId, e: React.MouseEvent) {
     e.stopPropagation()  // don't also switch active station
     setCrewAssign(prev => {
@@ -8227,16 +8240,31 @@ const CREW_ROLE_MAP: Record<string, string> = {
   salvager_bot: "SALVAGER", scout_drone: "SCOUT", player: "PLAYER",
 }
 
-function OperationsFeed({ entries, operatorStatus, crewAssign }: {
+function OperationsFeed({ entries, operatorStatus }: {
   entries: Array<{ id: number; crew: string; message: string; type: string; ts: number }>
   operatorStatus: Partial<Record<string, { action: string; detail?: string }>>
-  crewAssign: Partial<Record<StationId, string | null>>
 }) {
-  // Active crew members for status panel
+  // SSR-safe: load crew assignments client-side only
+  const [crewAssign, setCrewAssign] = useState<Partial<Record<StationId, string | null>>>({})
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("sb_crew_assign")
+      if (saved) setCrewAssign(JSON.parse(saved))
+    } catch {}
+    // Re-sync when crew AI cache updates (every 800ms)
+    const id = setInterval(() => {
+      try {
+        const saved = localStorage.getItem("sb_crew_assign")
+        if (saved) setCrewAssign(JSON.parse(saved))
+      } catch {}
+    }, 2000)
+    return () => clearInterval(id)
+  }, [])
+
   const activeCrew = Object.values(crewAssign)
     .filter((c): c is string => !!c && c !== "player")
     .map(c => ({ key: c, label: CREW_ROLE_MAP[c] ?? c.toUpperCase() }))
-    .filter((v, i, a) => a.findIndex(x => x.key === v.key) === i)  // dedupe
+    .filter((v, i, a) => a.findIndex(x => x.key === v.key) === i)
 
   return (
     <StationShell style={{ flex: "0 0 190px", minWidth: 0 }}>
@@ -8851,6 +8879,14 @@ function ArchiveScreen({ signal, lastCompletedNodeId, onSelectNode }: {
   const [hoveredNode, setHoveredNode] = useState<string | null>(null)
   const nodeState = signal.archiveNodeState ?? initialArchiveNodeState()
   const W = 560, H = 340
+
+  // DIAGNOSTIC — log node availability to console
+  const nodeReport = SIGNAL_ARCHIVE_E1.map(n => ({
+    id: n.id, name: n.name,
+    status: nodeState[n.id] ?? "unknown",
+    canClick: (nodeState[n.id] ?? "unknown") === "available",
+  }))
+  console.log("[ARCHIVE SCREEN] Node report:", nodeReport)
 
   // Newly unlocked nodes — pulse/glow to show they're freshly accessible
   const newlyUnlocked = lastCompletedNodeId ? getNewlyUnlocked(lastCompletedNodeId, nodeState) : []
