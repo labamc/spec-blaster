@@ -24,7 +24,8 @@ const _stationState = {
   turretAngle:       -Math.PI / 2,
   turretWeapon:      "pulse" as "pulse" | "triple" | "spray" | "flak" | "grapple",
   turretFiring:      false,
-  turretControlMode: false,   // player is in turret seat; ship on autopilot
+  turretControlMode:      false,
+  engineeringControlMode: false,  // player is in engineering; ship on autopilot
   commsLog:          [] as string[],
   sectorStart:       0,
   markedTargetId:    null as number | null,
@@ -940,7 +941,13 @@ interface GState {
   archiveRateLimitWindowEnd: number
   archiveCachedWords:        Array<{ text: string; type: Word["type"]; respawnAt: number }>
   archiveEpochComplete:      boolean
-  turretControlMode:         boolean  // player is at turret station; ship on autopilot
+  turretControlMode:         boolean
+  engineeringControlMode:    boolean
+  // Engineering station actions
+  engRepair:         Partial<Record<StationId, number>>   // room → repair start timestamp
+  engOverclock:      Partial<Record<StationId, number>>   // room → overclock end timestamp
+  engStabilizeCd:    number   // stabilize-all cooldown expiry
+  engShieldCd:       number   // emergency shield cooldown expiry
 }
 
 function makeBg(W: number): BgGlyph[] {
@@ -985,7 +992,8 @@ function initState(W: number): GState {
     archiveMode: false, archiveNodeId: null, archiveNodeWords: [], archiveBoss: null,
     archiveDepth: 0, archiveCorruption: null, archiveInstability: 0, archiveLastRadarDmg: 0,
     archiveRateLimitCount: 0, archiveRateLimitWindowEnd: 0, archiveCachedWords: [],
-    archiveEpochComplete: false, turretControlMode: false,
+    archiveEpochComplete: false, turretControlMode: false, engineeringControlMode: false,
+    engRepair: {}, engOverclock: {}, engStabilizeCd: 0, engShieldCd: 0,
   }
 }
 
@@ -1045,8 +1053,9 @@ export default function HomePage() {
   // ── Station system state ────────────────────────────────────────────────
   const [activeStation, setActiveStation] = useState<StationId>("bridge")
 
-  // Turret Control Mode — player pilots turret, ship on autopilot
-  const [turretControlMode, setTurretControlMode] = useState(false)
+  // Station Control Modes — player enters a station; ship on autopilot
+  const [turretControlMode,      setTurretControlMode]      = useState(false)
+  const [engineeringControlMode, setEngineeringControlMode] = useState(false)
   const canvasFireRef     = useRef(false)      // mouse held on canvas
   const canvasFireInterval= useRef<ReturnType<typeof setInterval>|null>(null)
   const canvasAngleRef    = useRef(-Math.PI/2)  // current aim angle from canvas mouse
@@ -1094,8 +1103,8 @@ export default function HomePage() {
       for (const [k, v] of Object.entries(_stationState.roomActions)) {
         if (v && v.until > now) actions[k as StationId] = v.text
       }
-      // Turret control mode overrides the turret room action
-      if (_stationState.turretControlMode) actions["turret"] = "PLAYER CONTROL"
+      if (_stationState.turretControlMode)      actions["turret"]      = "PLAYER CONTROL"
+      if (_stationState.engineeringControlMode) actions["engineering"] = "PLAYER CONTROL"
       setRoomActionsSnap(actions)
       // Snapshot crew stats
       setCrewStatsSnap({ ...g.crewStats })
@@ -1169,7 +1178,8 @@ export default function HomePage() {
     const powerBonus = Math.pow(0.95, _stationState.power.turret)
     const turretDmgPenalty = Math.pow(1.2, g.roomDamage.turret ?? 0)
     // Artifact: overclock_core +25%, emergency_protocols at 1 life +50%
-    const overclockMul = g.artifacts.includes("overclock_core") ? 0.75 : 1
+    const overclockMul = (g.artifacts.includes("overclock_core") ? 0.75 : 1)
+      * ((g.engOverclock["turret"] ?? 0) > Date.now() ? 0.7 : 1)  // engineering overclock
     const emergencyMul = (g.artifacts.includes("emergency_protocols") && g.lives <= 1) ? 0.5 : 1
     // Veteran gunner crew at turret: +15% fire rate
     const vetGunnerMul = (() => { try { const ca = localStorage.getItem("sb_crew_assign"); return ca && JSON.parse(ca).turret === "veteran_gunner" ? 0.85 : 1 } catch { return 1 } })()
@@ -1276,21 +1286,25 @@ export default function HomePage() {
     const handler = (e: KeyboardEvent) => {
       if (phaseRef.current === "upgrade") return
 
-      // ESC exits turret control mode
-      if (e.key === "Escape" && _stationState.turretControlMode) {
-        e.preventDefault(); exitTurretControl(); return
+      // ESC exits any active station control mode
+      if (e.key === "Escape") {
+        if (_stationState.turretControlMode)      { e.preventDefault(); exitTurretControl(); return }
+        if (_stationState.engineeringControlMode) { e.preventDefault(); exitEngineeringControl(); return }
       }
 
       if (stationKeys[e.key]) {
         e.preventDefault()
         const sid = stationKeys[e.key]
-        if (sid === "turret" && phaseRef.current === "playing") {
-          // 2 toggles turret control when in an active expedition
+        const inPlay = phaseRef.current === "playing"
+        if (sid === "turret" && inPlay) {
           if (_stationState.turretControlMode) { exitTurretControl() }
-          else                                  { enterTurretControl() }
+          else { if (_stationState.engineeringControlMode) exitEngineeringControl(); enterTurretControl() }
+        } else if (sid === "engineering" && inPlay) {
+          if (_stationState.engineeringControlMode) { exitEngineeringControl() }
+          else { if (_stationState.turretControlMode) exitTurretControl(); enterEngineeringControl() }
         } else {
-          // Exit turret mode if switching to another station
-          if (_stationState.turretControlMode) exitTurretControl()
+          if (_stationState.turretControlMode)      exitTurretControl()
+          if (_stationState.engineeringControlMode) exitEngineeringControl()
           _stationState.active = sid; setActiveStation(sid)
         }
       }
@@ -1386,6 +1400,96 @@ export default function HomePage() {
   }
 
   // ── Archive: launch an expedition into a specific node ──────────────────
+  // ── Engineering Control Mode ────────────────────────────────────────────
+  function enterEngineeringControl() {
+    if (turretControlMode) exitTurretControl()
+    _stationState.active = "engineering"; setActiveStation("engineering")
+    _stationState.engineeringControlMode = true
+    G.current.engineeringControlMode = true
+    setEngineeringControlMode(true)
+    crewLogForce("ENGINEER", "Engineering control transferred to player", "action")
+  }
+
+  function exitEngineeringControl() {
+    _stationState.engineeringControlMode = false
+    G.current.engineeringControlMode = false
+    setEngineeringControlMode(false)
+    crewLogForce("ENGINEER", "Engineering control returned to operator", "action")
+  }
+
+  // Engineering canvas click handler — detects room and action button hits
+  // roomLayouts: pre-computed room rectangles for hit detection (in canvas pixels)
+  const ENG_ROOMS: Array<{ id: StationId; x: number; y: number; w: number; h: number }> = [
+    { id: "bridge",      x: 90,  y: 130, w: 145, h: 95 },
+    { id: "turret",      x: 255, y: 130, w: 145, h: 95 },
+    { id: "salvage",     x: 90,  y: 240, w: 145, h: 95 },
+    { id: "engineering", x: 255, y: 240, w: 145, h: 95 },
+  ]
+
+  function handleEngineeringCanvasClick(canvasX: number, canvasY: number) {
+    const g = G.current; const now = Date.now()
+    // Compute effective operator — engineer_bot gets speed bonus
+    const crewAssign = (() => { try { const s = localStorage.getItem("sb_crew_assign"); return s ? JSON.parse(s) : {} } catch { return {} } })()
+    const isEngineer = crewAssign.engineering === "engineer_bot"
+    const repairDuration = isEngineer ? 3000 : 5500  // engineer repairs faster
+    const hasActiveRepair = Object.keys(g.engRepair).length > 0
+
+    // Check room clicks
+    for (const room of ENG_ROOMS) {
+      if (canvasX >= room.x && canvasX <= room.x + room.w && canvasY >= room.y && canvasY <= room.y + room.h) {
+        const dmg = g.roomDamage[room.id] ?? 0
+        const repairing = !!g.engRepair[room.id]
+        const overclocked = (g.engOverclock[room.id] ?? 0) > now
+        if (dmg > 0 && !repairing && !hasActiveRepair) {
+          // Start repair
+          g.engRepair[room.id] = now
+          setRoomAction(room.id, "REPAIRING", repairDuration + 500)
+          crewLog("ENGINEER", `Repairing ${room.id.toUpperCase()}`, "repair")
+        } else if (dmg === 0 && !repairing && !overclocked && isEngineer) {
+          // Overclock — engineer only
+          g.engOverclock[room.id] = now + 12000
+          setRoomAction(room.id, "OVERCLOCKED", 12500)
+          crewLog("ENGINEER", `${room.id.toUpperCase()} overclocked`, "action")
+          g.particles.push({ x: g.W/2, y: GH*0.42, vx: 0, vy: -0.5, life: 1.6,
+            glyph: `${room.id.toUpperCase()} OVERCLOCKED`, col: "#fdba74", sz: 9, gravity: 0 })
+        }
+        return
+      }
+    }
+
+    // Stabilize button (bottom center, y: 355-375, x: 130-270)
+    if (canvasX >= 130 && canvasX <= 270 && canvasY >= 355 && canvasY <= 378 && now > g.engStabilizeCd) {
+      g.engStabilizeCd = now + 120000  // 120s cooldown
+      for (const room of Object.keys(g.roomDamage) as StationId[]) {
+        if ((g.roomDamage[room] ?? 0) > 0) g.roomDamage[room] = (g.roomDamage[room] as number) - 1
+      }
+      g.particles.push({ x: g.W/2, y: GH*0.42, vx: 0, vy: -0.5, life: 2.0,
+        glyph: "EMERGENCY STABILIZE", col: "#4ade80", sz: 10, gravity: 0 })
+      crewLogForce("ENGINEER", "Emergency stabilize — all rooms patched", "repair")
+    }
+    // Emergency shield button (x: 290-430, y: 355-378)
+    if (canvasX >= 290 && canvasX <= 430 && canvasY >= 355 && canvasY <= 378 && now > g.engShieldCd) {
+      g.engShieldCd = now + 90000  // 90s cooldown
+      g.shield = true; g.shieldEnd = now + 18000
+      g.particles.push({ x: g.W/2, y: GH*0.42, vx: 0, vy: -0.5, life: 1.8,
+        glyph: "SHIELD ACTIVATED", col: "#86efac", sz: 10, gravity: 0 })
+      crewLogForce("ENGINEER", "Emergency shield activated", "action")
+    }
+  }
+
+  function getCanvasCoords(e: React.MouseEvent<HTMLCanvasElement>): [number, number] {
+    const canvas = canvasRef.current; if (!canvas) return [0, 0]
+    const rect = canvas.getBoundingClientRect()
+    const scaleX = GW / rect.width
+    return [(e.clientX - rect.left) * scaleX, (e.clientY - rect.top) * scaleX]
+  }
+
+  function handleEngineCanvas(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (!engineeringControlMode) return
+    const [cx, cy] = getCanvasCoords(e)
+    handleEngineeringCanvasClick(cx, cy)
+  }
+
   function startExpedition(nodeId: string) {
     const cfg  = ARCHIVE_NODE_CFG[nodeId]
     const node = SIGNAL_ARCHIVE_E1.find(n => n.id === nodeId)
@@ -1827,6 +1931,34 @@ export default function HomePage() {
       applyArtifactPassive(g, now)
       applyCorruptionPassive(g, now)
 
+      // Engineering repair completion — check each active repair timer
+      if (Object.keys(g.engRepair).length > 0) {
+        const crewA = (() => { try { const s = localStorage.getItem("sb_crew_assign"); return s ? JSON.parse(s) : {} } catch { return {} } })()
+        const isEngineer = crewA.engineering === "engineer_bot"
+        const repairDuration = isEngineer ? 3000 : 5500
+        for (const [room, startTime] of Object.entries(g.engRepair) as [StationId, number][]) {
+          if (now - startTime >= repairDuration) {
+            delete g.engRepair[room]
+            const dmg = g.roomDamage[room] ?? 0
+            if (dmg > 0) {
+              g.roomDamage[room] = dmg - 1
+              crewLogForce("ENGINEER", `${room.charAt(0).toUpperCase()+room.slice(1)} repaired`, "repair")
+              g.particles.push({ x: g.W*0.5, y: GH*0.42, vx: 0, vy: -0.5, life: 1.6,
+                glyph: `${room.toUpperCase()} RESTORED`, col: "#4ade80", sz: 9, gravity: 0 })
+              setRoomAction(room, "RESTORED", 1200)
+            }
+          }
+        }
+      }
+
+      // Engineering overclock effects — bonus while active
+      if (Object.keys(g.engOverclock).length > 0) {
+        for (const [room, endTime] of Object.entries(g.engOverclock) as [StationId, number][]) {
+          if (now > endTime) { delete g.engOverclock[room] }
+        }
+        // Overclock turret = extra fire rate (handled via rate limit calc reading g.engOverclock)
+      }
+
       const spd = g.fast && now < g.fastEnd ? 8 : 5
 
       // expire powerups
@@ -1918,15 +2050,15 @@ export default function HomePage() {
       if (g.capyMsg && now > g.capyMsgEnd) g.capyMsg = ""
 
       // Movement: autopilot when player is at turret station, otherwise normal
-      if (g.turretControlMode) {
+      if (g.turretControlMode || g.engineeringControlMode) {
         // Autopilot: simple left-right patrol (5s per full cycle)
         const margin = 70
         const range  = g.W - margin * 2
-        const phase  = (now % 5000) / 5000           // 0 → 1 over 5s
-        const tri    = phase < 0.5 ? phase * 2 : 2 - phase * 2  // triangle wave
+        const phase  = (now % 5000) / 5000
+        const tri    = phase < 0.5 ? phase * 2 : 2 - phase * 2
         const autoTarget = margin + tri * range
         g.px = Math.max(20, Math.min(g.W - 20, g.px + (autoTarget - g.px) * 0.025))
-        g.py = PLAYER_Y  // stable vertical
+        g.py = PLAYER_Y
 
         // Keyboard barrel rotation — A/Left = CCW, D/Right = CW
         const rotSpeed = 0.045
@@ -3970,11 +4102,12 @@ export default function HomePage() {
 
           <canvas ref={canvasRef} height={GH}
             style={{ display:"block", width:"100%", height:GH,
-              cursor: turretControlMode ? "none" : "crosshair" }}
+              cursor: turretControlMode ? "none" : engineeringControlMode ? "pointer" : "crosshair" }}
             onMouseMove={handleCanvasMouseMove}
             onMouseDown={handleCanvasMouseDown}
             onMouseUp={handleCanvasMouseUp}
             onMouseLeave={handleCanvasMouseUp}
+            onClick={handleEngineCanvas}
           />
 
           {/* Command Mode Overlay */}
@@ -3998,11 +4131,16 @@ export default function HomePage() {
             stations={STATION_DEFS}
             activeStation={activeStation}
             onSelectStation={(sid) => {
-              if (sid === "turret" && phaseRef.current === "playing") {
-                if (_stationState.turretControlMode) { exitTurretControl() }
-                else                                  { enterTurretControl() }
-              } else {
+              const inPlay = phaseRef.current === "playing"
+              if (sid === "turret" && inPlay) {
                 if (_stationState.turretControlMode) exitTurretControl()
+                else { if (_stationState.engineeringControlMode) exitEngineeringControl(); enterTurretControl() }
+              } else if (sid === "engineering" && inPlay) {
+                if (_stationState.engineeringControlMode) exitEngineeringControl()
+                else { if (_stationState.turretControlMode) exitTurretControl(); enterEngineeringControl() }
+              } else {
+                if (_stationState.turretControlMode)      exitTurretControl()
+                if (_stationState.engineeringControlMode) exitEngineeringControl()
                 _stationState.active = sid; setActiveStation(sid)
               }
             }}
@@ -5848,6 +5986,134 @@ function draw(ctx: CanvasRenderingContext2D, g: GState, cw: number, now: number,
       // target died or left field — clear mark
       _stationState.markedTargetId = null
     }
+  }
+
+  // ── Engineering Control Mode — ship systems management HUD ───────────────
+  if (!attractMode && g.engineeringControlMode) {
+    const now2 = Date.now()
+    const crewA = (() => { try { const s = localStorage.getItem("sb_crew_assign"); return s ? JSON.parse(s) : {} } catch { return {} } })()
+    const isEngineer = crewA.engineering === "engineer_bot"
+    const repairDur  = isEngineer ? 3000 : 5500
+
+    ctx.save()
+
+    // Dark background overlay
+    ctx.globalAlpha = 0.88; ctx.fillStyle = "rgba(4,4,18,0.88)"
+    ctx.fillRect(0, 0, cw, GH)
+    ctx.globalAlpha = 1
+
+    // Corner brackets
+    const bsz = 20
+    ctx.strokeStyle = "rgba(74,222,128,0.5)"; ctx.lineWidth = 1.8
+    for (const [bx, by] of [[0,0],[cw-bsz,0],[0,GH-bsz],[cw-bsz,GH-bsz]] as [number,number][]) {
+      ctx.beginPath(); ctx.moveTo(bx+bsz,by); ctx.lineTo(bx,by); ctx.lineTo(bx,by+bsz); ctx.stroke()
+    }
+
+    // Header
+    ctx.fillStyle = "rgba(74,222,128,0.4)"; ctx.font = "7px monospace"; ctx.textAlign = "center"
+    ctx.fillText("ENGINEERING CONTROL", cw/2, 18)
+    ctx.fillStyle = "#4ade80"; ctx.font = "bold 11px monospace"
+    ctx.fillText("SIGNAL SYSTEMS", cw/2, 36)
+
+    // Power grid (top right)
+    const totalPower = POWER_POOL + (g.engineeringPoolBonus ?? 0)
+    const usedPower  = Object.values(_stationState.power).reduce((a, b) => a + b, 0)
+    const freePower  = totalPower - usedPower
+    ctx.textAlign = "right"; ctx.fillStyle = "rgba(255,255,255,0.3)"; ctx.font = "7px monospace"
+    ctx.fillText(`POWER: ${usedPower}/${totalPower} (${freePower} free)`, cw - 12, 55)
+
+    // Room cards
+    const ROOMS_ENG: Array<{ id: StationId; label: string; icon: string }> = [
+      { id:"bridge",      label:"BRIDGE",      icon:"◈" },
+      { id:"turret",      label:"TURRET",      icon:"⊕" },
+      { id:"salvage",     label:"SALVAGE",     icon:"◇" },
+      { id:"engineering", label:"ENGNRG",      icon:"⚙" },
+    ]
+    const roomPositions = [{ x:90,y:130 },{ x:255,y:130 },{ x:90,y:240 },{ x:255,y:240 }]
+    const RW = 145, RH = 95
+
+    ROOMS_ENG.forEach((r, i) => {
+      const { x, y }   = roomPositions[i]
+      const dmg        = g.roomDamage[r.id] ?? 0
+      const repairing  = g.engRepair[r.id] !== undefined
+      const repairProg = repairing ? Math.min(1, (now2 - (g.engRepair[r.id] ?? now2)) / repairDur) : 0
+      const overclocked= (g.engOverclock[r.id] ?? 0) > now2
+      const dmgCol     = dmg === 0 ? "#4ade80" : dmg === 1 ? "#facc15" : dmg === 2 ? "#fb923c" : "#f87171"
+      const borderCol  = repairing ? "#4ade80" : overclocked ? "#fdba74" : dmgCol
+
+      // Card background
+      ctx.fillStyle = `rgba(${dmg > 0 ? "40,12,12" : overclocked ? "40,30,8" : "8,18,12"},0.9)`
+      ctx.fillRect(x, y, RW, RH)
+      ctx.strokeStyle = `${borderCol}${repairing ? "cc" : "55"}`; ctx.lineWidth = repairing ? 2 : 1
+      ctx.strokeRect(x, y, RW, RH)
+
+      // Room name + icon
+      ctx.fillStyle = borderCol; ctx.font = "bold 9px monospace"; ctx.textAlign = "left"
+      ctx.fillText(`${r.icon} ${r.label}`, x + 8, y + 18)
+
+      // Damage bars (3 segments)
+      for (let d = 0; d < 3; d++) {
+        const bx = x + 8 + d * 24, by2 = y + 26, bw2 = 18, bh2 = 5
+        ctx.fillStyle = d < dmg ? (d === 2 ? "#f87171" : d === 1 ? "#fb923c" : "#facc15") : "rgba(255,255,255,0.1)"
+        ctx.fillRect(bx, by2, bw2, bh2)
+      }
+
+      // Status text
+      ctx.font = "7px monospace"; ctx.fillStyle = "rgba(255,255,255,0.4)"
+      const status = repairing ? "REPAIRING..." : overclocked ? "OVERCLOCKED" : dmg === 0 ? "NOMINAL" : `DAMAGE LV${dmg}`
+      ctx.fillText(status, x + 8, y + 44)
+
+      // Repair progress bar
+      if (repairing) {
+        ctx.fillStyle = "rgba(255,255,255,0.1)"; ctx.fillRect(x + 8, y + 50, RW - 16, 5)
+        ctx.fillStyle = "#4ade80"; ctx.fillRect(x + 8, y + 50, (RW - 16) * repairProg, 5)
+        ctx.fillStyle = "#4ade80"; ctx.font = "6px monospace"
+        ctx.fillText(`${Math.round(repairProg * 100)}%`, x + RW/2 - 8, y + 68)
+      }
+
+      // Overclock progress
+      if (overclocked && !repairing) {
+        const oEnd = g.engOverclock[r.id] ?? now2; const oStart = oEnd - 12000
+        const prog = Math.max(0, (oEnd - now2) / 12000)
+        ctx.fillStyle = "rgba(253,186,74,0.15)"; ctx.fillRect(x + 8, y + 50, RW - 16, 5)
+        ctx.fillStyle = "#fdba74"; ctx.fillRect(x + 8, y + 50, (RW - 16) * prog, 5)
+      }
+
+      // Action hint
+      if (!repairing && !overclocked) {
+        ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.font = "6.5px monospace"
+        if (dmg > 0) ctx.fillText("CLICK → REPAIR", x + 8, y + RH - 10)
+        else if (isEngineer) ctx.fillText("CLICK → OVERCLOCK", x + 8, y + RH - 10)
+      }
+    })
+
+    // Action buttons row
+    const stabCd   = Math.max(0, Math.ceil((g.engStabilizeCd - now2) / 1000))
+    const shieldCd = Math.max(0, Math.ceil((g.engShieldCd - now2) / 1000))
+    // Stabilize
+    ctx.fillStyle = stabCd > 0 ? "rgba(255,255,255,0.06)" : "rgba(74,222,128,0.12)"
+    ctx.fillRect(130, 355, 140, 23)
+    ctx.strokeStyle = stabCd > 0 ? "rgba(255,255,255,0.12)" : "rgba(74,222,128,0.45)"; ctx.lineWidth = 1
+    ctx.strokeRect(130, 355, 140, 23)
+    ctx.fillStyle = stabCd > 0 ? "rgba(255,255,255,0.25)" : "#4ade80"; ctx.font = "7.5px monospace"; ctx.textAlign = "center"
+    ctx.fillText(stabCd > 0 ? `STABILIZE (${stabCd}s)` : "⟳ STABILIZE ALL", 200, 370)
+    // Emergency shield
+    ctx.fillStyle = shieldCd > 0 ? "rgba(255,255,255,0.06)" : "rgba(134,239,172,0.1)"
+    ctx.fillRect(290, 355, 140, 23)
+    ctx.strokeStyle = shieldCd > 0 ? "rgba(255,255,255,0.12)" : "rgba(134,239,172,0.4)"; ctx.lineWidth = 1
+    ctx.strokeRect(290, 355, 140, 23)
+    ctx.fillStyle = shieldCd > 0 ? "rgba(255,255,255,0.25)" : "#86efac"
+    ctx.fillText(shieldCd > 0 ? `SHIELD (${shieldCd}s)` : "◈ EMRG SHIELD", 360, 370)
+
+    // Operator badge
+    ctx.textAlign = "left"; ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.font = "7px monospace"
+    ctx.fillText(isEngineer ? "⚙ ENGINEER ACTIVE — full capacity" : "⚠ NO ENGINEER — reduced speed", 12, 400)
+
+    // Exit hint
+    ctx.textAlign = "center"; ctx.fillStyle = "rgba(255,255,255,0.18)"; ctx.font = "7px monospace"
+    ctx.fillText("[4]/ESC exit", cw/2, 414)
+
+    ctx.restore()
   }
 
   // ── Turret Control Mode — full HUD overlay when player is at the turret ──
